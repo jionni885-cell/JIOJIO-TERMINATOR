@@ -25,7 +25,12 @@ from ..audit.consensus import ConsensusEngine, ConsensusOutcome
 from ..audit.integrity import IntegrityMonitor
 from ..audit.oscillation import OscillationGuard, ProgressPoint
 from ..audit.panel import AuditPanel, CriticReport
-from ..core.errors import BudgetExhausted, IntegrityViolation, OscillationDetected
+from ..core.errors import (
+    BudgetExhausted,
+    FailClosed,
+    IntegrityViolation,
+    OscillationDetected,
+)
 from ..core.journal import Journal
 from ..core.types import (
     Artifact,
@@ -98,6 +103,12 @@ class Engine:
     gate: ConformalGate = field(default_factory=ConformalGate)
     config: EngineConfig = field(default_factory=EngineConfig)
     spec_compiler: SpecCompiler = field(default_factory=SpecCompiler)
+    #: Routeur de confiance : choisit COMBIEN de verification depenser (bandit UCB1).
+    router: object | None = None
+    #: Memoire des echecs : les erreurs deja payees ne sont pas repayees.
+    memory: object | None = None
+    #: Bras choisi par le routeur pour la mission en cours (interne).
+    _arm: object | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Tous les temoins sont journalises : une preuve non tracee n'existe pas.
@@ -118,6 +129,29 @@ class Engine:
                       "rules": [r.id for r in spec.rules],
                       "under_specified": list(spec.under_specified)}
         )
+
+        # --- 0. ROUTAGE : combien de verification depenser ? ----------------- #
+        # Le routeur (bandit UCB1) choisit la configuration avant de depenser
+        # quoi que ce soit. Un harness regle une fois pour toutes est toujours
+        # mal regle pour une partie des taches.
+        self._arm = None
+        if self.router is not None:
+            self._arm = self.router.choose(mission.objective)
+            self.journal.append(
+                "route",
+                {
+                    "arm": self._arm.name,
+                    "candidates": self._arm.candidates,
+                    "rounds": self._arm.rounds,
+                    "panel_size": self._arm.panel_size,
+                    "alpha": self._arm.alpha,
+                    "cost": self._arm.cost,
+                },
+            )
+            try:
+                self.gate.alpha = float(self._arm.alpha)
+            except Exception:  # une porte qui refuse le reglage ne doit pas bloquer
+                pass
 
         guard = OscillationGuard()
         ledger = BlameLedger()
@@ -141,13 +175,45 @@ class Engine:
             # --- 3. PREUVE EXECUTABLE (fail-closed) ----------------------- #
             proved: list[tuple[Artifact, ProverResult]] = []
             for art in candidates:
-                res = self.prover.prove(
-                    art.content, spec, hidden_checks=work.checks,
-                    entrypoint=work.entrypoint, stage=Stage.PROVE,
-                )
+                try:
+                    res = self.prover.prove(
+                        art.content, spec, hidden_checks=work.checks,
+                        entrypoint=work.entrypoint, stage=Stage.PROVE,
+                    )
+                except FailClosed as exc:
+                    # Fail-closed : aucune preuve disponible. Ce n'est pas un echec
+                    # de l'artefact, c'est l'absence de moyen de le prouver. La
+                    # bonne sortie est l'abstention, jamais un plantage ni un
+                    # « ca a l'air bon ».
+                    self.journal.append(
+                        "fail-closed", {"round": rnd, "reason": str(exc),
+                                        "stage": Stage.PROVE.value}
+                    )
+                    warnings.append(
+                        Finding(agent="prover", severity=Severity.HIGH,
+                                message=f"preuve impossible : {exc}")
+                    )
+                    proved = []
+                    break
                 proved.append((art, res))
                 ledger.steps.append(art.agent)
                 ledger.messages.append(self._reason(art, res))
+
+            if not proved:
+                abstained_for = (
+                    f"aucune preuve executable disponible pour cette mission "
+                    f"({len(spec.rules)} regle(s) declaree(s), 0 temoin). "
+                    "Fournissez des oracles (banc d'essai) ou des exemples `>>>`."
+                )
+                self.journal.append("abstention", {"round": rnd, "reason": abstained_for})
+                residual = self._finalize(
+                    mission=mission, spec=spec, best=best, reports=reports,
+                    outcome=outcome, integrity=self.monitor.audit(self.journal),
+                    warnings=tuple(warnings), rounds=rounds, usage=usage,
+                    started=started, guard=guard, ledger=ledger,
+                    force_reason=abstained_for,
+                )
+                return residual
 
             proved.sort(key=lambda pair: pair[1].ratio, reverse=True)
             top_art, top_res = proved[0]
@@ -261,7 +327,7 @@ class Engine:
              "exploits": [e.kind.value for e in integrity.exploits]},
         )
 
-        return self._finalize(
+        report = self._finalize(
             mission=mission,
             spec=spec,
             best=best,
@@ -275,6 +341,45 @@ class Engine:
             guard=guard,
             ledger=ledger,
         )
+        self._learn(mission, report)
+        return report
+
+    # -- apprentissage ------------------------------------------------------ #
+
+    def _learn(self, mission: Mission, report: MissionReport) -> None:
+        """Boucle d'auto-amelioration : router + memoire, apres chaque mission.
+
+        Un succes met a jour le bandit. Un echec fait les deux : le bandit
+        apprend que ce bras n'etait pas adapte, et la memoire retient la cause
+        avec le garde qui l'empechera de revenir.
+        """
+        delivered = report.status in (
+            MissionStatus.DELIVERED,
+            MissionStatus.DELIVERED_WITH_RESERVATION,
+        )
+        if self.router is not None and self._arm is not None:
+            self.router.observe(mission.objective, self._arm, success=delivered)
+
+        if self.memory is None or delivered:
+            return
+        failing = [w for w in report.witnesses if not w.ok]
+        if not failing:
+            return
+        first = failing[0]
+        try:
+            self.memory.record(
+                objective=mission.objective,
+                symptom=f"regle {first.rule_id} non satisfaite",
+                root_cause=(first.stderr or "").strip().splitlines()[-1][:200]
+                if first.stderr
+                else "cause inconnue : aucune sortie d'erreur capturee",
+                correct_fix="atteint dans une mission ulterieure",
+                # Le GARDE est obligatoire : sans controle, la memoire n'est qu'un journal.
+                guard=f"regle {first.rule_id} du banc d'essai",
+                mission_id=mission.id,
+            )
+        except Exception:  # une memoire defaillante ne doit jamais faire echouer la mission
+            pass
 
     # -- etapes internes ---------------------------------------------------- #
 
@@ -293,7 +398,7 @@ class Engine:
         usage: dict[str, int],
     ) -> list[Artifact]:
         """Produit N candidats avec diversite forcee."""
-        n = self.config.candidates_per_round
+        n = self._arm.candidates if self._arm is not None else self.config.candidates_per_round
         temps = self.config.temperatures
         prompt = self._prompt(work, spec, feedback)
         out: list[Artifact] = []
@@ -431,7 +536,30 @@ class Engine:
         started: float,
         guard: OscillationGuard,
         ledger: BlameLedger,
+        force_reason: str = "",
     ) -> MissionReport:
+        if force_reason:
+            # Abstention decidee en amont (fail-closed) : on ne construit pas de
+            # faux temoignage, on rend un rapport honnete et vide de preuve.
+            self.journal.append("verdict", {"status": "abstained", "reason": force_reason})
+            return MissionReport(
+                mission_id=mission.id,
+                objective=mission.objective,
+                status=MissionStatus.ABSTAINED,
+                subject="",
+                spec=spec,
+                rounds=rounds,
+                witnesses=(),
+                findings=tuple(warnings),
+                votes=(),
+                blames=(),
+                integrity=self.monitor.audit(self.journal),
+                abstention_reason=force_reason,
+                journal_digest=self.journal.head,
+                duration_s=time.monotonic() - started,
+                usage=dict(usage),
+            )
+
         findings: list[Finding] = list(warnings)
         for rep in reports:
             findings.extend(rep.findings)
@@ -589,6 +717,12 @@ class Engine:
             f"OBJECTIVE:\n{work.objective}",
             f"\nENUMERATED REQUIREMENTS (each one is checked independently):\n{rules}",
         ]
+        if self.memory is not None:
+            # Memoire des echecs : les erreurs deja payees entrent dans le prompt
+            # comme PRIORS (le bloc le dit), jamais comme preuves.
+            recalled = self.memory.prompt_block(work.objective)
+            if recalled:
+                parts.append("\n" + recalled)
         if spec.under_specified:
             parts.append("\nNOT SPECIFIED (be conservative and explicit):\n"
                          + "\n".join(f"- {u}" for u in spec.under_specified))

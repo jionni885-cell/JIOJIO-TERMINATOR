@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré et auto-audité** — 103 tests verts, exécutable sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré et auto-audité** — 125 tests verts, exécutable sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -74,6 +74,8 @@ python -m jio audit mon_fichier.py       # audite un artefact (règles dérivée
 python -m jio run "objectif…"            # mission complète (nécessite un CLI/une clé)
 python -m jio artifacts --write          # écrit les artefacts natifs de tous les outils
 python -m jio mcp --list                 # outils exposés via MCP
+python -m jio trust "<objectif>"         # combien de vérification dépenser (bandit UCB1)
+python -m jio memory --recall "<texte>"  # ce que le système a déjà payé comme erreurs
 ```
 
 ---
@@ -137,6 +139,31 @@ Les modules de données pures renvoient **INDÉTERMINÉ**, jamais « conforme »
 l'artefact. Une règle **ADVISORY** (dépendance à l'environnement, horloge, hasard)
 produit une **réserve** : elle est affichée, jamais transformée en verdict. C'est la
 différence entre auditer et prétendre auditer.
+
+---
+
+## Auto-amélioration
+
+Deux boucles, actives à chaque mission.
+
+**TrustRouter** (`jio trust`) — *combien* de vérification dépenser. Un harness réglé
+une fois pour toutes est toujours mal réglé pour une partie des tâches. Trois
+configurations (minimal / standard / renforcé) sont choisies par un **bandit UCB1**
+sur la classe de la tâche, avec une récompense qui **pénalise le coût** :
+`succès − 0,35 × coût`. Un bras jamais essayé passe toujours en premier : on ne juge
+pas ce qu'on n'a pas mesuré.
+
+**Mémoire des échecs** (`jio memory`) — *ne jamais repayer deux fois la même erreur*.
+Chaque enregistrement porte **obligatoirement** un *garde* : le contrôle qui échouera
+si l'erreur revient. Un échec sans garde est refusé — un souvenir sans garde est un
+journal intime, pas une protection. La mémoire vit dans un journal **append-only
+hash-chaîné** : une réécriture discrète de ses propres erreurs devient détectable.
+Les souvenirs pertinents sont injectés dans le prompt de génération, étiquetés
+comme *priors* — jamais comme preuves.
+
+*Bug réel trouvé par les tests :* `Journal(path=…)` ouvre le fichier en écriture mais
+**ne relit rien**. La mémoire écrivait donc sur disque et repartait vide à chaque
+processus — une mémoire qui oublie.
 
 ---
 

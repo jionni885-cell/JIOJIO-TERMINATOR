@@ -391,9 +391,32 @@ def cmd_bench(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     journal_path = Path(args.journal) if args.journal else None
-    engine = _real_engine(journal_path=journal_path, max_rounds=args.rounds)
-    mission = Mission(objective=args.objective, max_rounds=args.rounds, alpha=args.alpha)
-    work = WorkItem(objective=args.objective, entrypoint=args.entrypoint or "")
+    task = TASKS_BY_ID.get(args.task) if getattr(args, "task", "") else None
+
+    if args.simulate and not task:
+        print(
+            "  Mode simulation : aucun CLI ni cle d'API requis, mais la boucle a besoin\n"
+            "  d'oracles pour prouver quoi que ce soit. Associez une tache du banc :\n"
+            "    jio run \"<objectif>\" --simulate --task sum_even\n"
+            "  Taches disponibles : " + ", ".join(t.id for t in TASKS) + "\n"
+        )
+        return 2
+
+    if args.simulate:
+        engine = _simulated_engine(
+            task, seed=0, journal_path=journal_path, max_rounds=args.rounds, alpha=args.alpha
+        )
+    else:
+        engine = _real_engine(journal_path=journal_path, max_rounds=args.rounds)
+
+    objective = task.objective if task else args.objective
+    mission = Mission(objective=objective, max_rounds=args.rounds, alpha=args.alpha)
+    work = WorkItem(
+        objective=objective,
+        entrypoint=(task.entrypoint if task else args.entrypoint or ""),
+        checks=dict(task.checks) if task else {},
+        spec=task.spec() if task else None,
+    )
     report = engine.run(mission, work)
     print(render_report(report, verbose=args.verbose))
     if args.json:
@@ -528,6 +551,71 @@ def cmd_artifacts(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_trust(args: argparse.Namespace) -> int:
+    from .trust import TrustRouter, task_class
+
+    router = TrustRouter(path=Path(args.state))
+    print()
+    print(f"  ROUTEUR DE CONFIANCE  ·  etat : {args.state}")
+    if args.objective:
+        klass = task_class(args.objective)
+        arm = router.choose(args.objective)
+        print(f"  objectif : {args.objective}")
+        print(f"  classe   : {klass}")
+        print()
+        print(f"  bras recommande : {arm.name}")
+        print(f"    candidats/tour {arm.candidates}  ·  tours {arm.rounds}"
+              f"  ·  panel {arm.panel_size}  ·  alpha {arm.alpha}  ·  cout {arm.cost}")
+        print(f"    budget d'appels maximum : {arm.budget_calls}")
+        print()
+    print(router.report())
+    print()
+    return 0
+
+
+def cmd_memory(args: argparse.Namespace) -> int:
+    from .learn import FailureMemory
+
+    memory = FailureMemory(path=Path(args.state))
+    print()
+    print(f"  MEMOIRE DES ECHECS  ·  {args.state}")
+    print()
+    if args.add:
+        try:
+            rec = memory.record(
+                objective=args.objective or "",
+                symptom=args.symptom or "",
+                root_cause=args.cause or "",
+                wrong_fix=args.wrong_fix or "",
+                correct_fix=args.fix or "",
+                guard=args.guard or "",
+            )
+        except ValueError as exc:
+            print(f"  REFUS : {exc}", file=sys.stderr)
+            print()
+            return 2
+        print(f"  enregistre : {rec.fingerprint} (evenement {rec.seq})")
+        print()
+        return 0
+    if args.recall:
+        found = memory.recall(args.recall)
+        print(f"  rappel pour : {args.recall}")
+        print()
+        if not found:
+            print("    aucun souvenir pertinent.")
+            print("    Une memoire vide est un etat legitime : le systeme n'invente pas")
+            print("    de mises en garde qu'il n'a pas payees.")
+            print()
+            return 0
+        for rec in found:
+            print(rec.as_block())
+            print()
+        return 0
+    print(memory.report())
+    print()
+    return 0
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp_server import TOOLS, main as mcp_main
 
@@ -632,6 +720,9 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="execute une mission complete")
     r.add_argument("objective", help="objectif en langage naturel")
     r.add_argument("--entrypoint", default="", help="nom de la fonction attendue")
+    r.add_argument("--simulate", action="store_true",
+                   help="modele simule deterministe : aucune cle API requise")
+    r.add_argument("--task", default="", help="id de tache du banc (oracles + specification)")
     r.add_argument("--rounds", type=int, default=5)
     r.add_argument("--alpha", type=float, default=0.05, help="risque d'erreur accepte")
     r.add_argument("--journal", default=".jio/journal.jsonl")
@@ -664,6 +755,23 @@ def build_parser() -> argparse.ArgumentParser:
     mc = sub.add_parser("mcp", help="serveur MCP (stdio) ou liste des outils")
     mc.add_argument("--list", action="store_true", help="affiche les outils exposes")
     mc.set_defaults(func=cmd_mcp)
+
+    tr = sub.add_parser("trust", help="routeur de confiance : combien de verification depenser")
+    tr.add_argument("objective", nargs="?", default="", help="objectif a router")
+    tr.add_argument("--state", default=".jio/trust.json", help="etat persistant")
+    tr.set_defaults(func=cmd_trust)
+
+    me = sub.add_parser("memory", help="memoire des echecs (rappel, ajout, integrite)")
+    me.add_argument("--state", default=".jio/failures.jsonl", help="journal de memoire")
+    me.add_argument("--recall", default="", help="objectif pour rappeler les souvenirs")
+    me.add_argument("--add", action="store_true", help="enregistre un echec")
+    me.add_argument("--objective", default="", help="objectif concerne")
+    me.add_argument("--symptom", default="", help="ce qui a ete observe")
+    me.add_argument("--cause", default="", help="cause reelle")
+    me.add_argument("--wrong-fix", default="", help="piste tentee sans succes")
+    me.add_argument("--fix", default="", help="correctif retenu")
+    me.add_argument("--guard", default="", help="controle qui echoue si l'erreur revient (obligatoire)")
+    me.set_defaults(func=cmd_memory)
 
     return p
 
