@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 181 tests verts, exécutable sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 187 tests verts, exécutable sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -262,6 +262,48 @@ d'un journal falsifié, le fichier part en quarantaine (`journal.jsonl.corrompu-
 quarantaine est impossible, refus d'écrire (fail-closed). Vérifié de bout en bout :
 545 événements corrompus → quarantaine → 2 exécutions → `jio trace` : *120 événements,
 chaîne INTÉGRÉE*.
+
+---
+
+## Le chemin réel est prouvé, pas seulement décrit
+
+Aucune clé API dans l'environnement de développement : on ne peut donc pas mesurer un
+vrai modèle. Mais on peut prouver **tout ce qui est vérifiable** — détecter une CLI
+externe, lui parler, récupérer sa réponse, la vérifier, la soumettre au consensus puis
+à la porte de conformité, et livrer. *Un fournisseur qui n'a jamais tourné n'est pas un
+fournisseur, c'est une intention.*
+
+Avec de faux agents au format JSON-lignes d'`opencode` (scripts, aucun réseau) :
+
+| Configuration | Statut | Motif |
+|---|---|---|
+| 1 agent | `DELIVERED_WITH_RESERVATION` | « tous les agents partagent modèle et verdict — ce n'est pas un consensus, c'est un écho » |
+| 2 agents | `DELIVERED_WITH_RESERVATION` | plafond inatteignable, **expliqué** (voir ci-dessous) |
+| **3 agents distincts** | **`DELIVERED`** | 4/4 règles prouvées — la chaîne complète fonctionne |
+
+### Un refus doit être calculable, sinon il est inutilisable
+
+Le score est : `preuves × accord × décorrélation × confiance`, avec
+`décorrélation = min(1 ; 0,55 + 0,15 × couples (modèle, verdict) distincts)`.
+
+Conséquence arithmétique : **avec 2 modèles distincts, une mission parfaite plafonne à
+0,85** — le seuil non calibré de 0,90 est hors d'atteinte, et *aucune* amélioration du
+travail ne peut livrer. L'utilisateur n'avait aucun moyen de le savoir : le motif
+s'affichait « confiance sous le seuil » et s'arrêtait là (tronqué à 200 caractères,
+coupé juste avant la partie actionnable).
+
+Désormais le refus donne **l'action d'abord**, le calcul ensuite :
+
+```
+PLAFOND INATTEIGNABLE : avec 2 modele(s) distinct(s), une mission PARFAITE plafonne a
+0.850, sous le seuil 0.900 — aucune livraison ne sera acceptee. Solutions : brancher un
+3e modele distinct, calibrer la porte, ou elargir l'alpha.
+decompte : preuves 1.000 x accord 1.000 x decorrelation (2 couple(s) modele-verdict
+distinct(s) sur 5 voix) x confiance 0.807 = 0.807
+```
+
+Le chiffre qui plafonne la confiance (`effective_panel`) était calculé puis **jeté** :
+il est maintenant porté par le consensus et affiché.
 
 ---
 
