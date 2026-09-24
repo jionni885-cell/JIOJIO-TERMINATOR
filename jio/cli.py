@@ -624,6 +624,78 @@ def cmd_memory(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_learn(args: argparse.Namespace) -> int:
+    from .learn.experiment import run_abc
+
+    print()
+    print(f"  AUTO-AMELIORATION  ·  competence simulee {args.skill}  ·  {args.runs} tirage(s) "
+          f"par tache  ·  {args.rounds} tours")
+    print("  Memoire vive sur disque (usage reel) ; memes graines dans les trois bras.")
+    print()
+    res = run_abc(skill=args.skill, runs=args.runs, rounds=args.rounds)
+
+    print(f"    {'tache':<16} {'A froid':>8} {'B temoin':>9} {'C chaud':>8}   effet isole")
+    print(f"    {'-' * 16} {'-' * 8} {'-' * 9} {'-' * 8}   {'-' * 11}")
+    for tid, (cold, control, warm) in sorted(res.per_task.items()):
+        delta = warm - control
+        mark = "  <-- gain" if delta > 0 else ("  <-- PERTE" if delta < 0 else "")
+        print(f"    {tid:<16} {cold:>8} {control:>9} {warm:>8}"
+              f"   {delta:>+11d}{mark}")
+    print()
+    print(f"    A  froid  (sans memoire)             {res.cold_success}/{res.total}"
+          f"  ({res.cold_rate:.1%})")
+    print(f"    B  temoin (memoire, effet desactive) {res.control_success}/{res.total}"
+          f"  ({res.control_rate:.1%})")
+    print(f"    C  chaud  (memoire, effet actif)     {res.warm_success}/{res.total}"
+          f"  ({res.warm_rate:.1%})")
+    print()
+    print("  ISOLATION DE L'EFFET")
+    print(f"    A -> B  artefact de loterie de graine : {res.lottery_artifact * 100:+.1f} points")
+    print("            (le prompt change, la probabilite non : attendu ~0)")
+    print(f"    B -> C  gain ATTRIBUABLE a la memoire : {res.isolated_gain * 100:+.1f} points")
+    print("            (prompts identiques, seule la probabilite differe : causalement propre)")
+    print()
+    print(f"    echecs memorises : {res.recorded}   ·   missions ou un souvenir a ete rappele : "
+          f"{res.missions_with_recall}")
+    print()
+    quantum = 100.0 / res.total if res.total else 0.0
+    print(f"  RESOLUTION : un quantum = 1 mission = {quantum:.1f} points.")
+    print(f"    Toute difference inferieure a {quantum:.1f} points n'est pas mesurable ici ;")
+    print("    c'est la raison pour laquelle le temoin A -> B est affiche : il montre le")
+    print("    plancher de bruit reel, pas un bruit suppose.")
+    print()
+    if res.isolated_gain <= 0.0:
+        print("  DIAGNOSTIC : gain attribuable NON MESURABLE dans ce regime.")
+        print("    Ce n'est pas un echec de la mesure, c'est une conclusion sur l'architecture.")
+        print("    La reprise est deja assuree par deux mecanismes qui ne dependent pas de")
+        print("    la memoire : la LARGEUR DE TIRAGE (best-of-N) et la VERIFICATION, qui")
+        print("    SELECTIONNE le bon candidat parmi ceux produits. Quand ces deux-la")
+        print("    suffisent, la memoire n'a rien a ajouter : son effet est un gain")
+        print("    relatif par tentative, noye dans le nombre de tentatives.")
+        print("    Ou la memoire devrait payer : la ou la verification NE VOIT PAS")
+        print("    l'erreur (affirmations non verifiables, choix de conception,"
+              " plausibilite).")
+        print("    Ce banc ne peut pas representer ce regime : il est bati sur des oracles")
+        print("    executables. L'affirmer sans le mesurer serait exactement ce que ce")
+        print("    projet refuse.")
+    else:
+        print(f"  RESULTAT : gain attribuable de {res.isolated_gain * 100:+.1f} points, a")
+        print("    tirages identiques entre B et C. C'est un effet reel de la mecanique.")
+    print()
+    print("  CE QUE CE CHIFFRE EST, ET CE QU'IL N'EST PAS")
+    print("    - c'est la mesure de la MECANIQUE : memoriser, rappeler, injecter.")
+    print("    - ce n'est PAS une mesure de modele reel : le modele est simule.")
+    print("    - l'effet d'avertissement est une MODELISATION explicite : un gain")
+    print("      RELATIF de 15 % par tentative (base 50-60 % + 5 a 10 points dans la")
+    print("      litterature du retour d'echec = 10 a 20 % relatifs).")
+    print("    - le gain est MULTIPLICATIF et non additif, a dessein : un harness")
+    print("      amplifie la competence, il n'en cree pas. A competence nulle, aucun")
+    print("      avertissement ne sauve le modele — l'invariant est encode dans le")
+    print("      simulateur, et un test le verrouille.")
+    print()
+    return 0
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp_server import TOOLS, main as mcp_main
 
@@ -780,6 +852,12 @@ def build_parser() -> argparse.ArgumentParser:
     me.add_argument("--fix", default="", help="correctif retenu")
     me.add_argument("--guard", default="", help="controle qui echoue si l'erreur revient (obligatoire)")
     me.set_defaults(func=cmd_memory)
+
+    le = sub.add_parser("learn", help="mesure le gain de l'auto-amelioration (A/B)")
+    le.add_argument("--skill", type=float, default=0.20, help="competence du modele simule")
+    le.add_argument("--runs", type=int, default=3, help="tirages par tache et par phase")
+    le.add_argument("--rounds", type=int, default=4, help="tours de boucle maximum")
+    le.set_defaults(func=cmd_learn)
 
     return p
 

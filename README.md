@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 139 tests verts, exécutable sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 141 tests verts, exécutable sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -76,7 +76,18 @@ python -m jio artifacts --write          # écrit les artefacts natifs de tous l
 python -m jio mcp --list                 # outils exposés via MCP
 python -m jio trust "<objectif>"         # combien de vérification dépenser (bandit UCB1)
 python -m jio memory --recall "<texte>"  # ce que le système a déjà payé comme erreurs
+python -m jio learn --skill 0.15         # l'auto-amélioration paie-t-elle ? (protocole A/B/C)
 ```
+
+Installation dans vos outils (ne copie que des fichiers texte, rien d'autre) :
+
+```bash
+./scripts/install.sh                      # simulation : montre ce qui serait fait
+./scripts/install.sh --all --yes --project /chemin/vers/votre/projet
+```
+
+Le projet est configurable par `.env` : voir [`.env.example`](.env.example). **Aucune
+variable n'est obligatoire** — sans clé, tout reste exécutable.
 
 ---
 
@@ -86,18 +97,24 @@ python -m jio memory --recall "<texte>"  # ce que le système a déjà payé com
 **bras de contrôle à budget d'appels égal** — sans lui, tout gain pourrait n'être
 que du « best-of-N » déguisé.
 
-| Configuration | Compétence 0.15 | Compétence 0.30 |
-|---|---|---|
-| modèle brut (1 appel) | 15,0 % | 20,0 % |
-| échantillonnage seul (best-of-3) | 35,0 % | 60,0 % |
-| **contrôle : autant d'appels, 0 vérification** | 75,0 % | 75,0 % |
-| **vérification exécutable + reprise** | **85,0 %** | **100,0 %** |
-| JIO complet (livraison auditée) | 85,0 % | 100,0 % |
+| Configuration | Compétence 0.15 | Compétence 0.30 | Compétence 0.50 |
+|---|---|---|---|
+| modèle brut (1 appel) | 20,0 % | 30,0 % | 55,0 % |
+| échantillonnage seul (best-of-3) | 45,0 % | 75,0 % | 85,0 % |
+| **contrôle : autant d'appels, 0 vérification** | 65,0 % | 70,0 % | 90,0 % |
+| **vérification exécutable + reprise** | **100,0 %** | **100,0 %** | **100,0 %** |
+| JIO complet (livraison auditée) | 100,0 % | 100,0 % | 100,0 % |
+| **gain isolé, à budget d'appels égal** | **+35,0 pts** | **+30,0 pts** | **+10,0 pts** |
 
-> **À budget d'appels strictement égal, la vérification apporte +10,0 points
-> (compétence 0.15) et +25,0 points (compétence 0.30)** par rapport à un tirage
-> aveugle du même modèle. Le gain vient donc de l'architecture de vérification,
-> pas du nombre d'essais.
+> **Plus le modèle est faible, plus le harness vaut cher.** À budget d'appels
+> strictement égal, la vérification apporte +35 points sur un modèle de
+> compétence 0.15, +30 sur 0.30, et +10 sur 0.50 — face à un tirage aveugle du
+> même modèle. Le gain vient de l'architecture, pas du nombre d'essais.
+>
+> C'est la réponse directe à la question posée au départ : *amener ses IA au
+> niveau des meilleures*. Le harness ne remplace pas un meilleur modèle ; il
+> récupère ce qu'un modèle moyen sait déjà faire mais ne sait pas **choisir**. Et
+> c'est précisément là que l'écart était le plus grand.
 
 **Ce que ces chiffres ne disent pas.** Les réponses sont **simulées** : le chiffre
 mesure l'architecture, pas un modèle réel. La littérature mesure le harness sur
@@ -183,6 +200,39 @@ comme *priors* — jamais comme preuves.
 *Bug réel trouvé par les tests :* `Journal(path=…)` ouvre le fichier en écriture mais
 **ne relit rien**. La mémoire écrivait donc sur disque et repartait vide à chaque
 processus — une mémoire qui oublie.
+
+### La mesure qui a retourné contre elle-même
+
+`jio learn` compare trois bras, dont un **témoin** où la mémoire est présente mais son
+effet désactivé. Ce témoin existe pour une raison précise : quand la mémoire ajoute un
+bloc au prompt, le tirage change, donc tout « gain » observé pourrait n'être que du
+hasard relabellisé.
+
+| Bras | Mémoire | Effet | Rôle |
+|---|---|---|---|
+| **A** froid | vide | — | référence |
+| **B** témoin | remplie | désactivé | isole l'artefact de loterie (attendu : ~0) |
+| **C** chaud | remplie | actif | contraste **causalement propre** avec B |
+
+**Le résultat est 0,0 point.** Sur des tâches vérifiables, la mémoire n'apporte rien de
+mesurable — et le système le dit au lieu de maquiller le chiffre. La raison est
+structurelle : la reprise est déjà assurée par la **largeur de tirage** (best-of-N) et
+par la **vérification** qui *sélectionne* le bon candidat. Quand ces deux mécanismes
+suffisent, la mémoire n'a rien à ajouter.
+
+> En cherchant à mesurer ce gain, un défaut bien plus grave a été trouvé : le tirage du
+> modèle simulé dépendait du **prompt entier**. Conséquence invisible — ajouter un
+> souvenir ou un retour d'erreur rebattait **entièrement** les cartes. Le témoin B a
+> affiché **+50 points d'écart alors que rien n'agissait**. Tous les effets au niveau du
+> prompt étaient donc inattribuables. Le tirage ne dépend plus que d'une *disposition*
+> stable (modèle, tâche, tentative), et les effets du prompt sont des mécanismes
+> **déclarés** — donc mesurables.
+
+**L'invariant central est encodé dans le simulateur, et verrouillé par un test :** les
+gains sont **multiplicatifs**, jamais additifs. Un harness *amplifie* la compétence, il
+n'en *crée* pas. À compétence nulle, aucun avertissement ne sauve le modèle — le système
+doit **s'abstenir**, jamais livrer. La version additive de ce modèle faisait réussir un
+modèle de compétence 0.0 : c'est-à-dire un harness capable d'inventer du savoir absent.
 
 ---
 

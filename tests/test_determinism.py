@@ -129,3 +129,52 @@ def test_le_bac_a_sable_reste_fonctionnel_apres_normalisation():
     res = Sandbox(timeout=20).run_python("assert 1 == 2, 'vraie assertion'")
     assert res.exit_code != 0
     assert "vraie assertion" in res.stderr
+
+
+# --------------------------------------------------------------------------- #
+# 3. Invariant central : un harness amplifie, il ne cree pas de connaissance
+# --------------------------------------------------------------------------- #
+
+
+def test_le_gain_est_multiplicatif_et_non_additif():
+    """Un bonus ADDITIF ferait reussir un modele de competence nulle des qu'on lui
+    donne un retour d'erreur — c'est-a-dire un harness capable d'inventer du savoir
+    absent. C'est l'inverse de la these du projet, et un modele de simulation qui
+    viole cette these fausse toutes les mesures qui en decoulent."""
+    from jio.providers.simulated import Persona, SimulatedProvider
+
+    p = SimulatedProvider(persona=Persona("test"))
+    assert p._amplify(0.0, 0.15) == 0.0, "a competence nulle, un avertissement ne peut rien"
+    assert p._amplify(0.0, 1.0) == 0.0
+    assert p._amplify(0.4, 0.15) > 0.4, "a competence non nulle, l'effet doit exister"
+    assert p._amplify(0.4, 0.15) <= 1.0
+    assert p._amplify(1.0, 0.15) == 1.0
+
+
+def test_un_modele_qui_se_trompe_toujours_abstient_toujours():
+    """Bout-en-bout : competence 0.0 + memoire remplie + avertissement actif
+    -> le systeme doit ABSTENIR, jamais livrer."""
+    from jio.bench.tasks import TASKS_BY_ID
+    from jio.cli import _simulated_engine
+    from jio.core.types import Mission, MissionStatus
+    from jio.learn import FailureMemory
+    from jio.loop.engine import WorkItem
+
+    task = TASKS_BY_ID["parse_duration"]
+    memory = FailureMemory()
+    memory.record(
+        objective=task.objective, symptom="regle R-002 non satisfaite",
+        root_cause="exemple de test", correct_fix="n/a", guard="regle R-002",
+    )
+    engine = _simulated_engine(task, skill=0.0, seed=0, max_rounds=3)
+    engine.memory = memory
+    for provider in engine.generators:
+        if hasattr(provider, "warning_gain"):
+            provider.warning_gain = 0.99  # meme un avertissement enorme
+    report = engine.run(
+        Mission(objective=task.objective, max_rounds=3),
+        WorkItem(objective=task.objective, entrypoint=task.entrypoint,
+                 checks=dict(task.checks), spec=task.spec()),
+    )
+    assert report.status is MissionStatus.ABSTAINED
+    assert report.passed < report.total_checks
