@@ -157,6 +157,16 @@ class Engine:
             except Exception:  # une porte qui refuse le reglage ne doit pas bloquer
                 pass
 
+        # --- 0 bis. FAISABILITE DE LA CONFIGURATION ------------------------- #
+        # Mesure d'ablation : avec un panel trop petit, 20 missions sur 20 finissent
+        # en reserve apres 13.8 appels, contre 5.4 pour un panel complet — pour le
+        # MEME resultat. Reessayer ne peut pas aider : le blocage est dans la
+        # configuration, pas dans le candidat. On le calcule une fois, et on
+        # s'arrete des que la preuve est complete.
+        infeasible = self.infeasibility()
+        if infeasible:
+            self.journal.append("feasibility", {"blocked": True, "reason": infeasible})
+
         guard = OscillationGuard()
         ledger = BlameLedger()
         best: tuple[Artifact, ProverResult] | None = None
@@ -215,7 +225,7 @@ class Engine:
                     outcome=outcome, integrity=self.monitor.audit(self.journal),
                     warnings=tuple(warnings), rounds=rounds, usage=usage,
                     started=started, guard=guard, ledger=ledger,
-                    force_reason=abstained_for,
+                    force_reason=abstained_for, infeasible=infeasible,
                 )
                 return residual
 
@@ -275,6 +285,18 @@ class Engine:
             # Theoreme pratique : best-of-N avec verificateur >= best-of-N aveugle,
             # a budget egal. S'arreter sur un plateau quand il reste des regles
             # non satisfaites casse cette propriete — constate au banc, corrige ici.
+            if infeasible and top_res.ratio == 1.0:
+                # Toutes les regles sont satisfaites : reessayer ne changerait ni le
+                # candidat ni le verdict. On livre avec la reserve expliquee, au lieu
+                # de bruler des appels pour arriver exactement au meme point.
+                self.journal.append(
+                    "stop", {"reason": "configuration infaisable, preuve deja complete",
+                             "detail": infeasible}
+                )
+                if feedback is None:
+                    feedback = self._feedback(top_res, spec, repeated=False)
+                break
+
             stop, why = guard.should_stop()
             if stop and guard.is_plateau() and not (
                 guard.is_flip_flop() or guard.is_cycling() or guard.is_regressing()
@@ -353,6 +375,7 @@ class Engine:
             started=started,
             guard=guard,
             ledger=ledger,
+            infeasible=infeasible,
         )
         self._learn(mission, report)
         return report
@@ -391,6 +414,56 @@ class Engine:
         )
 
     # -- apprentissage ------------------------------------------------------ #
+
+    def infeasibility(self) -> str:
+        """Dit, AVANT de depenser un seul appel, si la configuration peut livrer.
+
+        Deux blocages arithmetiques, tous deux invisibles pour l'utilisateur :
+
+        * **panel trop petit** : le consensus byzantin exige `n >= 3f+1` ; sous ce
+          seuil, aucun consensus n'est atteignable, donc aucune livraison ;
+        * **plafond sous le seuil** : la confiance est plafonnee par le nombre
+          d'identites de modele distinctes (`0.55 + 0.15 x M`). Avec une seule CLI,
+          ce plafond vaut 0.70 ; avec deux, 0.85. Sous un seuil non calibre de 0.90,
+          une mission PARFAITE ne peut pas etre acceptee.
+
+        Constate a l'ablation : 13.8 appels brueles contre 5.4 pour un resultat
+        identique. Le travail n'etait pas mauvais ; la configuration etait bloquee.
+        """
+        critics = list(getattr(self.panel, "critics", ()) or ())
+        panel = len(critics)
+        min_panel = int(getattr(self.consensus, "min_panel", 0) or 0)
+        if panel and panel < min_panel:
+            return (
+                f"panel de {panel} critique(s) alors que le consensus byzantin exige "
+                f"au moins {min_panel} (n >= 3f+1) : aucun consensus n'est atteignable, "
+                "donc aucune livraison complete. Brancher des agents distincts "
+                "(3 suffisent) ou assumer --min-panel plus bas en connaissance de cause."
+            )
+
+        identities: set[str] = set()
+        for critic in critics:
+            provider = getattr(critic, "provider", None)
+            if provider is not None:
+                ident = getattr(provider, "model", "") or getattr(provider, "name", "")
+            else:
+                ident = getattr(getattr(critic, "persona", None), "name", "")
+            if ident:
+                identities.add(str(ident))
+        if identities:
+            ceiling = min(1.0, 0.55 + 0.15 * len(identities))
+            try:
+                tau = float(self.gate.tau())
+            except Exception:  # une porte sans seuil ne bloque rien
+                tau = 0.0
+            if ceiling < tau:
+                return (
+                    f"{len(identities)} identite(s) de modele distincte(s) : une mission "
+                    f"PARFAITE plafonne a {ceiling:.3f}, sous le seuil {tau:.3f} — aucune "
+                    "livraison ne sera acceptee. Brancher un modele distinct de plus, "
+                    "calibrer la porte, ou elargir l'alpha / --min-panel."
+                )
+        return ""
 
     def _reachable_ceiling(self, outcome: ConsensusOutcome) -> float:
         """Score maximal atteignable par une mission parfaite, dans cette configuration.
@@ -595,6 +668,7 @@ class Engine:
         guard: OscillationGuard,
         ledger: BlameLedger,
         force_reason: str = "",
+        infeasible: str = "",
         mutation: object | None = None,
     ) -> MissionReport:
         if force_reason:
@@ -638,6 +712,8 @@ class Engine:
             # bloque, et quoi faire.
             floor = self._reachable_ceiling(outcome)
             head = gate_reason
+            if infeasible:
+                head = f"CONFIGURATION BLOQUEE : {infeasible} Detail : " + head
             if outcome.effective_panel >= 2 and floor < self.gate.tau():
                 # L'action d'abord : c'est la seule partie qui sert a quelque chose.
                 # Le calcul vient ensuite, pour qui veut le verifier.

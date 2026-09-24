@@ -25,6 +25,7 @@ from .core.env import bool_env, float_env, int_env, str_env
 from typing import Sequence
 
 from . import __version__
+from .audit.consensus import ConsensusEngine
 from .audit.integrity import IntegrityMonitor
 from .bench.tasks import TASKS, TASKS_BY_ID, Task, build_bank
 from .core.journal import Journal
@@ -73,6 +74,11 @@ def _c(text: str, key: str, enabled: bool = True) -> str:
 # --------------------------------------------------------------------------- #
 
 
+def _consensus(min_panel: int) -> ConsensusEngine:
+    """Agregateur de votes. Le seuil est explicite : il change ce qui est atteignable."""
+    return ConsensusEngine(min_panel=int(min_panel))
+
+
 def _engine_config(max_rounds: int) -> EngineConfig:
     """Reglages du moteur : les defauts viennent de l'environnement, les flags priment.
 
@@ -99,6 +105,7 @@ def _simulated_engine(
     journal_path: Path | None = None,
     max_rounds: int = 5,
     alpha: float = 0.05,
+    min_panel: int = 3,
 ) -> Engine:
     """Assemble un moteur utilisant la simulation deterministe (aucune cle requise)."""
     from .audit.panel import DEFAULT_PERSONAS, AuditPanel
@@ -121,11 +128,14 @@ def _simulated_engine(
         gate=ConformalGate(alpha=alpha),
         monitor=IntegrityMonitor(),
         spec_compiler=SpecCompiler(),
+        consensus=_consensus(min_panel),
         config=_engine_config(max_rounds),
     )
 
 
-def _real_engine(*, journal_path: Path | None = None, max_rounds: int = 5) -> Engine:
+def _real_engine(
+    *, journal_path: Path | None = None, max_rounds: int = 5, min_panel: int = 3
+) -> Engine:
     """Assemble un moteur adosse aux CLI/API reellement disponibles."""
     from .audit.panel import DEFAULT_PERSONAS, AuditPanel
     from .providers.registry import from_env
@@ -148,6 +158,7 @@ def _real_engine(*, journal_path: Path | None = None, max_rounds: int = 5) -> En
         gate=ConformalGate(alpha=float_env("JIO_ALPHA", 0.05)),
         monitor=IntegrityMonitor(),
         spec_compiler=SpecCompiler(provider=gens[0]),
+        consensus=_consensus(min_panel),
         config=_engine_config(max_rounds),
     )
 
@@ -455,10 +466,13 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     if args.simulate:
         engine = _simulated_engine(
-            task, seed=0, journal_path=journal_path, max_rounds=args.rounds, alpha=args.alpha
+            task, seed=0, journal_path=journal_path, max_rounds=args.rounds,
+            alpha=args.alpha, min_panel=args.min_panel,
         )
     else:
-        engine = _real_engine(journal_path=journal_path, max_rounds=args.rounds)
+        engine = _real_engine(
+            journal_path=journal_path, max_rounds=args.rounds, min_panel=args.min_panel
+        )
     _attach_learning(engine, Path(args.state), disable=args.no_learn)
 
     objective = task.objective if task else args.objective
@@ -1130,6 +1144,11 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--task", default="", help="id de tache du banc (oracles + specification)")
     r.add_argument("--state", default=str_env("JIO_STATE", ".jio"),
                    help="dossier d'etat (memoire + routeur)")
+    r.add_argument("--min-panel", dest="min_panel", type=int,
+                   default=int_env("JIO_MIN_PANEL", 3),
+                   help="taille minimale du panel pour conclure (defaut 3 : n >= 3f+1). "
+                        "En dessous, aucune livraison complete n'est possible — le "
+                        "systeme le dit au lieu de bruler des appels.")
     r.add_argument("--no-learn", dest="no_learn", action="store_true",
                    help="desactiver memoire et routeur pour cette execution")
     r.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 5))
