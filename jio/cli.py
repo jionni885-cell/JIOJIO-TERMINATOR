@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -343,6 +344,13 @@ def cmd_bench(args: argparse.Namespace) -> int:
             calls["S3"].append(n_calls)
             if not report.integrity.clean:
                 integrity_hits += 1
+            if os.environ.get("JIO_DEBUG_BENCH") and ok and not delivered:
+                print(
+                    f"    [debug] {task.id} seed={seed} statut={report.status.value} "
+                    f"ok={ok} preuves={report.passed}/{report.total_checks} "
+                    f"exploits={[e.kind.value for e in report.integrity.exploits]} "
+                    f"motif={report.abstention_reason[:120]}"
+                )
 
     elapsed = time.monotonic() - started
     print("  RESULTATS")

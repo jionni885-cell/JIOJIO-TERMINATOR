@@ -237,25 +237,48 @@ class IntegrityMonitor:
         return out
 
     def _detect_verification_dropoff(self, events: Sequence[Event]) -> list[Exploit]:
-        """Transition de phase mesuree a l'etape 5 : l'agent cesse de verifier."""
+        """Transition de phase mesuree a l'etape 5 : l'agent cesse de verifier.
+
+        Piege corrige, et il etait couteux : la version precedente se declenchait
+        des qu'aucune etape posterieure n'etait *validee*. Or une mission qui
+        lutte produit legitimement des tours non valides tout en continuant a
+        verifier. Elle condamnait donc un agent qui travaille — un faux positif
+        qui faisait abandonner du travail correct (constate au banc : une tache
+        mediane resolue a 3/4 etait classee « exploit » puis ABSTENUE).
+
+        Ce qui doit declencher, c'est la DISPARITION de la verification, pas son
+        echec. On regarde donc les temoins (`witness`), pas les verdicts.
+        """
         out: list[Exploit] = []
         produced = [e for e in events if e.kind == "stage" and e.payload.get("produced")]
         if len(produced) < self.phase_transition_steps:
             return out
         tail = produced[self.phase_transition_steps - 1 :]
+        if len(tail) < 2:
+            return out  # une seule etape en fin de chaine ne prouve rien
+
         verified = [e for e in tail if e.payload.get("verified")]
-        if not verified:
-            out.append(
-                Exploit(
-                    kind=ExploitKind.SEQUENCE,
-                    step=tail[0].seq,
-                    detail=(
-                        f"aucune etape verifiee apres l'etape {self.phase_transition_steps} "
-                        "— point de transition de phase documente (RHB)"
-                    ),
-                    confidence=0.6,
-                )
+        if verified:
+            return out
+
+        first_tail_seq = tail[0].seq
+        attempted = [e for e in events if e.kind == "witness" and e.seq >= first_tail_seq]
+        if attempted:
+            # La verification a bien continue : elle a echoue, ce qui est une
+            # information, pas une fraude.
+            return out
+
+        out.append(
+            Exploit(
+                kind=ExploitKind.SEQUENCE,
+                step=first_tail_seq,
+                detail=(
+                    f"aucun temoin produit apres l'etape {self.phase_transition_steps} "
+                    "— la verification a disparu, point de transition de phase (RHB)"
+                ),
+                confidence=0.75,
             )
+        )
         return out
 
     # -- garde -------------------------------------------------------------- #

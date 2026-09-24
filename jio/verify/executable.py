@@ -89,14 +89,30 @@ class Sandbox:
         return f"{head}\n…[{len(text) - 2000} caracteres offloades vers {path}]"
 
     def run_python(self, source: str, *, tag: str = "candidate") -> SandboxResult:
-        """Ecrit la source dans un fichier temporaire et l'execute."""
+        """Ecrit la source dans un fichier temporaire et l'execute.
+
+        Le chemin du dossier temporaire est NORMALISE avant de rendre le
+        resultat. Sans cela, deux executions identiques produisent des sorties
+        differentes (un chemin aleatoire apparait dans la moindre trace), donc
+        des empreintes de temoin differentes — et toute decision qui en derive
+        devenait non reproductible. Une preuve qu'on ne peut pas rejouer n'est
+        pas une preuve.
+        """
         tmp = Path(tempfile.mkdtemp(prefix="jio-", dir=str(self.workdir) if self.workdir else None))
         script = tmp / "main.py"
         script.write_text(source, encoding="utf-8")
         try:
-            return self.run_command([sys.executable, "-u", str(script)], cwd=tmp, tag=tag)
+            res = self.run_command([sys.executable, "-u", str(script)], cwd=tmp, tag=tag)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+        marker = str(tmp)
+        return SandboxResult(
+            exit_code=res.exit_code,
+            stdout=res.stdout.replace(marker, "<sandbox>"),
+            stderr=res.stderr.replace(marker, "<sandbox>"),
+            duration_s=res.duration_s,
+            timed_out=res.timed_out,
+        )
 
     def run_command(
         self, argv: Sequence[str], *, cwd: Path | None = None, tag: str = "cmd"

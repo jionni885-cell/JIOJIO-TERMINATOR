@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré et auto-audité** — 125 tests verts, exécutable sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 139 tests verts, exécutable sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -139,6 +139,25 @@ Les modules de données pures renvoient **INDÉTERMINÉ**, jamais « conforme »
 l'artefact. Une règle **ADVISORY** (dépendance à l'environnement, horloge, hasard)
 produit une **réserve** : elle est affichée, jamais transformée en verdict. C'est la
 différence entre auditer et prétendre auditer.
+
+---
+
+## Reproductibilité : une preuve qu'on ne peut pas rejouer n'est pas une preuve
+
+Le système a été non reproductible pendant un temps sans que rien ne le signale : les
+résultats restaient plausibles, ils changeaient simplement d'une exécution à l'autre.
+Deux causes trouvées, toutes deux invisibles à la lecture :
+
+| Bug | Conséquence | Correctif |
+|---|---|---|
+| `random.Random(hash((…)))` | `hash()` sur des chaînes est randomisé **par processus** (`PYTHONHASHSEED`) : le panel votait différemment pour le même artefact et la même graine | graine stable (digest `blake2b`) |
+| dossier temporaire **aléatoire** du bac à sable | son chemin apparaissait dans les traces d'erreur : l'empreinte du témoin changeait à chaque exécution, et toute décision qui en dérivait aussi | normalisation du chemin en `<sandbox>` |
+
+`jio bench` rend désormais **exactement** les mêmes chiffres d'un processus à l'autre
+(vérifié : trois exécutions identiques). Deux tests de non-régression échouent si l'un
+des deux bugs revient — vérifié en cassant volontairement chaque correctif, puis en
+constatant qu'un premier test était **inefficace** (il testait la fonction de graine,
+pas son site d'appel) : il a été remplacé par un test bout-en-bout du verdict complet.
 
 ---
 

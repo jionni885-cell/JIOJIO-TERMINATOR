@@ -72,6 +72,10 @@ class EngineConfig:
     #: Verifier aussi l'integrite a chaque tour (plus cher, plus sur).
     integrity_every_round: bool = False
     min_decorrelation: float = 0.0
+    #: Muter l'artefact pour verifier que les regles peuvent ECHOUER.
+    mutation_gate: bool = True
+    #: Nombre de mutants executes (cout borne : chaque mutant est une passe entiere).
+    mutation_budget: int = 4
 
 
 @dataclass(frozen=True)
@@ -327,6 +331,14 @@ class Engine:
              "exploits": [e.kind.value for e in integrity.exploits]},
         )
 
+        # --- 8. PORTE DE MUTATION ------------------------------------------ #
+        # « Les regles passent » ne vaut que si elles POUVENT echouer. On mute
+        # l'artefact de facons qui doivent le rendre faux ; un mutant survivant
+        # signifie que la specification ne distingue pas le correct du faux.
+        mutation = None
+        if best is not None and best[1].ratio == 1.0 and self.config.mutation_gate:
+            mutation = self._mutation_gate(best[0], spec, work)
+
         report = self._finalize(
             mission=mission,
             spec=spec,
@@ -334,6 +346,7 @@ class Engine:
             reports=reports,
             outcome=outcome,
             integrity=integrity,
+            mutation=mutation,
             warnings=tuple(warnings),
             rounds=rounds,
             usage=usage,
@@ -343,6 +356,39 @@ class Engine:
         )
         self._learn(mission, report)
         return report
+
+    def _mutation_gate(self, artifact: Artifact, spec: Spec, work: WorkItem) -> object | None:
+        """Mute l'artefact et verifie que la specification tue chaque mutant.
+
+        Cout borne (MUTATION_BUDGET) : on cherche la faiblesse de specification,
+        pas une couverture exhaustive.
+        """
+        from ..verify.mutation import MutationReport, mutate
+
+        mutants = mutate(artifact.content, budget=self.config.mutation_budget)
+        if not mutants:
+            return None
+
+        killed = 0
+        survived: list[object] = []
+        for mutant in mutants:
+            try:
+                res = self.prover.prove(
+                    mutant.source, spec, hidden_checks=work.checks,
+                    entrypoint=work.entrypoint, stage=Stage.PROVE,
+                )
+            except FailClosed:
+                # Aucune preuve disponible pour ce mutant : il ne peut pas
+                # survivre puisqu'il n'a rien satisfait.
+                killed += 1
+                continue
+            if res.passed:
+                survived.append(mutant)
+            else:
+                killed += 1
+        return MutationReport(
+            total=len(mutants), killed=killed, survived=tuple(survived)
+        )
 
     # -- apprentissage ------------------------------------------------------ #
 
@@ -537,6 +583,7 @@ class Engine:
         guard: OscillationGuard,
         ledger: BlameLedger,
         force_reason: str = "",
+        mutation: object | None = None,
     ) -> MissionReport:
         if force_reason:
             # Abstention decidee en amont (fail-closed) : on ne construit pas de
@@ -583,9 +630,44 @@ class Engine:
         status = MissionStatus.ABSTAINED
         abstention = ""
 
+        # --- porte de mutation : les regles peuvent-elles ECHOUER ? ---------- #
+        # Un artefact qui satisfait toutes les regles pour la pire des raisons
+        # (les regles ne testent rien) produirait une confiance sans preuve.
+        # Un mutant survivant n'accuse pas l'artefact : il accuse la
+        # specification. C'est donc une RESERVE, jamais un rejet.
+        mutation_weak = bool(mutation is not None and getattr(mutation, "weak", False))
+        if mutation is not None and getattr(mutation, "total", 0):
+            self.journal.append(
+                "mutation",
+                {
+                    "total": mutation.total,
+                    "killed": mutation.killed,
+                    "score": round(mutation.score, 4),
+                    "survived": [m.label for m in mutation.survived],
+                },
+            )
+            if mutation_weak:
+                findings.append(
+                    Finding(
+                        agent="mutation",
+                        severity=Severity.MEDIUM,
+                        message=(
+                            f"specification faible : {len(mutation.survived)} mutant(s) "
+                            "survivant(s) — les regles ne distinguent pas l'artefact "
+                            "correct d'un artefact faux"
+                        ),
+                    )
+                )
+
         if not integrity_ok:
             status = MissionStatus.ABSTAINED
             abstention = "exploits detectes dans le journal — la preuve est compromise"
+        elif all_passed and consensus_ok and accepted and mutation_weak:
+            status = MissionStatus.DELIVERED_WITH_RESERVATION
+            abstention = (
+                f"preuve complete, mais specification faible ({mutation.summary()}) : "
+                "un mutant survivant signifie que les regles ne peuvent pas echouer"
+            )
         elif all_passed and consensus_ok and accepted:
             status = MissionStatus.DELIVERED
         elif all_passed and consensus_ok and not accepted:

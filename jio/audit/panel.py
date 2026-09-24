@@ -27,6 +27,19 @@ from ..core.types import Finding, Rule, Severity, Spec, Verdict, Vote
 from ..providers.base import Message, Provider
 
 
+def _stable_seed(*parts: object) -> int:
+    """Graine reproductible entre processus.
+
+    `hash()` est randomise par processus pour les chaines : l'utiliser comme
+    graine rendait les verdicts du panel irreproductibles. On passe donc par un
+    digest cryptographique tronque, stable par construction.
+    """
+    import hashlib
+
+    basis = "\\x1f".join(str(p) for p in parts).encode("utf-8")
+    return int.from_bytes(hashlib.blake2b(basis, digest_size=8).digest(), "big")
+
+
 # --------------------------------------------------------------------------- #
 # Personas
 # --------------------------------------------------------------------------- #
@@ -160,9 +173,11 @@ class SimulatedCritic:
         seed: int | None = None,
     ) -> CriticReport:
         base_seed = seed if seed is not None else self.seed
-        rng = random.Random(
-            hash((self.persona.name, base_seed, artifact[:512]))
-        )
+        # Hachage STABLE obligatoire. `hash()` sur des chaines est randomise par
+        # processus (PYTHONHASHSEED) : le meme artefact, avec la meme graine,
+        # produisait des verdicts differents d'une execution a l'autre. Une
+        # preuve non reproductible n'est pas une preuve — c'est une anecdote.
+        rng = random.Random(_stable_seed(self.persona.name, base_seed, artifact[:512]))
 
         ok, detail = (True, "")
         if verifier is not None:
