@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** conception — architecture et dossier technique complets, implémentation en cours.
+**Statut :** noyau **implémenté, mesuré et auto-audité** — 103 tests verts, exécutable sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -62,9 +62,88 @@ Détail complet, chiffres et sources : [`docs/DOSSIER-TECHNIQUES.md`](docs/DOSSI
 
 ---
 
+## Démarrage
+
+Rien à installer : zéro dépendance obligatoire, Python 3.11+.
+
+```bash
+python -m jio doctor                     # état du système, fournisseurs détectés
+python -m jio tasks                      # le banc d'essai : 5 tâches vérifiables
+python -m jio bench --skill 0.30         # mesure le gain du harness
+python -m jio audit mon_fichier.py       # audite un artefact (règles dérivées de lui-même)
+python -m jio run "objectif…"            # mission complète (nécessite un CLI/une clé)
+python -m jio artifacts --write          # écrit les artefacts natifs de tous les outils
+python -m jio mcp --list                 # outils exposés via MCP
+```
+
+---
+
+## Ce qui est mesuré (et ce qui ne l'est pas)
+
+`jio bench` mesure quatre configurations sur le banc d'essai intégré, avec un
+**bras de contrôle à budget d'appels égal** — sans lui, tout gain pourrait n'être
+que du « best-of-N » déguisé.
+
+| Configuration | Compétence 0.15 | Compétence 0.30 |
+|---|---|---|
+| modèle brut (1 appel) | 15,0 % | 20,0 % |
+| échantillonnage seul (best-of-3) | 35,0 % | 60,0 % |
+| **contrôle : autant d'appels, 0 vérification** | 75,0 % | 75,0 % |
+| **vérification exécutable + reprise** | **85,0 %** | **100,0 %** |
+| JIO complet (livraison auditée) | 85,0 % | 100,0 % |
+
+> **À budget d'appels strictement égal, la vérification apporte +10,0 points
+> (compétence 0.15) et +25,0 points (compétence 0.30)** par rapport à un tirage
+> aveugle du même modèle. Le gain vient donc de l'architecture de vérification,
+> pas du nombre d'essais.
+
+**Ce que ces chiffres ne disent pas.** Les réponses sont **simulées** : le chiffre
+mesure l'architecture, pas un modèle réel. La littérature mesure le harness sur
+des modèles réels (+15 à +54 points selon les cas). Et la vérification n'aide que
+sur les tâches **vérifiables** : ailleurs, la bonne sortie est l'abstention.
+
+---
+
+## Le terrain de preuve : le projet s'audite lui-même
+
+`jio audit` dérive des règles exécutables **depuis l'artefact lui-même** — signature,
+annotations, exemples de docstring, reproductibilité — puis les prouve dans un bac à
+sable. Lancé sur tout le noyau :
+
+```
+blame.py 1/1 · consensus.py 3/3 · integrity.py 1/1 · oscillation.py 4/4 · panel.py 2/2
+tasks.py 2/2 · cli.py 1/1 · errors.py 1/1 · journal.py 4/4 · types.py 1/1
+conformal.py 4/4 · engine.py 1/1 · registry.py 2/2 · simulated.py 2/2 · compiler.py 2/2
+autocheck.py 1/1 · entropy.py 2/2 · executable.py 2/2 · metamorphic.py 2/2 · emit.py 2/2
+mcp_server.py 2/2        → CONFORME sur les règles vérifiables
+```
+
+Les modules de données pures renvoient **INDÉTERMINÉ**, jamais « conforme » : rien n'a
+été prouvé, et le système le dit.
+
+**Le plus coûteux n'a pas été d'écrire le vérificateur, mais de l'empêcher d'accuser
+à tort.** Chaque faux positif corrigé correspond à un artefact sain déclaré coupable :
+
+| Faux positif | Cause | Correctif |
+|---|---|---|
+| `ImportError` sur tout module interne | imports relatifs dans un fichier isolé | préambule de paquet (`__package__` + `sys.path`) |
+| `SyntaxError` après correctif | `from __future__` n'était plus en tête | `exec(compile(...))` : la source garde son unité |
+| `Calibration`, `ProgressPoint`, `Event` | dataclasses sans `__init__` dans l'AST | lecture des champs obligatoires |
+| `Critic` (Protocol) | classe non instanciable par conception | détection `Protocol`/`ABC`/`@abstractmethod` |
+| sonde jamais exécutée | `product(*[[]])` est vide | plan vide = un appel à zéro argument |
+| `now()`, `Journal.replay()` | horloge = non-déterminisme **voulu** | détection de source → déclaré, ou **réserve** |
+
+**Rejet contre réserve.** Une *règle dure* dont l'échec prouve un défaut condamne
+l'artefact. Une règle **ADVISORY** (dépendance à l'environnement, horloge, hasard)
+produit une **réserve** : elle est affichée, jamais transformée en verdict. C'est la
+différence entre auditer et prétendre auditer.
+
+---
+
 ## Écosystème : un seul cerveau, tous tes outils
 
-`jio sync` compile **une source de vérité** vers les artefacts natifs de chaque outil :
+`jio artifacts --write` compile **une source de vérité** (`jio/artifacts/doctrine.py`)
+vers les artefacts natifs de chaque outil :
 
 | Outil | Artefact |
 |---|---|
@@ -75,7 +154,18 @@ Détail complet, chiffres et sources : [`docs/DOSSIER-TECHNIQUES.md`](docs/DOSSI
 | **Gemini CLI** | `GEMINI.md` |
 | **Cursor** | `.cursor/rules/*.mdc` |
 | **GitHub Copilot** | `.github/copilot-instructions.md` |
-| **Tout client MCP** | serveur `jio mcp` |
+| **Tout client MCP** | serveur `jio mcp` — stdio, JSON-RPC 2.0, zéro dépendance |
+
+Le serveur MCP expose `jio_prove` (prouver une source contre des règles exécutables),
+`jio_audit` (auditer un fichier), `jio_contract` (les trois états de livraison) et
+`jio_skills`. Tout chemin est **confiné** à `JIO_ROOT` : un serveur d'outils qui lit
+n'importe quel fichier sur demande est une vulnérabilité, pas une fonctionnalité.
+
+Les 7 agents (`.opencode/agents/`) et les 10 compétences Hermes (`.hermes/skills/`)
+partagent la même doctrine. Deux garde-fous structurels : le **vérificateur n'a pas
+le droit d'écrire** (un vérificateur qui peut réparer ce qu'il juge finit toujours par
+le déclarer conforme), et `AGENTS.md` reste **sous 150 lignes** — au-delà, un fichier
+de contexte est survolé, pas lu.
 
 ---
 

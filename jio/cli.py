@@ -496,6 +496,55 @@ def cmd_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_artifacts(args: argparse.Namespace) -> int:
+    from .artifacts import TARGETS, manifest, write_manifest
+
+    targets = tuple(args.target) if args.target else TARGETS
+    try:
+        files = manifest(targets)
+    except ValueError as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 2
+
+    print()
+    print(f"  ARTEFACTS NATIFS  ·  {len(files)} fichier(s)  ·  cibles : {', '.join(targets)}")
+    print()
+    for rel in sorted(files):
+        print(f"    {rel}")
+    print()
+
+    if not args.write:
+        print("  mode simulation : rien n'a ete ecrit. Ajoutez --write pour creer les fichiers.")
+        print()
+        return 0
+
+    root = Path(args.root)
+    written = write_manifest(root, targets)
+    print(f"  {len(written)} fichier(s) ecrit(s) sous {root.resolve()}")
+    print()
+    print("  Une seule doctrine, tous les dialectes : pour modifier le contenu,")
+    print("  editez jio/artifacts/doctrine.py ou definitions.py, jamais les fichiers generes.")
+    print()
+    return 0
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    from .mcp_server import TOOLS, main as mcp_main
+
+    if args.list:
+        print()
+        print("  SERVEUR MCP JIO  ·  transport stdio, JSON-RPC 2.0, zero dependance")
+        print()
+        for tool in TOOLS:
+            print(f"    {tool['name']:<14} {tool['description'][:80]}")
+        print()
+        print("  Configuration : .mcp.json (genere par `jio artifacts --target mcp --write`)")
+        print("  Securite : tout chemin est confine a JIO_ROOT.")
+        print()
+        return 0
+    return mcp_main()
+
+
 def cmd_trace(args: argparse.Namespace) -> int:
     path = Path(args.journal)
     if not path.exists():
@@ -600,6 +649,21 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("journal")
     t.add_argument("--kind", default="", help="filtre par type d'evenement")
     t.set_defaults(func=cmd_trace)
+
+    ar = sub.add_parser("artifacts", help="genere les artefacts natifs de tous les outils")
+    ar.add_argument("--root", default=".", help="repertoire de destination")
+    ar.add_argument(
+        "--target",
+        action="append",
+        default=[],
+        help="cible : opencode, hermes, claude, agents, gemini, cursor, copilot, mcp",
+    )
+    ar.add_argument("--write", action="store_true", help="ecrit reellement les fichiers")
+    ar.set_defaults(func=cmd_artifacts)
+
+    mc = sub.add_parser("mcp", help="serveur MCP (stdio) ou liste des outils")
+    mc.add_argument("--list", action="store_true", help="affiche les outils exposes")
+    mc.set_defaults(func=cmd_mcp)
 
     return p
 

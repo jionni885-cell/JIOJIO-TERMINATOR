@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "jio": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "jio.mcp_server"
+      ],
+      "env": {
+        "JIO_ROOT": "."
+      }
+    }
+  }
+}
