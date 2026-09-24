@@ -785,6 +785,15 @@ def _classify_failure(stderr: str, exit_code: int) -> str:
         return "environment"
     if exit_code == 127:  # binaire absent
         return "environment"
+    # Construit en scannant des bibliotheques reelles (rich, click, attrs) : une
+    # classe dont la construction CONSULTE l'environnement — argumentaire de ligne
+    # de commande, saisie clavier — echoue en bac a sable ferme. `EOFError` (stdin
+    # ferme), `SystemExit` (argparse sans arguments) et `KeyboardInterrupt` ne disent
+    # rien sur la correction du code : c'est notre facon de mesurer qui est en cause.
+    if any(marque in text for marque in ("EOFError", "SystemExit", "KeyboardInterrupt")):
+        return "environment"
+    if "[RESERVE]" in text:
+        return "reserve"
     return "defect"
 
 
@@ -853,10 +862,18 @@ def cmd_scan(args: argparse.Namespace) -> int:
         for w in res.hard_failures:
             detail = [x.strip() for x in (w.stderr or "").splitlines() if x.strip()]
             message = (detail[-1] if detail else f"exit {w.exit_code}")[:160]
-            if _classify_failure(w.stderr, w.exit_code) == "environment":
+            verdict = _classify_failure(w.stderr, w.exit_code)
+            if verdict == "environment":
                 # Ce n'est pas un defaut du projet : c'est notre environnement qui
-                # est incomplet (dependance generee, paquet non installe).
+                # est incomplet (dependance generee, paquet non installe), ou notre
+                # facon de mesurer qui est inadequate (classe interactive).
                 environment.append((path, w.rule_id, message))
+            elif verdict == "reserve":
+                # La regle n'a pas pu conclure sur du code qui n'est pas fautif :
+                # exemples qui supposent un contexte (fixture de test), exemples
+                # d'illustration sans sortie attendue. On le SIGNALE, on ne condamne
+                # pas.
+                reserves.append((path, w.rule_id, message.replace("[RESERVE]", "").strip()[:120]))
             else:
                 problems.append((path, w.rule_id, message))
         for w in res.reservations:

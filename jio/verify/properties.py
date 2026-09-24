@@ -74,6 +74,22 @@ _ROUND_TRIP_PAIRS: tuple[tuple[str, str], ...] = (
     ("to_string", "from_string"),
 )
 
+#: Noms qui PROMETTENT une sortie triee. Volontairement restreints a `sort`/`order` :
+#: `rank` peut legitimement rendre des RANGS (`rank([3,1,2]) -> [2,0,1]`), qui ne sont
+#: pas tries — l'inclure serait un faux positif programme.
+_SORT_CLAIMS = ("sort", "sorted", "order")
+
+#: Noms qui degradent la fidelite (dedoublonnage volontaire) : le multiensemble n'est
+#: alors PAS cense etre preserve. `sort_unique(x)` a le droit de rendre moins
+#: d'elements que `x`.
+_LOSSY_CLAIMS = ("unique", "dedupe", "dedup", "distinct", "nub", "set")
+
+#: Marqueurs d'un tri decroissant.
+_SORT_DESCENDING = ("desc", "reverse", "decreasing", "descending")
+
+#: Noms qui PROMETTENT de dedoublonner sans rien perdre.
+_DEDUPE_CLAIMS = ("dedupe", "dedup", "unique", "uniq", "distinct", "nub")
+
 #: Noms qui ANNONCENT une modification volontaire de l'argument. Une API « en
 #: place » (`sort_in_place`, `fill`, `update`) mute par conception : la declarer
 #: fautive serait une fausse alerte sur du code parfaitement correct.
@@ -355,6 +371,103 @@ assert not _jio_failed, (
 '''
 )
 
+_SORTED = (
+    '''
+import copy as _jio_copy
+
+_jio_fn = globals().get({name!r})
+assert callable(_jio_fn), "entree {name!r} absente ou non appelable"
+_jio_cases = [{cases}]
+_jio_ascending = {ascending}
+_jio_fidelity = {fidelity}
+
+
+def _jio_violated(case):
+    target = _jio_copy.deepcopy(case)
+    try:
+        out = _jio_fn(*target)
+    except Exception:
+        return False          # une exception n'est pas une violation
+    try:
+        items = list(out)
+    except TypeError:
+        return False          # la sortie n'est pas une collection : hors de la promesse
+    if len(items) < 2:
+        return False
+    try:
+        ordered = all(
+            (items[i] <= items[i + 1]) if _jio_ascending else (items[i] >= items[i + 1])
+            for i in range(len(items) - 1)
+        )
+    except TypeError:
+        return False          # elements non comparables : hors de la promesse
+    if not ordered:
+        return True
+    if _jio_fidelity:
+        source = target[0]
+        try:
+            if isinstance(source, (list, tuple, set, frozenset)):
+                if sorted(map(repr, items)) != sorted(map(repr, source)):
+                    return True
+        except Exception:
+            return False
+    return False
+
+
+_jio_failed = [c for c in _jio_cases if _jio_violated(tuple(c))]
+'''
+    + _SHRINKER
+    + '''
+assert not _jio_failed, (
+    "{name} ne tient pas la promesse de son nom : plus petit contre-exemple "
+    f"{{_jio_shrink(_jio_failed[0])!r}}. Une sortie non triee — ou un element perdu, ou "
+    "invente, au passage — est un defaut silencieux : l'appelant ne verifie pas."
+)
+'''
+)
+
+_DEDUPE = (
+    '''
+import copy as _jio_copy
+
+_jio_fn = globals().get({name!r})
+assert callable(_jio_fn), "entree {name!r} absente ou non appelable"
+_jio_cases = [{cases}]
+
+
+def _jio_violated(case):
+    target = _jio_copy.deepcopy(case)
+    try:
+        out = _jio_fn(*target)
+    except Exception:
+        return False
+    try:
+        items = list(out)
+    except TypeError:
+        return False          # la sortie n'est pas une collection : hors promesse
+    source = target[0]
+    try:
+        if not isinstance(source, (list, tuple, set, frozenset)):
+            return False
+        # Comparaison par repr : deux types differents ne se comparent pas toujours,
+        # et une erreur de comparaison ne doit JAMAIS devenir une accusation.
+        return sorted(map(repr, items)) != sorted(map(repr, set(source)))
+    except Exception:
+        return False
+
+
+_jio_failed = [c for c in _jio_cases if _jio_violated(tuple(c))]
+'''
+    + _SHRINKER
+    + '''
+assert not _jio_failed, (
+    "{name} perd ou invente des elements : plus petit contre-exemple "
+    f"{{_jio_shrink(_jio_failed[0])!r}}. Un dedoublonnage doit retirer les REPETITIONS, "
+    "jamais une valeur qui n'apparaissait qu'une seule fois."
+)
+'''
+)
+
 _ROUND_TRIP = (
     '''
 import copy as _jio_copy
@@ -597,10 +710,29 @@ def _cases_from_annotations(
 def _cases_for(
     node: ast.FunctionDef, positional: list[ast.arg], inputs: int, seed: int
 ) -> tuple[list[tuple[object, ...]], str]:
-    """Cas d'entree + provenance ('annotations', 'docstring' ou '')."""
+    """Cas d'entree + provenance ('annotations', 'docstring' ou '').
+
+    Les cas tires des annotations sont ENRICHIS par les memes deformations
+    structurelles que ceux tires des exemples : sans cela, une liste generee peut
+    n'avoir aucun doublon, et un tri qui perd les doublons (`sorted(set(x))`) passe
+    inapercu. Defaut constate au banc, corrige ici.
+    """
     cases = _cases_from_annotations(node, positional, [a.arg for a in positional], inputs, seed)
     if cases:
-        return cases, "annotations"
+        enriched: list[tuple[object, ...]] = []
+        seen: set[str] = set()
+        for case in cases[:6]:
+            for variant in _seed_variants(case, limit=6):
+                key = repr(variant)
+                if key not in seen:
+                    seen.add(key)
+                    enriched.append(variant)
+        for case in cases:
+            key = repr(case)
+            if key not in seen:
+                seen.add(key)
+                enriched.append(case)
+        return enriched[: inputs + 8], "annotations"
     seeds = _doctest_seeds(node)
     if not seeds:
         return [], ""
@@ -723,6 +855,52 @@ def derive_properties(
                 check=_IDEMPOTENCE.format(name=name, cases=rendered),
             )
         )
+
+    # --- P-004 tri fidele, P-005 dedoublonnage sans perte ---------------- #
+    # Deux promesses que seul le NOM peut faire : `sort_*` promet une sortie triee ET
+    # fidele (rien perdu, rien invente), `dedupe`/`unique` promet de retirer les
+    # repetitions mais AUCUNE valeur unique. On ne verifie donc que les fonctions dont
+    # le nom s'engage — une fonction de tri maison appelee `arrange` ne sera jamais
+    # accusee sur une promesse qu'elle n'a pas faite.
+    if cases and len(positional) >= 1:
+        rendered = ", ".join("(" + ", ".join(repr(v) for v in case) + ",)" for case in cases)
+        lowered = node.name.lower()
+        if any(claim in lowered for claim in _SORT_CLAIMS):
+            lossy = any(claim in lowered for claim in _LOSSY_CLAIMS)
+            ascending = not any(mark in lowered for mark in _SORT_DESCENDING)
+            out.append(
+                DerivedProperty(
+                    id="P-004",
+                    name="tri-fidele",
+                    statement=(
+                        f"{name} rend une collection triee "
+                        f"({'croissante' if ascending else 'decroissante'}) et fidele : "
+                        + (
+                            "aucun element invente ou perdu."
+                            if not lossy
+                            else "elle peut dedoublonner, son nom l'annonce."
+                        )
+                    ),
+                    check=_SORTED.format(
+                        name=name,
+                        cases=rendered,
+                        ascending=ascending,
+                        fidelity=not lossy,
+                    ),
+                )
+            )
+        elif any(claim in lowered for claim in _DEDUPE_CLAIMS):
+            out.append(
+                DerivedProperty(
+                    id="P-005",
+                    name="dedoublonnage-sans-perte",
+                    statement=(
+                        f"{name} ne retire que les repetitions : aucune valeur "
+                        "apparaissant une seule fois ne disparait."
+                    ),
+                    check=_DEDUPE.format(name=name, cases=rendered),
+                )
+            )
 
     # --- P-003 aller-retour ------------------------------------------------- #
     functions = module_functions or {}

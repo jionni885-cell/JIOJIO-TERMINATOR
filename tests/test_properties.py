@@ -274,3 +274,149 @@ def test_scan_condamne_le_projet_fautif_et_epargne_le_sain():
     assert "P-001:normalize" in sortie_bugue, sortie_bugue
     assert "1 PROBLEME(S)" in sortie_bugue, sortie_bugue
     assert "Aucun probleme" in sortie_propre, sortie_propre
+
+
+# --------------------------------------------------------------------------- #
+# P-004 / P-005 : promesses de tri et de dedoublonnage
+# --------------------------------------------------------------------------- #
+
+TRI_PERD_DOUBLONS = '''
+def sort_values(nums: list[int]) -> list[int]:
+    """Trie.
+
+    >>> sort_values([3, 1, 2])
+    [1, 2, 3]
+    """
+    return sorted(set(nums))
+'''
+
+TRI_DESC_FAUX = '''
+def sort_desc(nums: list[int]) -> list[int]:
+    """Trie a l'envers.
+
+    >>> sort_desc([1, 2, 3])
+    [3, 2, 1]
+    """
+    return sorted(nums)
+'''
+
+DEDUPE_PERD = '''
+def dedupe(items: list[int]) -> list[int]:
+    """Retire les doublons.
+
+    >>> dedupe([1, 1, 2])
+    [1, 2]
+    """
+    return [items[0]]
+'''
+
+
+def test_tri_qui_perd_des_elements_detecte():
+    """`sorted(set(x))` est trie mais INFIDELE : un tri doit rendre tout ce qu'il recoit.
+
+    Le banc a revele que ce cas echappait a la premiere version : les listes generees
+    depuis les annotations n'avaient aucun doublon. Les cas sont donc enrichis par
+    deformation structurelle (liste dupliquee, vide, reduite).
+    """
+    res = _prove(TRI_PERD_DOUBLONS)
+    assert [w.rule_id for w in res.witnesses if not w.ok] == ["P-004:sort_values"]
+
+
+def test_tri_decroissant_qui_rend_croissant_detecte():
+    """Le nom promet l'ordre decroissant ; la sortie est croissante."""
+    res = _prove(TRI_DESC_FAUX)
+    assert [w.rule_id for w in res.witnesses if not w.ok] == ["P-004:sort_desc"]
+
+
+def test_dedoublonnage_qui_perd_un_element_detecte():
+    """Retirer les REPETITIONS est permis ; retirer une valeur unique ne l'est pas."""
+    res = _prove(DEDUPE_PERD)
+    assert [w.rule_id for w in res.witnesses if not w.ok] == ["P-005:dedupe"]
+
+
+def test_nom_sans_promesse_n_est_pas_juge():
+    """`arrange` ne promet ni tri ni fidelite : aucune regle P-004/P-005 ne l'accuse."""
+    source = '''
+def arrange(nums: list[int]) -> list[int]:
+    """Range les nombres.
+
+    >>> arrange([3, 1, 2])
+    [1, 2, 3]
+    """
+    return sorted(set(nums))
+'''
+    ids = [p.id for p in _props(source)]
+    assert "P-004" not in ids and "P-005" not in ids
+
+
+def test_dedoublonnage_annonce_par_le_nom_reste_permis():
+    """`sorted_unique` annonce la perte : la fidelite n'est PAS exigee."""
+    source = '''
+def sorted_unique(nums: list[int]) -> list[int]:
+    """Trie et dedoublonne.
+
+    >>> sorted_unique([3, 1, 3])
+    [1, 3]
+    """
+    return sorted(set(nums))
+'''
+    res = _prove(source)
+    assert not res.failures, [w.rule_id for w in res.failures]
+
+
+# --------------------------------------------------------------------------- #
+# Garde-fous de l'outillage lui-meme
+# --------------------------------------------------------------------------- #
+
+def test_programme_d_audit_est_compilable():
+    """Le programme envoye au bac a sable doit COMPILER.
+
+    Fuite reelle : un saut de ligne mal echappe a fait echouer tous les controles en
+    `SyntaxError` — que la classification range en « environnement ». L'audit est
+    devenu silencieusement aveugle (aucun probleme signale, aucune erreur visible).
+    Un `compile()` en test rend cette classe de panne impossible a livrer.
+    """
+    from jio.verify.executable import _AUDIT_AS_MODULE, _SYNC_MODULE
+
+    programme = (
+        _AUDIT_AS_MODULE
+        + "def f(value: int) -> int:\n    return value\n"
+        + "\n"
+        + _SYNC_MODULE
+        + "assert callable(f)\n"
+    )
+    compile(programme, "<audit>", "exec")
+
+
+def test_l_artefact_est_audite_comme_module_pas_comme_script():
+    """Le bloc `if __name__ == "__main__":` ne doit PAS s'executer pendant l'audit.
+
+    Fuite reelle : une bibliotheque dont la demonstration (sous `__main__`) divise
+    par zero etait declaree « ne s'execute pas ».
+    """
+    source = '''
+def utile(value: int) -> int:
+    """Double.
+
+    >>> utile(2)
+    4
+    """
+    return value * 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(1 / 0)
+'''
+    res = _prove(source)
+    assert not res.failures, [w.rule_id for w in res.failures]
+
+
+def test_un_echec_est_une_violation_pas_un_plantage_de_l_outillage():
+    """Un echec doit etre une VIOLATION, avec son message — jamais une erreur de notre
+    propre outillage. Sans cette exigence, « quelque chose a echoue » peut vouloir dire
+    « notre programme etait casse », et la mesure ne vaut rien."""
+    res = _prove(MUTATION_SANS_ANNOTATION)
+    (witness,) = res.failures
+    assert "MODIFIE par normalize" in witness.stderr, witness.stderr
+    for plantage in ("SyntaxError", "AttributeError", "NameError", "TypeError"):
+        assert plantage not in witness.stderr, witness.stderr

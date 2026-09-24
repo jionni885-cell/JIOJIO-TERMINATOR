@@ -131,22 +131,76 @@ def _class_defs(tree: ast.Module) -> dict[str, ast.ClassDef]:
     }
 
 
+#: Appels qui DECLARENT un champ a constructeur genere (attrs, dataclasses).
+_FIELD_CALLS = ("attrib", "ib", "field")
+
+
 def _is_dataclass(node: ast.ClassDef) -> bool:
-    """Vrai si la classe est decoree `@dataclass` (l'`__init__` est alors genere)."""
+    """Vrai si la classe a un `__init__` GENERE (dataclass, attrs, pydantic-like).
+
+    Une dataclass n'a pas d'`__init__` dans son corps : le chercher dans l'AST fait
+    conclure a tort que la classe s'instancie a vide. Constate au banc, puis sur une
+    bibliotheque publique : `attrs.VersionInfo` (`year = attrib(type=int)`) etait
+    declaree instanciable, le bac a sable repondait
+    `TypeError: __init__() missing 4 required positional arguments`, et l'artefact
+    etait declare fautif.
+    """
     for dec in node.decorator_list:
         target = dec.func if isinstance(dec, ast.Call) else dec
-        name = ast.unparse(target).split(".")[-1]
-        if name in ("dataclass", "define", "frozen"):
+        complet = ast.unparse(target).lower()
+        if complet.split(".")[-1] in ("dataclass", "define", "frozen"):
+            return True
+        # Formes classiques d'attrs : `@attr.s`, `@attrs.s`, `@attr.attrs`.
+        if complet in ("attr.s", "attrs.s", "attr.attrs", "attrs.attrs"):
             return True
     return False
 
 
+def _has_generated_init(node: ast.ClassDef) -> bool:
+    """Le constructeur est-il GENERE (et donc absent du corps de la classe) ?
+
+    Deux indices, et le second etait indispensable : le decorateur (`@dataclass`,
+    `@attr.define`...), **ou** la presence de champs declares par `attrib(...)` au
+    niveau classe. attrs permet d'appliquer la decoration APRES coup
+    (`attr.s(VersionInfo)` en fin de module) : ne regarder que les decorateurs
+    laissait passer `attrs.VersionInfo` et produisait une accusation a tort.
+    """
+    if _is_dataclass(node):
+        return True
+    for item in node.body:
+        if isinstance(item, ast.Assign) and isinstance(item.value, ast.Call):
+            if ast.unparse(item.value.func).split(".")[-1] in _FIELD_CALLS:
+                return True
+        elif isinstance(item, ast.AnnAssign) and isinstance(item.value, ast.Call):
+            if ast.unparse(item.value.func).split(".")[-1] in _FIELD_CALLS:
+                return True
+    return False
+
+
 def _required_dataclass_fields(node: ast.ClassDef) -> list[str]:
-    """Champs sans valeur par defaut d'une dataclass : ils sont obligatoires."""
+    """Champs sans valeur par defaut d'un constructeur genere : ils sont obligatoires.
+
+    Deux ecritures a traiter, et une seule ne suffisait pas :
+      * `champ: int`            (dataclass, attrs avec `auto_attribs`);
+      * `champ = attrib(...)`   (attrs classique) — d'autant plus obligatoire que
+        `attrib()` n'a ni `default=` ni `factory=`.
+    """
     required: list[str] = []
     for item in node.body:
         if isinstance(item, ast.AnnAssign) and item.value is None:
             required.append(ast.unparse(item.target))
+        elif isinstance(item, ast.Assign) and len(item.targets) == 1:
+            value = item.value
+            if not isinstance(value, ast.Call):
+                continue
+            nom = ast.unparse(value.func).split(".")[-1]
+            if nom not in _FIELD_CALLS:
+                continue
+            if any(kw.arg in ("default", "factory") for kw in value.keywords):
+                continue
+            cible = item.targets[0]
+            if isinstance(cible, ast.Name):
+                required.append(cible.id)
     return required
 
 
@@ -176,7 +230,7 @@ def _instantiable_without_args(node: ast.ClassDef) -> tuple[bool, str]:
     ):
         return False, "classe abstraite (methodes @abstractmethod)"
 
-    if _is_dataclass(node):
+    if _has_generated_init(node):
         # Piege paye au banc : une dataclass n'a PAS d'`__init__` dans son corps
         # (il est genere). La chercher dans l'AST faisait conclure a tort que la
         # classe etait instanciable a vide -> faux positif sur Calibration,
@@ -186,18 +240,38 @@ def _instantiable_without_args(node: ast.ClassDef) -> tuple[bool, str]:
             return False, f"dataclass a champs obligatoires : {', '.join(missing)}"
         return True, ""
 
-    init = next(
-        (n for n in node.body if isinstance(n, ast.FunctionDef) and n.name == "__init__"), None
-    )
-    if init is None:
+    constructeurs = {
+        n.name: n
+        for n in node.body
+        if isinstance(n, ast.FunctionDef) and n.name in {"__init__", "__new__"}
+    }
+    if not constructeurs:
+        # Aucun constructeur declare ICI. Deux cas tres differents :
+        #   * classe sans base : l'instanciation a vide est acquise ;
+        #   * classe DERIVEE : le constructeur vient de la base, on ignore ses
+        #     arguments obligatoires -> on ne fabrique AUCUNE regle. C'est le cas de
+        #     `ColorTriplet(NamedTuple)`, `Span(Segment)` dans rich : la version
+        #     precedente emettait la regle, le bac a sable repondait
+        #     `TypeError: __new__() missing 3 required positional arguments` et
+        #     l'artefact etait declare fautif. Une capacite non concluante se declare,
+        #     elle ne s'accuse pas.
+        if bases:
+            return False, f"constructeur herite de {', '.join(sorted(bases))}"
         return True, ""
-    args = init.args
+    args = constructeurs[next(iter(constructeurs))].args
+    nom_constructeur = next(iter(constructeurs))
     positional = list(args.posonlyargs) + list(args.args)
     required_positional = len(positional) - len(args.defaults)
-    if required_positional > 1:  # `self` est le seul argument tolere sans defaut
+    if required_positional > 1:  # `self`/`cls` est le seul argument tolere sans defaut
         required = [a.arg for a in positional[len(args.defaults) + 1 :]]
-        return False, f"arguments obligatoires : {', '.join(required)}"
-    missing_kw = [a.arg for a in args.kwonlyargs if a.default is None]
+        return False, f"arguments obligatoires de {nom_constructeur} : {', '.join(required)}"
+    # `ast.arg` n'a PAS d'attribut `default` : les valeurs par defaut vivent dans
+    # `arguments.kw_defaults`, alignees sur `kwonlyargs`. Lire `a.default` levait
+    # `AttributeError: 'arg' object has no attribute 'default'` — plantage reel du
+    # scan, declenche par un fichier de rich ayant un parametre nomme seul.
+    missing_kw = [
+        a.arg for a, defaut in zip(args.kwonlyargs, args.kw_defaults) if defaut is None
+    ]
     if missing_kw:
         return False, f"arguments nommes obligatoires : {', '.join(missing_kw)}"
     return True, ""
@@ -484,6 +558,62 @@ assert callable(_jio_fn), "entree {name!r} absente ou non appelable"
 #: Reproductibilite. Le plan de sondage est fige a la derivation : aucune entree
 #: inventee ici. Chaque entree est repetee plusieurs fois, car une seule
 #: repetition ne prouve rien contre le hasard.
+#: Comparaison de resultats, PARTAGEE par les controles de reproductibilite de
+#: fonction et de methode. Deux copies divergeraient un jour — et une divergence
+#: ici, c'est soit une fausse accusation, soit un faux positif.
+_SAME_HELPERS = '''
+def _jio_opaque(value):
+    """La valeur est-elle un OBJET a identite, sans egalite par valeur ?
+
+    `object.__eq__` ne compare que l'identite. Pour une fabrique de generateurs, de
+    classes ou de sessions, produire une instance NEUVE a chaque appel est le
+    comportement NORMAL : l'identite ne dit rien sur la reproductibilite.
+    """
+    if type(value) in (int, float, str, bool, bytes, complex, type(None), tuple, list, dict, set, frozenset):
+        return False
+    return getattr(type(value), "__eq__", None) is object.__eq__
+
+
+def _jio_meme(_a, _b):
+    """Egalite par VALEUR, recursive, qui ne conclut pas sur les objets opaques.
+
+    La version precedente comparait `('valeur', objet) == ('valeur', objet)` : sur un
+    objet sans egalite de valeur, Python retombait sur l'identite et l'artefact etait
+    declare « non reproductible » — faux. Constate sur des bibliotheques reelles :
+    `TextWrapper().extra_indent(...)` (click) rend un gestionnaire de contexte neuf a
+    chaque appel, `cmp_using(...)` (attrs) rend une classe neuve. Aucun des deux n'est
+    un defaut.
+    """
+    if _a is _b:
+        return True
+    if _jio_opaque(_a) and _jio_opaque(_b):
+        return type(_a) is type(_b)          # on ne peut pas conclure : on se tait
+    if isinstance(_a, (list, tuple)) and isinstance(_b, (list, tuple)):
+        return (
+            isinstance(_a, type(_b)) and len(_a) == len(_b)
+            and all(_jio_meme(x, y) for x, y in zip(_a, _b))
+        )
+    if isinstance(_a, dict) and isinstance(_b, dict):
+        if set(_a) != set(_b):
+            return False
+        return all(_jio_meme(_a[k], _b[k]) for k in _a)
+    if isinstance(_a, (set, frozenset)) and isinstance(_b, (set, frozenset)):
+        if any(_jio_opaque(x) for x in _a):
+            return len(_a) == len(_b)
+        return _a == _b
+    try:
+        return bool(_a == _b)
+    except Exception:
+        return True                          # comparaison impossible : on ne condamne pas
+
+
+def _jio_same(_x, _y):
+    # Un resultat est un couple ("valeur", v) ou ("erreur", type, message).
+    if _x[0] != _y[0]:
+        return False
+    return _jio_meme(_x[1:], _y[1:])
+'''
+
 _CHECK_DETERMINISM = '''
 import itertools as _jio_it
 _jio_fn = globals().get({name!r})
@@ -499,11 +629,7 @@ def _jio_outcome(*_args):
         return ("erreur", type(_exc).__name__, str(_exc))
 
 
-def _jio_same(_x, _y):
-    try:
-        return bool(_x == _y)
-    except Exception:
-        return _x is _y
+{helpers}
 
 
 _jio_checked = 0
@@ -543,11 +669,7 @@ def _jio_call(*_args):
         return ("erreur", type(_exc).__name__, str(_exc))
 
 
-def _jio_same(_x, _y):
-    try:
-        return bool(_x == _y)
-    except Exception:
-        return _x is _y
+{helpers}
 
 
 _jio_checked = 0
@@ -582,10 +704,50 @@ for _t in _jio_tests:
 if _jio_runner.failures:
     _jio_lines = [l.rstrip() for l in "".join(_jio_buf).splitlines() if l.strip()]
     _jio_tail = " | ".join(_jio_lines[-3:])[:400]
+    _jio_brut = "".join(_jio_lines)
+    # Deux echecs qui ne prouvent RIEN contre l'artefact, constates sur des
+    # bibliotheques reelles :
+    #   * `NameError` : l'exemple suppose un objet fourni par l'environnement de test
+    #     (`console`, `vi`...). Des projets executent leurs doctests avec des fixtures
+    #     (pytest --doctest-modules) ; l'exemple n'est pas faux, il n'est pas isole.
+    #   * « Expected nothing » : l'exemple ILLUSTRE un appel sans en annoncer la
+    #     sortie. C'est une docstring pedagogique, pas une specification.
+    # On les signale comme RESERVE : l'outil dit qu'il n'a pas pu conclure, il
+    # n'accuse pas. Un faux positif ici rendrait l'outil inutilisable sur du vrai code.
+    if "NameError" in _jio_brut or "Expected nothing" in _jio_brut:
+        _jio_cause = (
+            "l'exemple suppose un objet fourni par l'environnement de test"
+            if "NameError" in _jio_brut
+            else "exemple d'illustration, sans sortie annoncee"
+        )
+        raise AssertionError(
+            "[RESERVE] %d exemple(s) de docstring non concluants pour nous (%s) : %s"
+            % (_jio_runner.failures, _jio_cause, _jio_tail)
+        )
     raise AssertionError(
         "%d exemple(s) de docstring en echec : %s" % (_jio_runner.failures, _jio_tail)
     )
 '''
+
+
+def _determinism_check(name: str, plan: list[list[object]]) -> str:
+    """Source du controle de reproductibilite. Point d'entree UNIQUE.
+
+    Deux sites d'appel formataient le gabarit chacun de son cote : en ajoutant le
+    bloc d'aide `helpers`, un seul a ete mis a jour, et l'autre a plante —
+    `analyse impossible : 'helpers'`, constate en scannant un vrai projet. Une
+    fonction unique rend cette classe d'erreur impossible.
+    """
+    return _CHECK_DETERMINISM.format(
+        name=name, plans=_plan_source(plan), helpers=_SAME_HELPERS
+    )
+
+
+def _method_stability_check(name: str, method: str, plan: list[list[object]]) -> str:
+    """Source du controle de stabilite d'une methode. Point d'entree UNIQUE."""
+    return _CHECK_METHOD_STABLE.format(
+        helpers=_SAME_HELPERS, name=name, method=method, plans=_plan_source(plan)
+    )
 
 
 def _plan_source(plan: list[list[object]]) -> str:
@@ -718,7 +880,7 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
                 kind=RuleKind.ADVISORY if env_risk else RuleKind.PROPERTY,
             )
         )
-        checks[r2] = _CHECK_DETERMINISM.format(name=chosen, plans=_plan_source(plan))
+        checks[r2] = _determinism_check(chosen, plan)
         if env_risk:
             under.append(
                 f"le module importe `{env_risk}` : une divergence peut venir de "
@@ -782,7 +944,7 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
                     kind=RuleKind.ADVISORY if env_risk else RuleKind.PROPERTY,
                 )
             )
-            checks[code_det] = _CHECK_DETERMINISM.format(name=name, plans=_plan_source(plan_n))
+            checks[code_det] = _determinism_check(name, plan_n)
 
         code_doc = f"A-003:{name}"
         rules.append(
@@ -994,9 +1156,7 @@ def _class_spec(
                     kind=RuleKind.ADVISORY if env_risk else RuleKind.PROPERTY,
                 )
             )
-            checks[rid] = _CHECK_METHOD_STABLE.format(
-                name=name, method=method.name, plans=_plan_source(plan)
-            )
+            checks[rid] = _method_stability_check(name, method.name, plan)
             probed.append(method.name)
         if skipped:
             under.append(

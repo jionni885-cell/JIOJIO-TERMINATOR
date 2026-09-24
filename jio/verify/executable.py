@@ -185,6 +185,35 @@ class ProverResult:
         return (len(hard) - len(failed)) / len(hard)
 
 
+#: Un artefact est audite COMME MODULE, jamais comme script. Sans cela, le bloc
+#: `if __name__ == "__main__":` s'execute dans le bac a sable et le verdict porte sur
+#: la demonstration du fichier au lieu de son code. Constate sur une bibliotheque
+#: reelle : `rich/traceback.py` divise par zero dans sa demonstration, et le module
+#: etait declare « ne s'execute pas » alors qu'il s'importe parfaitement.
+_AUDIT_AS_MODULE = (
+    "# L'artefact est audite COMME MODULE, jamais comme script : sinon son bloc\n"
+    '# `if __name__ == "__main__":` (demonstration, script) s\'execute, et le\n'
+    '# verdict porte sur la demonstration au lieu du code. Constate sur une\n'
+    '# bibliotheque reelle dont la demo divise par zero : module declare fautif.\n'
+    '#\n'
+    '# Le nom doit aussi EXISTER dans sys.modules : dataclasses et typing y\n'
+    '# cherchent le module de definition pour lire les annotations, et un nom\n'
+    '# absent fait echouer tout fichier annote (`NoneType object has no\n'
+    "# attribute __dict__`). On enregistre donc un module VIDE avant l'execution\n"
+    '# — il suffit que son dictionnaire existe — et on le remplit APRES, quand\n'
+    '# les noms sont la.\n'
+    'import sys as _jio_sys, types as _jio_types\n'
+    '_jio_module = _jio_types.ModuleType("__jio_artefact__")\n'
+    '_jio_sys.modules["__jio_artefact__"] = _jio_module\n'
+    '__name__ = "__jio_artefact__"\n'
+)
+
+#: A executer JUSTE APRES la source : le module declare ci-dessus recoit enfin les
+#: noms de l'artefact. Sans cette synchronisation, `typing.get_type_hints` et les
+#: dataclasses resolvent `cls.__module__` vers un module vide et echouent.
+_SYNC_MODULE = "_jio_module.__dict__.update(globals())\n"
+
+
 @dataclass
 class ExecutableProver:
     """Execute un artefact contre chaque regle de la specification.
@@ -296,17 +325,22 @@ class ExecutableProver:
             # On compile donc la source separement, via exec(), ce qui preserve
             # a la fois ses imports `__future__` et ses numeros de ligne.
             program = (
-                preamble
+                _AUDIT_AS_MODULE
+                + preamble
                 + "_jio_source = "
                 + repr(source)
                 + "\n"
                 + "exec(compile(_jio_source, '<artefact>', 'exec'), globals())\n"
+                + _SYNC_MODULE
                 + head
                 + "\n"
                 + textwrap.dedent(check_src)
             )
         else:
-            program = source + "\n\n" + head + "\n" + textwrap.dedent(check_src)
+            program = (
+                _AUDIT_AS_MODULE + source + "\n\n" + _SYNC_MODULE + head + "\n"
+                + textwrap.dedent(check_src)
+            )
         res = self.sandbox.run_python(program, tag=f"rule-{rule.id}")
         detail = _extract_assertion(res.stderr)
         return Witness(

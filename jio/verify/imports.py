@@ -29,6 +29,7 @@ crie au loup est desactive au bout de deux jours.
 from __future__ import annotations
 
 import ast
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -58,20 +59,58 @@ class ModuleInfo:
 
 
 def _toplevel_names(tree: ast.Module) -> set[str]:
-    """Noms exportables declares au premier niveau."""
+    """Noms exportables declares par le module.
+
+    Les declarations COMPTEES sont celles du niveau module ET celles des blocs qui
+    s'executent au chargement (`if`, `try`, `with`, boucles). La version precedente ne
+    regardait que `tree.body` : tout nom defini sous une condition etait invisible, et
+    le verificateur d'imports accusait alors des modules parfaitement corrects.
+
+    Mesure sur des bibliotheques reelles publiees : `from .recipes import batched`
+    (more-itertools, `batched` defini sous `if sys.version_info >= (3, 12)`),
+    `from ._termui_impl import getchar` (click, defini sous `if WIN`),
+    `from ._compat import _get_argv_encoding` (click, defini sous `if WIN`) — trois
+    fausses accusations, toutes de la meme cause.
+
+    On ne descend PAS dans le corps des fonctions et des classes : un nom defini la
+    n'est pas exportable, et le compter rendrait le controle muet.
+    """
     out: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            out.add(node.name)
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    out.add(target.id)
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            out.add(node.target.id)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                out.add(alias.asname or alias.name.split(".")[0])
+
+    def parcours(corps: list[ast.stmt]) -> None:
+        for node in corps:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                out.add(node.name)
+                if isinstance(node, ast.ClassDef):
+                    # Une classe declare ses METHODES : `from .m import MaClasse` puis
+                    # `MaClasse.methode` doit resoudre.
+                    out.update(
+                        child.name
+                        for child in node.body
+                        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    )
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        out.add(target.id)
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                out.add(node.target.id)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    out.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(node, ast.Try):
+                parcours(node.body)
+                for handler in node.handlers:
+                    parcours(handler.body)
+                parcours(node.orelse)
+                parcours(node.finalbody)
+            elif isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With,
+                                   ast.AsyncWith)):
+                parcours(node.body)
+                # `node.orelse` est vide pour With ; l'attribut existe pour les autres.
+                parcours(getattr(node, "orelse", []))
+
+    parcours(tree.body)
     return out
 
 
@@ -115,6 +154,27 @@ def analyse(path: Path, root: Path) -> ModuleInfo:
     # Sans cela, TOUT appel de fonction importee etait invisible : seul le nom
     # importe etait verifie, jamais ce qu'on en utilise. Un renommage d'attribut
     # passait donc sans bruit.
+    # Un nom peut etre lie par un import ET reutilise comme variable locale : dans
+    # `def __init__(self, box: str)`, `box` est un PARAMETRE. Le prendre pour un
+    # module faisait accuser `box.splitlines()` et `box.ascii` (rich/box.py) alors que
+    # `box` est une chaine de caracteres. On ne suit donc un attribut que si sa racine
+    # est liee par un import ET jamais masquee ailleurs dans le fichier.
+    shadows: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            args = node.args if not isinstance(node, ast.Lambda) else node.args
+            for arg in list(getattr(args, "posonlyargs", [])) + list(args.args) + list(
+                args.kwonlyargs
+            ):
+                shadows.add(arg.arg)
+            if args.vararg:
+                shadows.add(args.vararg.arg)
+            if args.kwarg:
+                shadows.add(args.kwarg.arg)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            shadows.add(node.id)
+        elif isinstance(node, ast.alias):
+            pass
     attributes: list[tuple[str, int]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute):
@@ -122,7 +182,8 @@ def analyse(path: Path, root: Path) -> ModuleInfo:
                 raw = ast.unparse(node)
             except Exception:  # arbre partiel : on ne devine pas
                 continue
-            if raw.split(".")[0] in bound:
+            racine = raw.split(".")[0]
+            if racine in bound and racine not in shadows:
                 attributes.append((raw, node.lineno))
     return ModuleInfo(
         path, dotted, package, _toplevel_names(tree), imports, relative, attributes
@@ -171,6 +232,16 @@ def _resolve(module: str, table: dict[str, ModuleInfo]) -> ModuleInfo | None:
     return None
 
 
+#: Modules de la bibliotheque standard (Python 3.10+). Sur une version plus
+#: ancienne, l'ensemble est vide : on retombe alors sur le comportement precedent.
+_STDLIB = frozenset(getattr(sys, "stdlib_module_names", ()))
+
+
+def _est_stdlib(module: str) -> bool:
+    """Le module est-il celui de la bibliotheque standard (et non un homonyme local)?"""
+    return bool(_STDLIB) and module.split(".")[0] in _STDLIB
+
+
 def check_project(paths: list[Path], root: Path) -> list[ImportProblem]:
     """Verifie que chaque nom importe existe bien dans le module cible du projet."""
     infos = [analyse(p, root) for p in paths]
@@ -183,6 +254,14 @@ def check_project(paths: list[Path], root: Path) -> list[ImportProblem]:
 
         # imports absolus resolvables dans le projet
         for module, names, line in info.imports:
+            if _est_stdlib(module):
+                # `from types import ModuleType` designe la bibliotheque standard.
+                # Or un paquet qui contient son PROPRE `types.py` (click en est un)
+                # faisait resoudre l'import vers ce fichier local, qui ne declare pas
+                # `ModuleType` : le projet etait accuse a tort, six fois. Un nom de la
+                # stdlib ne se cherche jamais dans le projet : on se tait plutot que
+                # d'accuser, et rater une ombre de la stdlib est le prix acceptable.
+                continue
             target = _resolve(module, table)
             if target is None and info.package:
                 # un projet peut s'importer depuis sa propre racine
@@ -256,6 +335,12 @@ def _check_attribute(info: ModuleInfo, chain: str, table: dict[str, ModuleInfo])
     parts = chain.split(".")
     for cut in range(len(parts) - 1, 0, -1):
         module = ".".join(parts[:cut])
+        if cut == 1 and _est_stdlib(module):
+            # `logging.NOTSET` / `types.ModuleType` : la cible est la bibliotheque
+            # standard, meme si le projet contient un homonyme (`rich/logging.py`,
+            # `click/types.py`). Chercher dans l'homonyme local accusait des appels
+            # parfaitement valides — mesure sur cinq paquets publies.
+            return None
         target = _resolve(module, table)
         if target is None and info.package:
             target = _resolve(f"{info.package}.{module}", table)
