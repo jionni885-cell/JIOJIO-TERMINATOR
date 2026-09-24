@@ -52,8 +52,12 @@ def detect_clis(candidates: Sequence[str] | None = None) -> list[CliProvider]:
         spec = KNOWN_CLIS.get(name)
         if spec is None:
             continue
+        # `JIO_BIN_<NOM>` permet de pointer une CLI installee hors du PATH. La
+        # variable etait documentee sans etre lue : l'utilisateur croyait choisir
+        # son binaire et le choix etait ignore.
+        binary = os.environ.get(f"JIO_BIN_{name.upper()}") or name
         prov = CliProvider(
-            binary=name,
+            binary=binary,
             argv_template=spec["argv"],
             name=f"cli::{name}",
             model=spec["model"],

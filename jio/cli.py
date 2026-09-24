@@ -20,6 +20,8 @@ import os
 import sys
 import time
 from pathlib import Path
+
+from .core.env import bool_env, float_env, int_env, str_env
 from typing import Sequence
 
 from . import __version__
@@ -71,6 +73,22 @@ def _c(text: str, key: str, enabled: bool = True) -> str:
 # --------------------------------------------------------------------------- #
 
 
+def _engine_config(max_rounds: int) -> EngineConfig:
+    """Reglages du moteur : les defauts viennent de l'environnement, les flags priment.
+
+    Chaque variable ci-dessous correspond a un parametre REEL de `EngineConfig`.
+    Une variable documentee sans parametre derriere est du poids mort : c'est
+    pourquoi `.env.example` a ete aligne sur ce que le code lit vraiment, et
+    pourquoi un test verifie cette coherence.
+    """
+    return EngineConfig(
+        max_rounds=max_rounds,
+        time_budget_s=float_env("JIO_TIME_BUDGET", 600.0),
+        candidates_per_round=int_env("JIO_CANDIDATES", 3),
+        mutation_gate=bool_env("JIO_MUTATION_GATE", True),
+    )
+
+
 def _simulated_engine(
     task: Task | None,
     *,
@@ -103,7 +121,7 @@ def _simulated_engine(
         gate=ConformalGate(alpha=alpha),
         monitor=IntegrityMonitor(),
         spec_compiler=SpecCompiler(),
-        config=EngineConfig(max_rounds=max_rounds, candidates_per_round=3),
+        config=_engine_config(max_rounds),
     )
 
 
@@ -127,10 +145,10 @@ def _real_engine(*, journal_path: Path | None = None, max_rounds: int = 5) -> En
         journal=Journal(path=journal_path),
         panel=AuditPanel.llm(providers, list(DEFAULT_PERSONAS)),
         prover=ExecutableProver(sandbox=Sandbox(timeout=30)),
-        gate=ConformalGate(alpha=0.05),
+        gate=ConformalGate(alpha=float_env("JIO_ALPHA", 0.05)),
         monitor=IntegrityMonitor(),
         spec_compiler=SpecCompiler(provider=gens[0]),
-        config=EngineConfig(max_rounds=max_rounds, candidates_per_round=3),
+        config=_engine_config(max_rounds),
     )
 
 
@@ -411,8 +429,13 @@ def _attach_learning(engine, state_dir: Path, *, disable: bool = False) -> None:
     from .trust import TrustRouter
 
     state_dir.mkdir(parents=True, exist_ok=True)
-    engine.memory = FailureMemory(path=state_dir / "failures.jsonl")
-    engine.router = TrustRouter(path=state_dir / "trust.json")
+    engine.memory = FailureMemory(
+        path=Path(str_env("JIO_MEMORY", str(state_dir / "failures.jsonl")))
+    )
+    engine.router = TrustRouter(
+        path=Path(str_env("JIO_TRUST", str(state_dir / "trust.json"))),
+        cost_weight=float_env("JIO_COST_WEIGHT", 0.35),
+    )
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -1032,7 +1055,8 @@ def build_parser() -> argparse.ArgumentParser:
     b = sub.add_parser("bench", help="mesure le gain du harness (S0 -> S3)")
     b.add_argument("--skill", type=float, default=0.35, help="competence du modele simule")
     b.add_argument("--runs", type=int, default=5, help="nombre de tirages par tache")
-    b.add_argument("--rounds", type=int, default=4, help="tours de boucle maximum")
+    b.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
+                   help="tours de boucle maximum")
     b.set_defaults(func=cmd_bench)
 
     r = sub.add_parser("run", help="execute une mission complete")
@@ -1041,12 +1065,14 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--simulate", action="store_true",
                    help="modele simule deterministe : aucune cle API requise")
     r.add_argument("--task", default="", help="id de tache du banc (oracles + specification)")
-    r.add_argument("--state", default=".jio", help="dossier d'etat (memoire + routeur)")
+    r.add_argument("--state", default=str_env("JIO_STATE", ".jio"),
+                   help="dossier d'etat (memoire + routeur)")
     r.add_argument("--no-learn", dest="no_learn", action="store_true",
                    help="desactiver memoire et routeur pour cette execution")
-    r.add_argument("--rounds", type=int, default=5)
-    r.add_argument("--alpha", type=float, default=0.05, help="risque d'erreur accepte")
-    r.add_argument("--journal", default=".jio/journal.jsonl")
+    r.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 5))
+    r.add_argument("--alpha", type=float, default=float_env("JIO_ALPHA", 0.05),
+                   help="risque d'erreur accepte")
+    r.add_argument("--journal", default=str_env("JIO_JOURNAL", ".jio/journal.jsonl"))
     r.add_argument("--json", default="", help="ecrit le rapport JSON a ce chemin")
     r.add_argument("-v", "--verbose", action="store_true")
     r.set_defaults(func=cmd_run)
@@ -1061,12 +1087,14 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("path", help="fichier ou repertoire")
     sc.add_argument("--exclude-tests", action="store_true",
                     help="ignorer test_*.py, conftest.py et les dossiers tests/")
-    sc.add_argument("--timeout", type=int, default=20, help="timeout par verification (s)")
+    sc.add_argument("--timeout", type=int, default=int_env("JIO_SCAN_TIMEOUT", 20),
+                    help="timeout par verification (s)")
     sc.add_argument("-v", "--verbose", action="store_true",
                     help="lister aussi les fichiers non verifiables")
     sc.add_argument("--no-imports", dest="check_imports", action="store_false",
                     help="ne pas verifier la coherence des imports internes")
-    sc.add_argument("--state", default=".jio", help="dossier d'etat (memoire des echecs)")
+    sc.add_argument("--state", default=str_env("JIO_STATE", ".jio"),
+                    help="dossier d'etat (memoire des echecs)")
     sc.add_argument("--no-learn", dest="no_learn", action="store_true",
                     help="ne rien memoriser")
     sc.set_defaults(func=cmd_scan, check_imports=True)
@@ -1111,7 +1139,8 @@ def build_parser() -> argparse.ArgumentParser:
     le = sub.add_parser("learn", help="mesure le gain de l'auto-amelioration (A/B)")
     le.add_argument("--skill", type=float, default=0.20, help="competence du modele simule")
     le.add_argument("--runs", type=int, default=3, help="tirages par tache et par phase")
-    le.add_argument("--rounds", type=int, default=4, help="tours de boucle maximum")
+    le.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
+                    help="tours de boucle maximum")
     le.set_defaults(func=cmd_learn)
 
     return p
