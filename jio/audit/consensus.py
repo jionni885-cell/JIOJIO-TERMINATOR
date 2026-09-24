@@ -42,6 +42,12 @@ class ConsensusOutcome:
     tally: Mapping[str, int]
     dissent: tuple[str, ...]
     confidence: float
+    #: Nombre de couples (modele, verdict) DISTINCTS ayant vote. C'est ce chiffre,
+    #: et non la taille du panel, qui plafonne la confiance : cinq agents sur un
+    #: seul modele ne valent pas cinq agents. Il etait calcule puis jete — donc
+    #: invisible pour l'utilisateur qui cherchait pourquoi une mission parfaite
+    #: restait « avec reserve ».
+    effective_panel: int = 0
     reason: str = ""
 
     @property
@@ -128,6 +134,7 @@ class ConsensusEngine:
             tally=tally,
             dissent=dissent,
             confidence=conf,
+            effective_panel=effective_panel,
             reason=" ; ".join(reasons) or "accord suffisant et quorum byzantin satisfait",
         )
 

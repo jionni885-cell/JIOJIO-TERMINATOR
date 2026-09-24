@@ -214,7 +214,9 @@ def render_report(report: MissionReport, *, verbose: bool = False, color: bool =
 
     if report.abstention_reason:
         lines.append("")
-        lines.append(_c(f"  MOTIF : {report.abstention_reason[:200]}", "warn", color))
+        # Un motif tronque est un motif inutilisable : la partie actionnable
+        # (« ajouter un modele distinct, calibrer, ... ») arrivait coupee.
+        lines.append(_c(f"  MOTIF : {report.abstention_reason[:600]}", "warn", color))
 
     if verbose and report.subject:
         lines.append("")

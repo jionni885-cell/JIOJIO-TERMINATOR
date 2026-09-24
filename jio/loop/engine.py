@@ -392,6 +392,18 @@ class Engine:
 
     # -- apprentissage ------------------------------------------------------ #
 
+    def _reachable_ceiling(self, outcome: ConsensusOutcome) -> float:
+        """Score maximal atteignable par une mission parfaite, dans cette configuration.
+
+        Sert a distinguer deux refus tres differents :
+          * « le travail n'est pas assez bon »  -> il faut ameliorer l'artefact ;
+          * « le plafond est sous le seuil »    -> aucun travail ne suffira, il faut
+            changer la configuration (plus de modeles distincts, ou une porte calibree).
+        Confondre les deux fait perdre des heures a l'utilisateur.
+        """
+        decorrelation = min(1.0, 0.55 + 0.15 * outcome.effective_panel)
+        return round(decorrelation, 4)
+
     def _learn(self, mission: Mission, report: MissionReport) -> None:
         """Boucle d'auto-amelioration : router + memoire, apres chaque mission.
 
@@ -617,6 +629,32 @@ class Engine:
 
         # --- garde de conformite ------------------------------------------ #
         accepted, gate_reason = self.gate.decide(confidence)
+        if not accepted and outcome is not None:
+            # Un refus qui n'explique pas son calcul est inutilisable : l'utilisateur
+            # ne peut ni le verifier ni agir dessus. Verifie sur un cas reel : avec
+            # deux modeles distincts, le score PLAFONNE a 0.85 (decorrelation
+            # 0.55 + 0.15*2), donc un seuil non calibre de 0.90 est hors d'atteinte
+            # meme pour une mission parfaite. Le motif doit dire lequel des facteurs
+            # bloque, et quoi faire.
+            floor = self._reachable_ceiling(outcome)
+            head = gate_reason
+            if outcome.effective_panel >= 2 and floor < self.gate.tau():
+                # L'action d'abord : c'est la seule partie qui sert a quelque chose.
+                # Le calcul vient ensuite, pour qui veut le verifier.
+                head = (
+                    f"PLAFOND INATTEIGNABLE : avec {outcome.effective_panel} modele(s) "
+                    f"distinct(s), une mission PARFAITE plafonne a {floor:.3f}, sous le "
+                    f"seuil {self.gate.tau():.3f} — aucune livraison ne sera acceptee. "
+                    "Solutions : brancher un 3e modele distinct, calibrer la porte "
+                    "(`jio learn` fournit des points de calibration), ou elargir "
+                    f"l'alpha (actuellement {self.gate.alpha}). Detail : " + gate_reason
+                )
+            gate_reason = (
+                f"{head} | decompte : preuves {ratio:.3f} x accord "
+                f"{outcome.agreement:.3f} x decorrelation ({outcome.effective_panel} "
+                f"couple(s) modele-verdict distinct(s) sur {outcome.panel_size} voix) x "
+                f"confiance {outcome.confidence:.3f} = {confidence:.3f}"
+            )
         self.journal.append(
             "gate", {"accepted": accepted, "confidence": confidence, "reason": gate_reason,
                      "tau": self.gate.tau(), "calibrated": self.gate.calibrated}
