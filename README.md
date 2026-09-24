@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 153 tests verts, exécutable sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 181 tests verts, exécutable sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -218,12 +218,68 @@ observé, aucune n'a été décidée en théorie) :
   résolvait ses imports relatifs vers le mauvais fichier : les deux bugs ont été
   trouvés **par JIO sur son propre code**, pas par relecture.
 
+**3. Ne pas réinventer ce que d'autres font mieux.** Ruff, Flake8 et Pyflakes sont
+l'état de l'art pour repérer les vraies erreurs en Python. `jio scan` les branche
+quand ils sont présents (ruff, sinon flake8, sinon pyflakes), avec le jeu de règles
+« vrais bugs » de la littérature CI — `E9,F63,F7,F811,F82`, **aucune règle de style** :
+un projet qui passe ses tests ne doit pas être déclaré fautif parce qu'il n'aime pas
+l'ordre des imports.
+
+Chaque constat nomme son outil (`[ruff:F821]`) : c'est une preuve vérifiable, mais
+elle n'est pas de JIO, et le dire est la moindre des choses. Les messages sont
+expliqués en français, **le message d'origine est conservé**. Et si aucun analyseur
+n'est installé, le rapport ne laisse pas croire que le code a été passé au crible :
+il donne la commande exacte (`pip install ruff`).
+
+```
+3 PROBLEME(S) — avec la preuve :
+    buggy.py
+        [ruff:F821] nom non defini : le code ne peut pas s'executer — Undefined name `inconnue`
+        [ruff:F821] nom non defini : le code ne peut pas s'executer — Undefined name `y`
+        [ruff:F811] nom redefini : la definition precedente ne sert plus a rien — Redefinition of unused `doublon` from line 13
+```
+
+Vérifié : 3 défauts trouvés sur un fichier à vrais bugs, **0 faux positif** sur
+`humanize` et sur le noyau, et toujours 3/4 + 1 signalé sur le banc d'injection.
+
 L'auto-audit du noyau, après ces corrections :
 
 ```
 Aucun probleme sur les regles verifiables.
 27 fichier(s) verifiable(s) · 1 reserve(s) · 27 a audit partiel
 ```
+
+**4. Un défaut trouvé en usage réel, pas en théorie : le journal ne vérifiait plus.**
+Chaque nouveau processus repartait à `seq=0` et **ajoutait** au même fichier. Mesure
+sur le journal du dépôt : **545 événements, chaîne cassée, 9 redémarrages**. Un
+journal qui ne vérifie plus n'est pas un journal, c'est un fichier de texte — et
+toute la promesse de transparence repose dessus.
+
+Comportement retenu, celui d'un journal d'écriture standard : chaîne valide → reprise
+exacte depuis la tête existante ; chaîne **cassée** → on n'écrit jamais à la suite
+d'un journal falsifié, le fichier part en quarantaine (`journal.jsonl.corrompu-…`,
+**jamais supprimé**) et une chaîne neuve commence **en le disant** ; si la
+quarantaine est impossible, refus d'écrire (fail-closed). Vérifié de bout en bout :
+545 événements corrompus → quarantaine → 2 exécutions → `jio trace` : *120 événements,
+chaîne INTÉGRÉE*.
+
+---
+
+## Le rendre omniprésent : CI et hook standard
+
+Un défaut prouvé ne doit jamais atteindre un commit. JIO s'installe donc là où le
+code se valide déjà, au standard de l'écosystème :
+
+- **`.pre-commit-hooks.yaml`** : JIO utilisable comme hook depuis n'importe quel
+  dépôt (`repo: …/JIOJIO-TERMINATOR`). `pass_filenames: false` est volontaire — un
+  renommage casse **le consommateur**, pas le fichier modifié ; une vérification
+  fichier par fichier ne peut pas le voir.
+- **`.pre-commit-config.yaml`** : configuration de ce dépôt (hooks standards + ruff
+  sur les vrais bugs + l'auto-audit JIO).
+- **`.github/ci.yml.example`** : la CI (tests + `jio scan` + reproduction du banc).
+  Elle porte l'extension `.example` parce que le jeton GitHub de l'agent n'a **pas**
+  la permission `workflows` : GitHub refuse la création du fichier, et ce refus est
+  écrit dans le fichier lui-même. Installation en deux lignes, indiquée dedans.
 
 ---
 
@@ -267,7 +323,11 @@ comme *priors* — jamais comme preuves.
 
 *Bug réel trouvé par les tests :* `Journal(path=…)` ouvre le fichier en écriture mais
 **ne relit rien**. La mémoire écrivait donc sur disque et repartait vide à chaque
-processus — une mémoire qui oublie.
+processus — une mémoire qui oublie. Le journal lui-même souffrait du même défaut, plus
+grave encore : chaque processus **ajoutait une chaîne neuve** au même fichier, ce qui
+rendait le fichier invérifiable dès la deuxième exécution (mesure : 545 événements,
+chaîne cassée, 9 redémarrages). Corrigé par la reprise de chaîne et la mise en
+quarantaine décrites plus haut.
 
 ### La mesure qui a retourné contre elle-même
 
