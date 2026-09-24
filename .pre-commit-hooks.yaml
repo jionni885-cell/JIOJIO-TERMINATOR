@@ -1,0 +1,31 @@
+# JIO utilisable comme hook pre-commit, au standard de l'ecosysteme.
+# Le principe : un defaut prouve ne doit jamais atteindre un commit.
+#
+#   - repo: https://github.com/jionni885-cell/JIOJIO-TERMINATOR
+#     rev: <tag ou commit>
+#     hooks:
+#       - id: jio-scan
+#
+# `pass_filenames: false` est volontaire : un defaut n'existe pas fichier par
+# fichier. Un renommage casse le CONSOMMATEUR, qui n'est pas le fichier modifie ;
+# c'est justement ce qu'une verification par fichier isole ne peut pas voir.
+- id: jio-scan
+  name: JIO — audit du projet (defauts prouves uniquement)
+  description: >
+    Derive des regles executables depuis le code lui-meme (signature, exemples de
+    docstring, reproductibilite), verifie les imports internes, puis passe le projet
+    aux analyseurs standards. Ne signale que ce qui a une preuve.
+  entry: jio scan . --exclude-tests --no-learn
+  language: python
+  pass_filenames: false
+  always_run: true
+
+- id: jio-scan-strict
+  name: JIO — audit strict (aucune reserve toleree)
+  description: >
+    Meme audit, mais echoue aussi si le projet est incoherent a l'import. A utiliser
+    une fois la base assainie.
+  entry: jio scan . --exclude-tests --no-learn
+  language: python
+  pass_filenames: false
+  always_run: true

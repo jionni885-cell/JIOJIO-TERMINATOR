@@ -468,6 +468,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         spec=task.spec() if task else None,
     )
     report = engine.run(mission, work)
+    # Les avertissements du journal sont affiches APRES l'execution : c'est
+    # l'ecriture qui revele l'etat du fichier (reprise d'une chaine, mise en
+    # quarantaine d'un journal falsifie). Les annoncer avant l'ecriture serait
+    # annoncer un fait qui n'a pas encore eu lieu.
+    for notice in getattr(engine.journal, "notices", []):
+        print(f"  [journal] {notice}", file=sys.stderr)
     print(render_report(report, verbose=args.verbose))
     if args.json:
         Path(args.json).write_text(report.to_json(), encoding="utf-8")
@@ -863,6 +869,34 @@ def cmd_scan(args: argparse.Namespace) -> int:
             import_problems.append((root, "IMPORT", f"analyse impossible : {exc}"[:120]))
     problems.extend(import_problems)
 
+    # --- analyseurs standards du metier ------------------------------------- #
+    # Regle de travail : quand quelqu'un a deja resolu le probleme proprement, on
+    # utilise sa solution. Ruff/Flake8/Pyflakes sont l'etat de l'art pour reperer
+    # les erreurs reelles en Python ; les reecrire serait du gaspillage. Chaque
+    # constat nomme son outil : c'est une preuve verifiable, pas une affirmation.
+    linter_note = ""
+    linter_tool = ""
+    if args.check_linters and files:
+        from .verify.linters import analyse as linter_analyse
+
+        report = linter_analyse(
+            files, root=root if root.is_dir() else root.parent,
+            timeout=max(args.timeout * 10, 120),
+            prefer=str_env("JIO_LINTERS", "auto"),
+        )
+        linter_tool, linter_note = report.tool, report.note
+        broken = {path for path, rule, _ in problems if rule == "SYNTAXE"}
+        for finding in report.findings:
+            target = finding.path if (root / finding.path).exists() else root.parent / finding.path
+            if finding.path in broken or target in broken:
+                continue  # deja signale comme incompilable : pas de doublon
+            problems.append((target if target.exists() else finding.path,
+                             finding.rule, finding.label[:160]))
+        if report.truncated:
+            linter_note = (linter_note + " " if linter_note else "") + (
+                f"{report.truncated} constat(s) au-dela du plafond d'affichage"
+            )
+
     print()
     print(f"  SCAN  {root}  ·  {len(files)} fichier(s) Python  ·  {checked} verification(s)")
     print()
@@ -944,6 +978,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
             except Exception:  # une memoire defaillante ne casse pas le scan
                 break
 
+    if linter_tool:
+        print(f"    analyseurs standards : {linter_tool} (regles de vrais bugs, sans style)")
+    elif linter_note:
+        print(f"    analyseurs standards : {linter_note}")
     print(f"    {with_rules} fichier(s) verifiable(s) · {len(unverifiable)} sans regle"
           f" · {len(environment)} non testable(s) ici · {len(reserves)} reserve(s)"
           f" · {len(partial)} a audit partiel")
@@ -975,10 +1013,33 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 
 
 def cmd_trace(args: argparse.Namespace) -> int:
-    path = Path(args.journal)
+    """Rejoue et verifie un journal — meme sans indiquer lequel.
+
+    `jio trace` sans argument echouait : il fallait connaitre le chemin exact du
+    journal pour savoir ce qui s'etait passe. Exiger de connaitre la reponse pour
+    poser la question est une mauvaise interface. On cherche donc le journal, du
+    plus recent au plus ancien, et on dit clairement quoi faire s'il n'y en a pas.
+    """
+    path = Path(args.journal) if args.journal else Path(
+        str_env("JIO_JOURNAL", ".jio/journal.jsonl")
+    )
     if not path.exists():
-        print(f"  journal introuvable : {path}", file=sys.stderr)
-        return 2
+        candidates = sorted(
+            (p for p in Path(".jio").rglob("*.jsonl") if p.is_file()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if candidates:
+            path = candidates[0]
+        else:
+            print()
+            print("  Aucun journal pour l'instant : rien n'a encore ete execute.")
+            print("  Un journal se cree a la premiere mission :")
+            print("      jio run \"corriger la somme des pairs\" --task sum_even --simulate")
+            print("  Chaque evenement est chaine par hachage : rejouer ne peut pas")
+            print("  mentir, et `jio trace` verifie cette chaine.")
+            print()
+            return 0
     journal = Journal.from_jsonl(path.read_text(encoding="utf-8"))
     ok, bad = journal.verify_chain()
     summary = journal.summary()
@@ -1093,14 +1154,17 @@ def build_parser() -> argparse.ArgumentParser:
                     help="lister aussi les fichiers non verifiables")
     sc.add_argument("--no-imports", dest="check_imports", action="store_false",
                     help="ne pas verifier la coherence des imports internes")
+    sc.add_argument("--no-linters", dest="check_linters", action="store_false",
+                    help="ne pas utiliser les analyseurs standards (ruff/flake8/pyflakes)")
     sc.add_argument("--state", default=str_env("JIO_STATE", ".jio"),
                     help="dossier d'etat (memoire des echecs)")
     sc.add_argument("--no-learn", dest="no_learn", action="store_true",
                     help="ne rien memoriser")
-    sc.set_defaults(func=cmd_scan, check_imports=True)
+    sc.set_defaults(func=cmd_scan, check_imports=True, check_linters=True)
 
     t = sub.add_parser("trace", help="rejoue et verifie un journal")
-    t.add_argument("journal")
+    t.add_argument("journal", nargs="?", default="",
+                   help="chemin du journal (defaut : le plus recent trouve)")
     t.add_argument("--kind", default="", help="filtre par type d'evenement")
     t.set_defaults(func=cmd_trace)
 

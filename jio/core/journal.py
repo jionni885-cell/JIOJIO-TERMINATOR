@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
+from .errors import IntegrityViolation
 from .types import TrustLevel, canonical, digest_of, now
 
 GENESIS = "0" * 32
@@ -62,8 +63,65 @@ class Journal:
     def __init__(self, path: str | os.PathLike[str] | None = None) -> None:
         self._events: list[Event] = []
         self.path = Path(path) if path is not None else None
+        #: Ce qu'il faut dire a l'utilisateur sur l'etat du fichier (rotation,
+        #: chaine cassee). Un journal ne se repare pas en silence.
+        self.notices: list[str] = []
+        self._resumed = False
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    # -- reprise sur un fichier existant ----------------------------------- #
+
+    def _resume_from_disk(self) -> None:
+        """Reprend la chaine existante au lieu d'en demarrer une seconde.
+
+        Defaut constate en usage reel : chaque nouveau processus repartait a
+        `seq=0` avec `prev=GENESIS` et AJOUTAIT au meme fichier. Le journal
+        devenait invérifiable des la deuxieme execution (9 redemarrages observes
+        sur un journal de 545 evenements), c'est-a-dire precisement quand on a
+        besoin de lui. Toute la promesse de transparence repose sur ce fichier.
+
+        Comportement retenu, celui d'un journal d'ecriture standard :
+
+        * chaine valide  -> on reprend exactement ou elle s'etait arretee ;
+        * chaine CASSEE  -> on n'ecrit JAMAIS par-dessus ni a la suite d'un
+          mensonge : le fichier est mis en quarantaine (renomme, jamais
+          supprime) et une chaine neuve commence, en le disant.
+        """
+        if self._resumed or self.path is None or self._events:
+            return
+        self._resumed = True
+        try:
+            if not self.path.exists() or self.path.stat().st_size == 0:
+                return
+            text = self.path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            self.notices.append(f"journal illisible ({exc}) : une chaine neuve commence")
+            return
+
+        existing = Journal.from_jsonl(text)
+        if not existing._events:
+            return
+        ok, bad = existing.verify_chain()
+        if ok:
+            self._events = existing._events
+            return
+
+        stamp = int(time.time())
+        quarantine = self.path.with_name(f"{self.path.name}.corrompu-{stamp}")
+        try:
+            self.path.rename(quarantine)
+        except OSError as exc:
+            raise IntegrityViolation(
+                f"le journal {self.path} est incoherent (chaine cassee a l'evenement "
+                f"{bad}) et ne peut pas etre deplace ({exc}). Refus d'ecrire a la "
+                "suite d'un journal falsifie : deplacez ou supprimez ce fichier."
+            ) from exc
+        self.notices.append(
+            f"journal precedent incoherent (chaine cassee a l'evenement {bad}) : "
+            f"conserve sous {quarantine.name}, une chaine neuve commence. "
+            "Rien n'a ete supprime."
+        )
 
     # -- ecriture ---------------------------------------------------------- #
 
@@ -74,6 +132,7 @@ class Journal:
         *,
         trust: TrustLevel = TrustLevel.SYSTEM,
     ) -> Event:
+        self._resume_from_disk()
         seq = len(self._events)
         ts = now()
         body: Mapping[str, Any] = dict(payload or {})

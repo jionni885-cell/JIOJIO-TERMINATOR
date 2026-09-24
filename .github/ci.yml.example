@@ -1,0 +1,59 @@
+# EXEMPLE a installer en `.github/workflows/ci.yml`
+# --------------------------------------------------------------------------- #
+# Pourquoi ce fichier porte l'extension `.example` : le jeton GitHub utilise pour
+# pousser depuis l'agent n'a PAS la permission `workflows`. La creation du fichier
+# de workflow est donc refusee a la source ("refusing to allow a GitHub App to
+# create or update workflow .github/workflows/ci.yml without `workflows`
+# permission"). Plutot que de perdre le travail ou de contourner la securite du
+# depot, le fichier est fourni ici, pret a l'emploi.
+#
+# Installation (toi seul as les droits) :
+#     mkdir -p .github/workflows
+#     cp .github/ci.yml.example .github/workflows/ci.yml
+#     git add .github/workflows/ci.yml && git commit -m "CI: tests + auto-audit JIO"
+#
+# Ou plus simple : GitHub -> Actions -> New workflow -> « set up a workflow
+# yourself », puis coller ce contenu.
+
+name: CI
+
+# Deux verifications, pas une : que les tests passent, ET que le projet s'audite
+# lui-meme proprement. Un projet qui se contente de ses propres tests ne verifie
+# que ce qu'il a pense a tester ; `jio scan` regarde ce que personne n'a pense a
+# tester. Les deux doivent etre verts pour merger.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installer les outils de verification
+        run: |
+          python -m pip install --upgrade pip
+          # pytest : la suite du projet. ruff : l'analyseur standard des vrais bugs,
+          # branche sur `jio scan`. Aucune autre dependance n'est necessaire.
+          python -m pip install pytest ruff
+
+      - name: Suite de tests
+        run: python -m pytest -q
+
+      - name: JIO s'audite lui-meme
+        # Doit sortir en code 0 : aucun defaut prouve. Les reserves et les limites
+        # declarees sont affichees sans faire echouer — c'est la difference entre
+        # auditer et pretendre auditer.
+        run: python -m jio scan jio --exclude-tests --no-learn
+
+      - name: La mesure du banc
+        # Le chiffre publie doit etre reproduisible par n'importe qui, sinon ce
+        # n'est pas une mesure mais une affirmation.
+        run: python -m jio bench --rounds 2
