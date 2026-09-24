@@ -246,7 +246,7 @@ L'auto-audit du noyau, après ces corrections :
 
 ```
 Aucun probleme sur les regles verifiables.
-27 fichier(s) verifiable(s) · 1 reserve(s) · 27 a audit partiel
+47 fichier(s) Python · 72 verification(s) · 1 reserve(s) · 30 a audit partiel
 ```
 
 **4. Un défaut trouvé en usage réel, pas en théorie : le journal ne vérifiait plus.**
@@ -262,6 +262,74 @@ d'un journal falsifié, le fichier part en quarantaine (`journal.jsonl.corrompu-
 quarantaine est impossible, refus d'écrire (fail-closed). Vérifié de bout en bout :
 545 événements corrompus → quarantaine → 2 exécutions → `jio trace` : *120 événements,
 chaîne INTÉGRÉE*.
+
+**5. Un code peut passer tous ses exemples et violer une propriété évidente.** C'est
+la limite structurelle des tests par exemples : trente ans de littérature, et une
+mesure récente — exemples seuls **68,75 %** de détection, propriétés seules 68,75 %,
+**les deux combinés 81,25 %**. Le cas typique :
+
+```python
+def normalize(nums):
+    """Normalise.
+
+    >>> normalize([3, 1, 3])
+    [1, 3, 3]
+    """
+    nums.sort()            # l'appelant ne s'attendait PAS a perdre sa liste
+    return nums
+```
+
+La docstring est juste, la valeur rendue est la bonne, tous les exemples passent —
+et le contrat est violé. `jio scan` dérive donc des propriétés **du code lui-même**,
+sans modèle et sans réseau :
+
+| Propriété | Ce qu'elle dit | D'où vient l'autorisation de l'affirmer |
+|---|---|---|
+| `P-001` non-mutation | l'argument de l'appelant reste intact | une fonction qui **rend une valeur** n'a pas à modifier son entrée ; une API « en place » (`-> None`, `sort_in_place`) n'est **jamais** accusée |
+| `P-002` idempotence | `f(f(x)) == f(x)` | seulement si le **nom** ou la **docstring** le promet (`normalize`, « idempotent ») — `double(1)=2` puis `double(2)=4` : le type `int -> int` ne prouve rien, et accuser ce code serait un faux positif |
+| `P-003` aller-retour | `decode(encode(x)) == x` | seulement pour les paires dont le **nom** promet l'aller-retour (`encode/decode`, `pack/unpack`, `dump/load`…), y compris en suffixe (`url_encode`/`url_decode`) |
+
+Les entrées de test ne sont pas inventées : **annotations** d'abord, sinon les
+exemples `>>>` de l'auteur (écrits et validés par lui, donc dans le domaine), et pour
+une paire d'aller-retour le **type de retour de la fonction inverse** — qui est, par
+définition de la propriété, le type de `x`. Chaque refus est exonéré : une exception
+n'est jamais une violation (le domaine déclaré ne couvre pas forcément tous les cas).
+
+Le défaut est livré avec son **plus petit contre-exemple**, obtenu par réduction
+automatique — un rapport utilisable :
+
+```
+[P-001:normalize] l'argument a ete MODIFIE par normalize :
+    le plus petit contre-exemple est ([1, 0],)
+```
+
+Mesure sur un banc de 8 artefacts fautifs (mutation d'argument, aller-retour avec
+perte, idempotence rompue) et 8 artefacts sains, **classes identiques, seules les
+règles changent** :
+
+| | fautifs détectés | artefacts sains accusés |
+|---|---|---|
+| règles par exemples seules (A-*) | 1/8 | 0/8 |
+| A-* **+ propriétés** (P-*) | **8/8** | **0/8** |
+
+Coût : **+14 règles sur 47 fichiers**, dérivation purement statique (aucun appel
+réseau, aucun modèle ; la durée de dérivation du noyau est inchangée, ~0,15 s).
+Silence délibéré sur une paire comme `join_fields`/`split_fields` : elle ne promet
+pas l'aller-retour (un séparateur peut apparaître dans un élément) — **on ne déclare
+que ce qu'on peut prouver, et on se tait sur le reste**.
+
+Ce chantier a trouvé deux défauts dans JIO lui-même, tous deux de la famille
+« rapport inutilisable » :
+
+- le réducteur de contre-exemple livrait `[1,1,2,2,3,3,4,4,5,5,6,6]` — une liste
+  **déjà triée**, donc qui ne reproduit rien : l'appel mutait l'objet du cas de test,
+  et le témoin publié était le résidu d'après mutation. Corrigé (appel sur copie,
+  comparaison portant sur l'objet réellement passé) et le réducteur supprime
+  désormais élément par élément au lieu de tronquer ;
+- une docstring qui **mentionne** `>>>` dans sa prose déclenchait la règle
+  « les exemples sont satisfaits », laquelle échouait faute d'exemple réel : mon
+  propre fichier était déclaré fautif. La détection interroge maintenant l'analyseur
+  de `doctest` lui-même (source de vérité unique).
 
 ---
 

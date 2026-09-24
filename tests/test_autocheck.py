@@ -90,10 +90,21 @@ def test_syntax_error_reported():
 # --------------------------------------------------------------------------- #
 
 
-def test_bon_artefact_est_conforme_sur_trois_regles():
+def test_bon_artefact_est_conforme_sur_toutes_les_regles():
+    """Un artefact sain satisfait TOUTES les regles derivees, quel qu'en soit le nombre.
+
+    Le comptage exact n'est pas le sujet : chaque axe ajoute des regles (ici P-001,
+    non-mutation, derivee de la signature et de l'exemple). Ce qui doit tenir est
+    qu'aucune regle ne condamne un artefact correct — c'est le point ou un faux
+    positif couterait la confiance dans l'outil.
+    """
     res = _prove(BON)
-    assert len(res.witnesses) == 3
     assert res.passed
+    assert not res.failures
+    assert len(res.witnesses) >= 3
+    assert any(w.rule_id.startswith("P-") for w in res.witnesses), (
+        "l'axe proprietes doit etre actif sur un artefact annote"
+    )
 
 
 def test_docstring_menteuse_est_detectee():

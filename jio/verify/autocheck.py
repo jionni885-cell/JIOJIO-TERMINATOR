@@ -43,6 +43,7 @@ import ast
 from dataclasses import dataclass, field
 
 from ..core.types import Rule, RuleKind, Spec
+from .properties import derive_properties, docstring_examples
 
 __all__ = ["DerivedSpec", "derive", "syntax_error"]
 
@@ -206,6 +207,11 @@ def _instantiable_without_args(node: ast.ClassDef) -> tuple[bool, str]:
 #: mieux qu'un silence : au-dela, le rapport dit combien de fonctions restent hors
 #: audit, au lieu de laisser croire que le fichier est entierement couvert.
 _MAX_AUDITED_FUNCTIONS = 8
+#: Plafond des fonctions couvertes par les proprietes derivees. Chaque propriete est
+#: un programme execute dans le bac a sandbox : le budget doit rester borne et
+#: VISIBLE. On garde la marge la plus utile (les premieres fonctions auditees sont
+#: celles qui portent des exemples, donc les plus informatives).
+_MAX_PROPERTY_FUNCTIONS = 4
 
 _SKIPPED_DECORATORS = {"property", "staticmethod", "classmethod", "abstractmethod", "cached_property"}
 
@@ -344,7 +350,20 @@ def _public_methods(node: ast.ClassDef) -> list[ast.FunctionDef]:
 
 
 def _has_doctest(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    return ">>>" in (ast.get_docstring(node) or "")
+    """La docstring contient-elle un exemple EXECUTABLE (et non une simple mention) ?
+
+    La version precedente testait `">>>" in docstring`. Consequence mesuree sur ce
+    depot meme : une docstring qui MENTIONNE `>>>` dans sa prose declenchait la regle
+    « les exemples de la docstring sont satisfaits », et cette regle echouait faute
+    d'exemple reel a executer — un fichier parfaitement correct etait declare
+    fautif. On interroge donc l'analyseur de doctest lui-meme : une seule source de
+    verite pour « y a-t-il un exemple ? », c'est la condition pour ne jamais accuser
+    a tort.
+    """
+    doc = ast.get_docstring(node)
+    if not doc or ">>>" not in doc:
+        return False
+    return bool(docstring_examples(doc))
 
 
 #: Valeurs limites associees aux types de base. Volontairement minuscule : on
@@ -654,6 +673,7 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
     checks: dict[str, str] = {}
     notes: list[str] = []
     under: list[str] = []
+    derived: list[str] = []
 
     r1 = "A-001"
     rules.append(
@@ -806,9 +826,53 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
         "la conformite au besoin metier n'est PAS verifiable sans specification "
         "externe : fournir des oracles (--task) ou des exemples (`>>>`)"
     )
-    notes.append(
-        "attentes non prouvables (non-mutation des arguments, totalite, type de "
-        "retour) : declarees, jamais presumees, sans effet sur le verdict"
+    # ------------------------------------------------------------------ #
+    # Proprietes derivees du code (axe P).
+    #
+    # Les regles precedentes verifient des EXEMPLES : les `>>>` de l'auteur et la
+    # reproductibilite des sondes. Or un artefact peut passer tous les exemples et
+    # violer une propriete evidente (`return nums.sort()` renvoie la liste triee en
+    # apparence, mais modifie l'entree de l'appelant et casse le contrat). La
+    # litterature est nette : exemples seuls 68,75 % de detection, proprietes seules
+    # 68,75 %, les deux combines 81,25 %.
+    #
+    # Cote cout : la derivation est STATIQUE (lecture de la signature et du nom,
+    # aucun modele, aucun appel reseau). Chaque propriete tient en un programme
+    # execute dans le bac a sable, exactement comme les autres regles, et le nombre
+    # de fonctions couvertes est borne ci-dessous.
+    # ------------------------------------------------------------------ #
+    for name in audited[:_MAX_PROPERTY_FUNCTIONS]:
+        node_p = defs.get(name)
+        if node_p is None:
+            continue
+        for prop in derive_properties(node_p, name, module_functions=defs):
+            rule_id = f"{prop.id}:{name}"
+            if rule_id in checks:
+                continue
+            rules.append(
+                Rule(
+                    id=rule_id,
+                    statement=f"{prop.statement} [derivee du code, sans exemple fourni]",
+                    kind=RuleKind.PROPERTY,
+                )
+            )
+            checks[rule_id] = prop.check
+            derived.append(f"{prop.name} sur {name}")
+
+    if derived:
+        notes.append(
+            f"proprietes derivees et executees : {', '.join(derived[:6])}"
+            + (f" (+{len(derived) - 6} autres)" if len(derived) > 6 else "")
+        )
+    else:
+        under.append(
+            "aucune propriete derivable ici (annotations ou noms insuffisants) : "
+            "non-mutation, idempotence et aller-retour NON verifies"
+        )
+
+    under.append(
+        "totalite (toute entree valide rend un resultat) et type de retour ne sont "
+        "PAS prouvables statiquement : declares, jamais presumes, sans effet sur le verdict"
     )
 
     return DerivedSpec(
