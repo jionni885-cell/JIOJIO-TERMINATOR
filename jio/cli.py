@@ -397,6 +397,24 @@ def cmd_bench(args: argparse.Namespace) -> int:
     return 0
 
 
+def _attach_learning(engine, state_dir: Path, *, disable: bool = False) -> None:
+    """Active la memoire des echecs et le routeur de confiance sur un moteur.
+
+    Sans cet appel, ces deux modules existent mais ne sont JAMAIS charges par une
+    mission : l'auto-amelioration annoncee ne tournait pas. Un composant qui ne
+    s'execute pas n'existe pas — constate en mesurant les modules reellement
+    importes pendant une mission.
+    """
+    if disable:
+        return
+    from .learn import FailureMemory
+    from .trust import TrustRouter
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    engine.memory = FailureMemory(path=state_dir / "failures.jsonl")
+    engine.router = TrustRouter(path=state_dir / "trust.json")
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     journal_path = Path(args.journal) if args.journal else None
     task = TASKS_BY_ID.get(args.task) if getattr(args, "task", "") else None
@@ -416,6 +434,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
     else:
         engine = _real_engine(journal_path=journal_path, max_rounds=args.rounds)
+    _attach_learning(engine, Path(args.state), disable=args.no_learn)
 
     objective = task.objective if task else args.objective
     mission = Mission(objective=objective, max_rounds=args.rounds, alpha=args.alpha)
@@ -696,6 +715,225 @@ def cmd_learn(args: argparse.Namespace) -> int:
     return 0
 
 
+def _classify_failure(stderr: str, exit_code: int) -> str:
+    """Un echec de verification est-il un defaut de l'artefact ou une limite d'environnement ?
+
+    Constate sur un vrai projet (`humanize`) : `_version.py` est GENERE a
+    l'installation (setuptools-scm) et absent du depot. Les regles echouaient
+    alors avec `ModuleNotFoundError`, et l'audit declarait 7 problemes dans un
+    projet parfaitement correct.
+
+    Un echec du a l'environnement n'est NI un defaut, NI une reserve : c'est
+    l'aveu que la verification n'a pas pu avoir lieu. Les distinguer, c'est la
+    difference entre un outil qu'on peut brancher sur du vrai code et un outil
+    qui noie l'utilisateur sous de fausses alertes.
+    """
+    text = stderr or ""
+    if "ModuleNotFoundError" in text or "ImportError" in text:
+        return "environment"
+    # Un SyntaxError atteignant ce point ne peut PAS venir de l'artefact : derive()
+    # l'a deja analyse avec succes. Il vient donc forcement d'un module importe —
+    # typiquement un fichier casse dont notre fichier depend. L'accuser produirait
+    # une CASCADE de faux positifs : un seul fichier fautif ferait declarer
+    # coupables tous ses dependants. Constate sur un vrai projet.
+    if "SyntaxError" in text or "IndentationError" in text:
+        return "environment"
+    if exit_code == 127:  # binaire absent
+        return "environment"
+    return "defect"
+
+
+def cmd_scan(args: argparse.Namespace) -> int:
+    """Audite un projet entier et n'affiche QUE ce qui ne va pas.
+
+    C'est l'utilite premiere : pointer le systeme sur du vrai code et obtenir une
+    liste courte de defauts reels, chacun avec sa preuve. Un rapport qui recopie
+    « tout va bien » pour 200 fichiers n'aide personne.
+    """
+    from .verify.autocheck import derive
+    from .verify.executable import ExecutableProver, Sandbox
+
+    root = Path(args.path)
+    if not root.exists():
+        print(f"  chemin introuvable : {root}", file=sys.stderr)
+        return 2
+
+    files = sorted(root.rglob("*.py")) if root.is_dir() else [root]
+    if args.exclude_tests:
+        files = [f for f in files
+                 if not (f.name.startswith("test_") or f.name == "conftest.py"
+                         or "/tests/" in str(f) or "/test/" in str(f))]
+
+    prover = ExecutableProver(sandbox=Sandbox(timeout=args.timeout))
+    problems: list[tuple[Path, str, str]] = []    # fichier, regle, preuve
+    environment: list[tuple[Path, str, str]] = []  # verification impossible : pas un defaut
+    reserves: list[tuple[Path, str, str]] = []
+    partial: dict[Path, list[str]] = {}
+    unverifiable: list[Path] = []
+    with_rules = 0
+    checked = 0
+
+    for path in files:
+        try:
+            source = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if len(source) > 500_000:
+            continue
+        try:
+            derived = derive(source, path=path)
+        except Exception as exc:                    # un fichier hostile ne casse pas le scan
+            problems.append((path, "SCAN", f"analyse impossible : {exc}"[:120]))
+            continue
+        if not derived.verifiable:
+            # Un fichier qui ne compile pas n'est PAS « non verifiable » : c'est un
+            # defaut, et le plus grave qui soit puisqu'il empeche tout le reste.
+            broken = next((u for u in derived.spec.under_specified
+                           if "ne compile pas" in u), "")
+            if broken:
+                problems.append((path, "SYNTAXE", broken[:160]))
+            else:
+                unverifiable.append(path)
+            continue
+        with_rules += 1
+        try:
+            res = prover.prove(
+                source, derived.spec, hidden_checks=derived.checks,
+                entrypoint=derived.entrypoint, preamble=derived.preamble,
+            )
+        except Exception as exc:
+            problems.append((path, "SCAN", f"preuve impossible : {exc}"[:120]))
+            continue
+        checked += len(res.witnesses)
+        for w in res.hard_failures:
+            detail = [x.strip() for x in (w.stderr or "").splitlines() if x.strip()]
+            message = (detail[-1] if detail else f"exit {w.exit_code}")[:160]
+            if _classify_failure(w.stderr, w.exit_code) == "environment":
+                # Ce n'est pas un defaut du projet : c'est notre environnement qui
+                # est incomplet (dependance generee, paquet non installe).
+                environment.append((path, w.rule_id, message))
+            else:
+                problems.append((path, w.rule_id, message))
+        for w in res.reservations:
+            lines = [x.strip() for x in (w.stderr or w.stdout or "").splitlines() if x.strip()]
+            reserves.append((path, w.rule_id, (lines[-1] if lines else "non tranche")[:120]))
+        # Une limite declaree n'est pas un defaut : c'est la liste de ce que ces
+        # regles-la ne savent pas juger (parametres non annotes, fonctions hors
+        # audit, hasard hors des fonctions auditees). La taire serait presenter un
+        # audit partiel comme un audit complet.
+        limits = [u for u in derived.spec.under_specified
+                  if "ne compile pas" not in u]
+        if limits:
+            partial.setdefault(path, []).extend(limits)
+
+    # --- coherence des imports internes (aucune execution, deterministe) ----- #
+    import_problems: list[tuple[Path, str, str]] = []
+    if args.check_imports and len(files) > 1:
+        from .verify.imports import check_project
+
+        scan_root = root if root.is_dir() else root.parent
+        try:
+            for prob in check_project(files, scan_root):
+                import_problems.append((prob.path, "IMPORT", prob.message))
+
+        except Exception as exc:  # une analyse qui echoue ne doit pas tuer le scan
+            import_problems.append((root, "IMPORT", f"analyse impossible : {exc}"[:120]))
+    problems.extend(import_problems)
+
+    print()
+    print(f"  SCAN  {root}  ·  {len(files)} fichier(s) Python  ·  {checked} verification(s)")
+    print()
+    if problems:
+        print(f"  {len(problems)} PROBLEME(S) — avec la preuve :")
+        print()
+        by_file: dict[Path, list[tuple[str, str]]] = {}
+        for path, rule, detail in problems:
+            by_file.setdefault(path, []).append((rule, detail))
+        for path in sorted(by_file, key=lambda p: (-len(by_file[p]), str(p))):
+            print(f"    {path}")
+            for rule, detail in by_file[path]:
+                print(f"        [{rule}] {detail}")
+        print()
+    else:
+        print("  Aucun probleme sur les regles verifiables.")
+        print()
+
+    if environment:
+        print(f"  {len(environment)} FICHIER(S) NON TESTABLE(S) ICI — ce n'est PAS un defaut :")
+        for path, rule, detail in environment[:6]:
+            print(f"    {path.name} [{rule}] {detail[:100]}")
+        if len(environment) > 6:
+            print(f"    ... et {len(environment) - 6} autre(s)")
+        print("    cause : l'environnement est incomplet (dependance generee, paquet non")
+        print("    installe). Installer le projet puis relancer donnerait un vrai verdict.")
+        print()
+
+    if reserves:
+        print(f"  {len(reserves)} RESERVE(S) (suspect, non prouve — jamais un verdict) :")
+        for path, rule, why in reserves[:10]:
+            print(f"    {path.name} [{rule}] {why}")
+        if len(reserves) > 10:
+            print(f"    ... et {len(reserves) - 10} autre(s)")
+        print("    une reserve n'est pas une accusation : c'est ce que ces regles-la ne")
+        print("    savent pas trancher. Elle ne fait jamais echouer le scan.")
+        print()
+
+    if partial:
+        if args.verbose:
+            print(f"  {len(partial)} FICHIER(S) A AUDIT PARTIEL — ce qui reste NON verifie :")
+            for path in list(partial)[:8]:
+                print(f"    {path.name}")
+                for limit in partial[path][:5]:
+                    print(f"        · {limit[:150]}")
+            if len(partial) > 8:
+                print(f"    ... et {len(partial) - 8} autre(s) — jio scan -v pour tout voir")
+        else:
+            worst = sorted(partial.items(), key=lambda kv: -len(kv[1]))[:3]
+            print(f"  {len(partial)} fichier(s) a audit PARTIEL (limites declarees) :")
+            for path, limits in worst:
+                print(f"    {path.name} : {limits[0][:110]}")
+            print("    relancer avec -v pour la liste complete. Un audit partiel n'est pas")
+            print("    un audit complet : ces limites sont declarees, jamais presumees.")
+        print()
+
+    if unverifiable and args.verbose:
+        print(f"  {len(unverifiable)} fichier(s) sans regle executable :")
+        for path in unverifiable[:20]:
+            print(f"    {path}")
+        print()
+
+    remembered = 0
+    if problems and not args.no_learn:
+        from .learn import FailureMemory
+
+        memory = FailureMemory(path=Path(args.state) / "failures.jsonl")
+        for path, rule, detail in problems:
+            try:
+                memory.record(
+                    objective=f"corriger {path.name}",
+                    symptom=f"[{rule}] {detail}",
+                    root_cause=f"defaut detecte par le scan dans {path}",
+                    correct_fix="non encore applique",
+                    guard=f"jio scan {root} : la regle {rule} de {path.name}",
+                    mission_id=f"scan:{path.name}",
+                )
+                remembered += 1
+            except Exception:  # une memoire defaillante ne casse pas le scan
+                break
+
+    print(f"    {with_rules} fichier(s) verifiable(s) · {len(unverifiable)} sans regle"
+          f" · {len(environment)} non testable(s) ici · {len(reserves)} reserve(s)"
+          f" · {len(partial)} a audit partiel")
+    if remembered:
+        print(f"    {remembered} probleme(s) memorise(s) : la prochaine execution saura quoi")
+        print(f"    eviter, et pourquoi. Consulter : jio memory --state {args.state}")
+    print(f"    Lecture du resultat : code 0 = rien trouve ; code 1 = au moins un defaut")
+    print(f"    reel avec sa preuve. Un fichier sans regle executable n'est PAS un")
+    print(f"    fichier correct : c'est un fichier que ces regles-la ne savent pas juger.")
+    print()
+    return 1 if problems else 0
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp_server import TOOLS, main as mcp_main
 
@@ -803,6 +1041,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--simulate", action="store_true",
                    help="modele simule deterministe : aucune cle API requise")
     r.add_argument("--task", default="", help="id de tache du banc (oracles + specification)")
+    r.add_argument("--state", default=".jio", help="dossier d'etat (memoire + routeur)")
+    r.add_argument("--no-learn", dest="no_learn", action="store_true",
+                   help="desactiver memoire et routeur pour cette execution")
     r.add_argument("--rounds", type=int, default=5)
     r.add_argument("--alpha", type=float, default=0.05, help="risque d'erreur accepte")
     r.add_argument("--journal", default=".jio/journal.jsonl")
@@ -815,6 +1056,20 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--task", default="", help="id de tache du banc pour les oracles")
     a.add_argument("--entrypoint", default="", help="fonction a auditer (sinon la premiere)")
     a.set_defaults(func=cmd_audit)
+
+    sc = sub.add_parser("scan", help="audite un projet entier et n'affiche que les problemes")
+    sc.add_argument("path", help="fichier ou repertoire")
+    sc.add_argument("--exclude-tests", action="store_true",
+                    help="ignorer test_*.py, conftest.py et les dossiers tests/")
+    sc.add_argument("--timeout", type=int, default=20, help="timeout par verification (s)")
+    sc.add_argument("-v", "--verbose", action="store_true",
+                    help="lister aussi les fichiers non verifiables")
+    sc.add_argument("--no-imports", dest="check_imports", action="store_false",
+                    help="ne pas verifier la coherence des imports internes")
+    sc.add_argument("--state", default=".jio", help="dossier d'etat (memoire des echecs)")
+    sc.add_argument("--no-learn", dest="no_learn", action="store_true",
+                    help="ne rien memoriser")
+    sc.set_defaults(func=cmd_scan, check_imports=True)
 
     t = sub.add_parser("trace", help="rejoue et verifie un journal")
     t.add_argument("journal")

@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 141 tests verts, exécutable sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 153 tests verts, exécutable sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -156,6 +156,74 @@ Les modules de données pures renvoient **INDÉTERMINÉ**, jamais « conforme »
 l'artefact. Une règle **ADVISORY** (dépendance à l'environnement, horloge, hasard)
 produit une **réserve** : elle est affichée, jamais transformée en verdict. C'est la
 différence entre auditer et prétendre auditer.
+
+---
+
+## `jio scan` : la même preuve, appliquée à du code qui n'est pas le mien
+
+Le vrai juge, c'est du code réel écrit par d'autres. Deux épreuves, mesurées.
+
+**1. Un projet sain ne doit produire aucune alerte.** Sur un clone de
+`python-humanize/humanize` (`jio scan src --exclude-tests`) : **0 problème**. Ce
+zéro a coûté deux corrections, et la seconde est instructive :
+
+| Fausse alerte | Ce qui se passait réellement |
+|---|---|
+| 7 × `ModuleNotFoundError: humanize._version` | fichier **généré à l'installation** (setuptools-scm), absent du dépôt → « non testable ici », ni défaut ni réserve |
+| `AssertionError` sur 5 exemples de `time.py` | l'environnement d'audit n'avait pas `python-dateutil`. La cause réelle était **masquée** par un message générique : le contrôle de docstring effaçait la sortie de `doctest` |
+
+Ce second point est le cœur du problème : **un vérificateur qui accuse à tort
+détruit la confiance plus vite qu'il n'en crée.** Le contrôle de docstring restitue
+désormais la trace réelle, et une dépendance absente est classée « non testable ici ».
+
+**2. Un défaut injecté doit être trouvé.** Quatre bugs réalistes injectés dans
+`humanize/filesize.py`, avec contrôle du projet intact :
+
+```
+bug injecte                            verdict      preuve / signalement
+docstring mensongere (valeur fausse)   PROBLEME     [A-003] '3.1 MB' | Got: '3.0 MB'
+non-reproductible (hasard)             SIGNALE      non-determinisme hors fonctions auditees : _jio_unstable (random.randint)
+point d'entree renomme                 PROBLEME     [IMPORT] `naturalsize` importe de `humanize.filesize` mais n'y existe pas
+syntaxe cassee                         PROBLEME     [SYNTAXE] la source ne compile pas : invalid syntax (ligne 113)
+```
+
+Trois verdicts, jamais deux : **PROBLEME** (prouvé), **SIGNALE** (réserve ou limite
+déclarée, avec sa localisation), **silence**. Le banc refuse de compter une mutation
+qui n'a rien changé au fichier — la version précédente croyait détecter deux bugs qui
+n'avaient jamais été injectés, et comptait en réalité une fausse alerte.
+
+**Ce que ces épreuves ont changé dans le produit** (chaque ligne vient d'un échec
+observé, aucune n'a été décidée en théorie) :
+
+- **l'audit couvrait UNE fonction par fichier.** Un bug dans une deuxième fonction
+  documentée restait invisible : `jio scan` auditait sans auditer. Désormais toutes les
+  fonctions documentées sont couvertes (plafond affiché, 8) — sur `humanize`, la
+  couverture est passée de **13 à 32 vérifications** ;
+- **renommer un symbole public n'était pas détecté** : l'erreur n'apparaît que chez
+  l'appelant, sous forme d'`ImportError` donc classée « environnement ». Nouveau
+  vérificateur de cohérence des imports (`jio/verify/imports.py`), sans exécution :
+  noms importés **et** accès par attribut (`pkg.a.helper()`), résolution tolérante à la
+  racine du scan ;
+- **un fichier incompilable n'était signalé nulle part** : classer tout `SyntaxError`
+  comme « environnement » rendait muet le pire défaut possible. Il est désormais un
+  **défaut explicite** ;
+- **`import random as _rnd` échappait à la règle de reproductibilité** : l'analyse
+  cherchait la chaîne `random.`. Les alias sont résolus (`_rnd.randint` → `random.randint`),
+  y compris `from time import monotonic as clock` ;
+- **des limites honnêtes étaient calculées puis jetées** : « non couvert par cet audit :
+  … », « non-déterminisme hors des fonctions auditées : … » n'étaient affichées nulle
+  part. Elles sont maintenant lisibles (`jio scan -v`) et comptées dans le résumé
+  — *un audit partiel n'est pas un audit complet* ;
+- **`from pkg import a` (a = sous-module)** était accusé à tort, et un `__init__.py`
+  résolvait ses imports relatifs vers le mauvais fichier : les deux bugs ont été
+  trouvés **par JIO sur son propre code**, pas par relecture.
+
+L'auto-audit du noyau, après ces corrections :
+
+```
+Aucun probleme sur les regles verifiables.
+27 fichier(s) verifiable(s) · 1 reserve(s) · 27 a audit partiel
+```
 
 ---
 

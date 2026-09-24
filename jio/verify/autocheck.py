@@ -202,6 +202,11 @@ def _instantiable_without_args(node: ast.ClassDef) -> tuple[bool, str]:
     return True, ""
 
 
+#: Plafond du nombre de fonctions auditees par fichier. Un plafond explicite vaut
+#: mieux qu'un silence : au-dela, le rapport dit combien de fonctions restent hors
+#: audit, au lieu de laisser croire que le fichier est entierement couvert.
+_MAX_AUDITED_FUNCTIONS = 8
+
 _SKIPPED_DECORATORS = {"property", "staticmethod", "classmethod", "abstractmethod", "cached_property"}
 
 #: Sources de non-determinisme reconnues. Une horloge ou un generateur
@@ -262,7 +267,41 @@ def _call_name(node: ast.Call) -> str:
     return ast.unparse(node.func)
 
 
-def _nondeterminism_sources(node: ast.AST) -> tuple[str, ...]:
+def _import_aliases(tree: ast.Module) -> dict[str, str]:
+    """Table alias local -> module d'origine, pour l'analyse du non-determinisme.
+
+    `import random as _rnd` suivi de `_rnd.randint(...)` etait invisible : le
+    motif cherchait litteralement `random.`. Un alias suffisait donc a cacher une
+    dependance au hasard — ce qui rendait la regle de reproductibilite contournable
+    par accident. Constate sur un vrai projet.
+    """
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                aliases[alias.asname or root] = root
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            root = node.module.split(".")[0]
+            for alias in node.names:
+                # On conserve le NOM importe, pas seulement le module : sans lui,
+                # `from time import monotonic as clock` se resolvait en `time`, et
+                # l'appel `clock()` echappait a la regle de reproductibilite.
+                aliases[alias.asname or alias.name] = f"{root}.{alias.name}"
+    return aliases
+
+
+def _resolve_call(node: ast.Call, aliases: dict[str, str]) -> str:
+    """Nom du module reellement appele, alias resolus (`_rnd.randint` -> `random.randint`)."""
+    raw = ast.unparse(node.func)
+    head, _, rest = raw.partition(".")
+    real = aliases.get(head)
+    if real is None:
+        return raw
+    return f"{real}.{rest}" if rest else real
+
+
+def _nondeterminism_sources(node: ast.AST, aliases: dict[str, str] | None = None) -> tuple[str, ...]:
     """Sources de non-determinisme detectees dans le corps de ``node``.
 
     Si le corps fixe lui-meme la graine (`random.seed(<litteral>)`), le hasard
@@ -270,10 +309,11 @@ def _nondeterminism_sources(node: ast.AST) -> tuple[str, ...]:
     """
     found: dict[str, str] = {}
     seeds_fixed = False
+    aliases = aliases or {}
     for sub in ast.walk(node):
         if not isinstance(sub, ast.Call):
             continue
-        name = _call_name(sub)
+        name = _resolve_call(sub, aliases)
         if name == "random.seed" and sub.args:
             try:
                 ast.literal_eval(sub.args[0])
@@ -511,12 +551,21 @@ _jio_tests = [
     _t for _t in _jio_doc.DocTestFinder().find(_jio_fn, name=_jio_fn.__name__) if _t.examples
 ]
 assert _jio_tests, "aucun exemple exploitable dans la docstring de {name}"
+
+# On COLLECTE la sortie de doctest au lieu de l'effacer. La version precedente
+# levait un message generique (« N exemples contredisent le code ») qui MASQUAIT
+# la cause reelle. Consequence constatee sur un vrai projet : une dependance
+# absente de l'environnement etait presentee comme un mensonge de l'auteur.
+_jio_buf = []
 _jio_runner = _jio_doc.DocTestRunner(verbose=False)
 for _t in _jio_tests:
-    _jio_runner.run(_t, out=lambda _s: None)
-assert _jio_runner.failures == 0, (
-    "%d exemple(s) de docstring contredisent le code de {name}" % _jio_runner.failures
-)
+    _jio_runner.run(_t, out=_jio_buf.append)
+if _jio_runner.failures:
+    _jio_lines = [l.rstrip() for l in "".join(_jio_buf).splitlines() if l.strip()]
+    _jio_tail = " | ".join(_jio_lines[-3:])[:400]
+    raise AssertionError(
+        "%d exemple(s) de docstring en echec : %s" % (_jio_runner.failures, _jio_tail)
+    )
 '''
 
 
@@ -553,6 +602,7 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
         )
 
     tree = ast.parse(source)
+    aliases = _import_aliases(tree)
     defs = {n.name: n for n in _top_level_defs(tree)}
     classes = _class_defs(tree)
     names = _public_functions(tree)
@@ -616,7 +666,7 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
     checks[r1] = _CHECK_CALLABLE.format(name=chosen)
 
     plan, blocked = _static_plan(node)
-    nondet = _nondeterminism_sources(node)
+    nondet = _nondeterminism_sources(node, aliases)
     if nondet:
         under.append(
             "source de non-determinisme detectee : "
@@ -674,9 +724,83 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
             "attendu n'est pas specifie par l'auteur"
         )
 
-    if len(names) > 1:
-        others = ", ".join(n for n in names if n != chosen)
-        under.append(f"non couvert par cet audit : {others}")
+    # ------------------------------------------------------------------ #
+    # Etendue reelle de l'audit.
+    #
+    # Avant : UNE fonction par fichier. Consequence mesuree sur un vrai projet :
+    # un bug injecte dans une deuxieme fonction documentee n'etait jamais vu, et
+    # l'audit pouvait rendre un verdict « propre » a tort. On audite desormais
+    # toutes les fonctions qui portent des exemples `>>>`, dans la limite d'un
+    # budget declare (le nombre de regles est visible dans le rapport).
+    # ------------------------------------------------------------------ #
+    documented = [n for n in names if n != chosen and _has_doctest(defs[n])]
+    audited = [chosen]
+    for name in documented[:_MAX_AUDITED_FUNCTIONS - 1]:
+        audited.append(name)
+        code_call = f"A-001:{name}"
+        rules.append(
+            Rule(
+                id=code_call,
+                statement=f"L'entree {name!r} est appelable.",
+                kind=RuleKind.CONTRACT,
+            )
+        )
+        checks[code_call] = _CHECK_CALLABLE.format(name=name)
+
+        node_n = defs[name]
+        plan_n, blocked_n = _static_plan(node_n)
+        nondet_n = _nondeterminism_sources(node_n, aliases)
+        if plan_n is not None and not nondet_n:
+            code_det = f"A-002:{name}"
+            rules.append(
+                Rule(
+                    id=code_det,
+                    statement=(
+                        f"Reproductibilite : appels identiques de {name} sur les "
+                        "sondes derivees renvoient le meme resultat, ou la meme erreur."
+                    ),
+                    kind=RuleKind.ADVISORY if env_risk else RuleKind.PROPERTY,
+                )
+            )
+            checks[code_det] = _CHECK_DETERMINISM.format(name=name, plans=_plan_source(plan_n))
+
+        code_doc = f"A-003:{name}"
+        rules.append(
+            Rule(
+                id=code_doc,
+                statement=f"Chaque exemple de la docstring de {name} produit le resultat annonce.",
+                kind=RuleKind.TEST,
+            )
+        )
+        checks[code_doc] = _CHECK_DOCTESTS.format(name=name)
+
+    if len(audited) > 1:
+        notes.append(
+            f"{len(audited)} fonctions auditees : {', '.join(audited)} "
+            f"(plafond {_MAX_AUDITED_FUNCTIONS}, reglable)"
+        )
+
+    # Non-determinisme INVISIBLE : une fonction non auditée qui depend du hasard
+    # ou de l'horloge peut contaminer l'API publique sans que la regle de
+    # reproductibilite le voie. On le declare comme reserve avec sa localisation
+    # au lieu de laisser croire que l'artefact est entierement reproductible.
+    hidden_hazards: list[str] = []
+    for fname, fnode in defs.items():
+        if not isinstance(fnode, (ast.FunctionDef, ast.AsyncFunctionDef)) or fname in audited:
+            continue
+        sources = _nondeterminism_sources(fnode, aliases)
+        if sources:
+            hidden_hazards.append(f"{fname} ({', '.join(sources)})")
+    if hidden_hazards:
+        under.append(
+            "non-determinisme hors des fonctions auditees : "
+            + "; ".join(hidden_hazards[:4])
+            + " -> si l'API publique en depend, la reproductibilite n'est PAS prouvee ici"
+        )
+
+    uncovered = [n for n in names if n not in audited]
+    if uncovered:
+        under.append(f"non couvert par cet audit : {', '.join(uncovered)}")
 
     under.append(
         "la conformite au besoin metier n'est PAS verifiable sans specification "
