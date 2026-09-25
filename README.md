@@ -500,6 +500,27 @@ branche arena/…  ·  AUCUN DISTANT COMPARABLE  (distant present)
 Le second cas, lui, dit ce qu'il en est vraiment : « aucun dépôt distant configuré : ce travail
 n'existe QUE ici ». Deux états différents, deux phrases différentes — et un test par état.
 
+**12. Prouver ses propres CLI, avant la première mission.** « Un CLI installé » et « un CLI avec
+lequel JIO peut prouver quelque chose » sont deux choses différentes : il peut n'être pas
+authentifié, répondre un format inattendu — ou ne pas savoir convertir une règle en test
+exécutable, ce dont dépend toute la preuve hors banc. `jio providers --prove` envoie une requête
+**réelle** à chaque fournisseur détecté :
+
+```
+[ ok   ] cli::opencode (opencode/default) · repond en 0.0s · traduction : 2 temoin(s), 0 aveu(x), 0 refus
+         R-001 -> assert moyenne([1, 2]) == 1.5
+         R-002 -> ok = False
+...
+BILAN : 1/1 repondent, 1/1 savent traduire les regles en temoins.
+```
+
+Trois verdicts distincts, parce qu'ils appellent trois décisions différentes : **injoignable**
+(non authentifié : rien à espérer), **répond mais ne sait pas traduire** (il peut encore écrire du
+code, prouvé par des oracles), **capable de prouver sans oracle**. Les tests rendus passent la
+**même** porte de sûreté que dans une mission — la sonde n'est pas plus indulgente : sinon elle
+annoncerait une capacité que la mission refuserait d'utiliser. Un test hostile proposé par un vrai
+CLI est compté comme **refusé**, et la sortie le montre.
+
 ---
 
 ## Le chemin réel est prouvé, pas seulement décrit

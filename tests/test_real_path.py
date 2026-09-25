@@ -252,3 +252,145 @@ def test_la_cli_est_detectee_via_la_variable_documentee(
 
     for value in _installer_agents(tmp_path, agents).values():
         assert value in binaires
+
+
+# --------------------------------------------------------------------------- #
+# `jio providers --prove` : prouver un fournisseur REEL, avant la premiere mission
+# --------------------------------------------------------------------------- #
+
+
+def _sonde_avec(tmp_path: Path, monkeypatch, stub_source: str, nom: str = "opencode"):
+    """Sonde un fournisseur avec un binaire REEL en sous-processus.
+
+    `JIO_BIN_<NOM>` doit etre exporte AVANT la detection : sinon le CLI simule n'est
+    pas trouve, le test est saute, et il ne prouve rien. Un test qui saute en
+    silence est exactement ce que ce depot refuse — la premiere version oubliait
+    l'export et les quatre tests passaient en « s ».
+    """
+    binaire = tmp_path / nom
+    binaire.write_text(stub_source.format(python=sys.executable), encoding="utf-8")
+    binaire.chmod(binaire.stat().st_mode | stat.S_IEXEC)
+    for cle in list(os.environ):
+        if cle.startswith("JIO_BIN_"):
+            monkeypatch.delenv(cle, raising=False)
+    monkeypatch.setenv(f"JIO_BIN_{nom.upper()}", str(binaire))
+
+    from jio.providers.probe import sonder
+    from jio.providers.registry import detect_clis
+
+    # Le nom reel d'un fournisseur CLI est `cli::<nom>` (voir registry.detect_clis).
+    fournisseurs = [f for f in detect_clis() if getattr(f, "name", "") == f"cli::{nom}"]
+    assert fournisseurs, (
+        f"le CLI simule {nom} n'a pas ete detecte malgre JIO_BIN_{nom.upper()} : "
+        "le test ne prouverait rien"
+    )
+    return sonder(fournisseurs[0])
+
+
+CAPABLE = '''#!{python}
+import json
+import sys
+
+prompt = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else ""
+if "You turn enumerated RULES into executable checks" in prompt:
+    rendu = {{
+        "R-001": "assert moyenne([1, 2]) == 1.5",
+        "R-002": ("ok = False\\ntry:\\n    moyenne([])\\nexcept ValueError:\\n    ok = True\\n"
+                  "assert ok, 'liste vide'"),
+    }}
+    print(json.dumps({{"type": "text", "text": json.dumps(rendu)}}))
+    sys.exit(0)
+print(json.dumps({{"type": "text", "text": "OK"}}))
+'''
+
+AVEU = '''#!{python}
+import json
+import sys
+
+prompt = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else ""
+if "You turn enumerated RULES into executable checks" in prompt:
+    rendu = {{"R-001": {{"impossible": "je ne sais pas ecrire de test"}}}}
+    print(json.dumps({{"type": "text", "text": json.dumps(rendu)}}))
+    sys.exit(0)
+print(json.dumps({{"type": "text", "text": "OK"}}))
+'''
+
+HOSTILE = '''#!{python}
+import json
+import sys
+
+prompt = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else ""
+if "You turn enumerated RULES into executable checks" in prompt:
+    rendu = {{"R-001": "import os\\nassert moyenne([1, 2]) == 1.5"}}
+    print(json.dumps({{"type": "text", "text": json.dumps(rendu)}}))
+    sys.exit(0)
+print(json.dumps({{"type": "text", "text": "OK"}}))
+'''
+
+MORT = '''#!{python}
+import sys
+sys.stderr.write("authentication required: run `login` first\\n")
+sys.exit(1)
+'''
+
+
+def test_sonde_reconnait_un_fournisseur_capable_de_prouver(tmp_path: Path, monkeypatch) -> None:
+    """Le fournisseur traduit les regles : c'est cette capacite qui rend la preuve possible."""
+    sonde = _sonde_avec(tmp_path, monkeypatch, CAPABLE)
+    assert sonde.vivant, sonde.erreur
+    assert sonde.traduit, sonde.temoignage.resume() if sonde.temoignage else sonde.erreur_traduction
+    assert len(sonde.temoignage.tests) == 2
+    assert sonde.verdict == "CAPABLE DE PROUVER SANS ORACLE"
+
+
+def test_sonde_distingue_un_aveu_dune_incapacite(tmp_path: Path, monkeypatch) -> None:
+    """Un fournisseur qui AVOUE ne pas savoir traduire est different d'un fournisseur muet.
+
+    Le premier peut encore ecrire du code et etre prouve par des oracles ; le second
+    ne peut rien faire. Les confondre ferait renoncer au mauvais endroit.
+    """
+    sonde = _sonde_avec(tmp_path, monkeypatch, AVEU)
+    assert sonde.vivant
+    assert not sonde.traduit
+    assert sonde.temoignage is not None and sonde.temoignage.aveux
+    assert "NE SAIT PAS TRADUIRE" in sonde.verdict
+
+
+def test_sonde_applique_la_porte_de_securite_sans_indulgence(tmp_path: Path, monkeypatch) -> None:
+    """Un test hostile propose par un fournisseur REEL doit etre refuse, pas compte.
+
+    La sonde n'est pas plus clemente qu'une mission : la porte de securite est celle
+    de `jio/spec/witness.py`, la meme. Sinon le diagnostic annoncerait une capacite
+    que la mission refuserait d'utiliser.
+    """
+    sonde = _sonde_avec(tmp_path, monkeypatch, HOSTILE)
+    assert sonde.vivant
+    assert not sonde.traduit, "un test avec `import` ne doit jamais compter comme un temoin"
+    assert sonde.temoignage is not None and sonde.temoignage.refuses
+    assert "fragment interdit" in next(iter(sonde.temoignage.refuses.values()))
+
+
+def test_sonde_nomme_la_panne_au_lieu_de_planter(tmp_path: Path, monkeypatch) -> None:
+    """Un CLI non authentifie est le cas le plus courant. Il doit etre NOMME."""
+    sonde = _sonde_avec(tmp_path, monkeypatch, MORT)
+    assert not sonde.vivant
+    assert not sonde.traduit
+    assert sonde.verdict == "INJOIGNABLE"
+    assert len(sonde.resume()) > 10, "le resume doit dire quelque chose d'utile"
+
+
+def test_la_commande_providers_ne_plante_jamais(monkeypatch, capsys) -> None:
+    """Diagnostic : il doit toujours rendre un code de sortie et une phrase utile."""
+    import argparse
+
+    for cle in list(os.environ):
+        if cle.startswith("JIO_BIN_") or cle.startswith("JIO_OPENAI"):
+            monkeypatch.delenv(cle, raising=False)
+
+    from jio.cli import cmd_providers
+
+    code = cmd_providers(argparse.Namespace(prove=False))
+    sortie = capsys.readouterr().out
+    assert code == 0
+    assert "FOURNISSEURS DETECTES" in sortie
+    assert "jio bench" in sortie, "sans fournisseur, la sortie doit dire quoi faire"

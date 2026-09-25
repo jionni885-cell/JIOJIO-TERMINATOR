@@ -265,6 +265,51 @@ print("       Et le fichier est verifie par chaine de hachage : edite a la main,
 print("       mis en quarantaine — renomme, jamais supprime — et jamais applique.")
 PYE
 
+    titre "3 quater. Un fournisseur REEL est sonde avant la premiere mission"
+    "$PYTHON" - <<'PYE'
+import os, pathlib, sys, tempfile
+sys.path.insert(0, ".")
+
+# Faux CLI en SOUS-PROCESSUS : il repond, il traduit les regles, et il propose AUSSI
+# un test hostile — que la porte de securite doit refuser. La sonde n'est pas plus
+# indulgente qu'une mission : sinon elle annoncerait une capacite inutilisable.
+dossier = pathlib.Path(tempfile.mkdtemp(prefix="jio-sonde-"))
+binaire = dossier / "opencode"
+binaire.write_text(
+    "#!" + sys.executable + "\n"
+    "import json, sys\n"
+    "prompt = ' '.join(sys.argv[2:]) if len(sys.argv) > 2 else ''\n"
+    "if 'You turn enumerated RULES into executable checks' in prompt:\n"
+    "    rendu = {'R-001': 'assert moyenne([1, 2]) == 1.5',\n"
+    "             'R-002': 'import os\\nassert moyenne([])'}\n"
+    "else:\n"
+    "    rendu = {'R-001': 'assert moyenne([1, 2]) == 1.5',\n"
+    "             'R-002': 'import os\\nassert moyenne([])'}\n"
+    "print(json.dumps({'type': 'text', 'text': json.dumps(rendu)}))\n",
+    encoding="utf-8",
+)
+binaire.chmod(0o755)
+os.environ["JIO_BIN_OPENCODE"] = str(binaire)
+
+from jio.providers.probe import sonder
+from jio.providers.registry import detect_clis
+
+fournisseurs = [f for f in detect_clis() if f.name == "cli::opencode"]
+assert fournisseurs, "le CLI simule n'a pas ete detecte"
+sonde = sonder(fournisseurs[0])
+print("    " + sonde.resume())
+print()
+for regle, test in sonde.temoignage.tests.items():
+    print(f"      {regle} -> temoin accepte   : {test[:70]}")
+for regle, motif in sonde.temoignage.refuses.items():
+    print(f"      {regle} -> REFUSE            : {motif[:80]}")
+print()
+print("    verdict :", sonde.verdict)
+print("    -> la sonde dit a l'utilisateur, AVANT toute mission, si son CLI peut")
+print("       prouver quelque chose — et elle refuse les tests hostiles avec la MEME")
+print("       porte de securite que la mission.")
+PYE
+
     titre "4. Le chemin reel (3 agents externes -> livraison auditee)"
     "$PYTHON" -m pytest -q tests/test_real_path.py 2>&1 | tail -2
 

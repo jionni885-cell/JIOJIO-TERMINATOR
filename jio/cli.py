@@ -691,6 +691,76 @@ def _attach_learning(engine, state_dir: Path, *, disable: bool = False) -> None:
     )
 
 
+def cmd_providers(args: argparse.Namespace) -> int:
+    """Liste les fournisseurs detectes, et — avec `--prove` — les sonde pour de vrai.
+
+    « Un CLI installe » et « un CLI avec qui jio peut prouver quelque chose » sont
+    deux choses differentes. La sonde repond aux deux, avant la premiere mission :
+    vivacite, format, et surtout la capacite a TRADUIRE les regles en temoins
+    executables — sans laquelle la preuve reste impossible hors banc d'essai.
+    """
+    from .providers.registry import from_env
+
+    print()
+    print("  FOURNISSEURS DETECTES")
+    print()
+    providers = list(from_env())
+    if not providers:
+        print("    aucun. Installez un CLI (opencode, hermes, claude, codex, gemini, aider)")
+        print("    ou definissez une variable d'environnement d'API. Sans cela :")
+        print("      jio bench                     (mesure du harness, sans cle)")
+        print("      jio run ... --simulate --task sum_even --no-oracle")
+        print()
+        return 0
+
+    for provider in providers:
+        print(f"    {provider.name:<14} modele {getattr(provider, 'model', '?')}")
+    print()
+
+    if not getattr(args, "prove", False):
+        print("  Pour PROUVER qu'ils repondent vraiment — et qu'ils savent traduire les")
+        print("  regles en temoins executables — relancez avec :  jio providers --prove")
+        print()
+        return 0
+
+    from .providers.probe import sonder
+
+    print("  SONDES REELLES (une requete minimale, puis le prompt de traduction)")
+    print()
+    vivants = 0
+    capables = 0
+    for provider in providers:
+        sonde = sonder(provider)
+        if sonde.vivant:
+            vivants += 1
+        if sonde.traduit:
+            capables += 1
+        marque = "ok " if sonde.traduit else ("vivant" if sonde.vivant else "ko")
+        print(f"    [{marque:^6}] {sonde.resume()}")
+        if sonde.temoignage is not None:
+            for regle, test in list(sonde.temoignage.tests.items())[:2]:
+                print(f"             {regle} -> {test[:110]}")
+            for regle, raison in list(sonde.temoignage.aveux.items())[:2]:
+                print(f"             {regle} -> AVEU : {raison[:100]}")
+            for regle, motif in list(sonde.temoignage.refuses.items())[:2]:
+                print(f"             {regle} -> REFUSE par les garde-fous : {motif[:100]}")
+        if sonde.erreur:
+            print(f"             erreur : {sonde.erreur[:200]}")
+    print()
+    print(f"  BILAN : {vivants}/{len(providers)} repondent, "
+          f"{capables}/{len(providers)} savent traduire les regles en temoins.")
+    if capables:
+        print("    -> jio peut PROUVER sans oracle avec ceux-la : les regles de la")
+        print("       mission deviennent des tests executables, et un temoin que tous")
+        print("       les candidats echouent ne condamne personne.")
+    else:
+        print("    -> sans traduction des regles, la preuve reste impossible hors banc")
+        print("       d'essai : jio s'abstiendra (c'est la sortie honnete). Fournissez des")
+        print("       oracles (--task) ou des exemples `>>>` dans le code a livrer.")
+    print()
+    return 0 if vivants else 1
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     journal_path = Path(args.journal) if args.journal else None
     task = TASKS_BY_ID.get(args.task) if getattr(args, "task", "") else None
@@ -1404,6 +1474,16 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
                    help="tours de boucle maximum")
     b.set_defaults(func=cmd_bench)
+
+    prov = sub.add_parser(
+        "providers", help="liste les fournisseurs, et les SONDE avec --prove")
+    prov.add_argument(
+        "--prove", action="store_true",
+        help="envoie une requete reelle a chaque fournisseur et mesure sa capacite a "
+             "traduire les regles en temoins executables (sans quoi la preuve est "
+             "impossible hors banc d'essai)",
+    )
+    prov.set_defaults(func=cmd_providers)
 
     r = sub.add_parser("run", help="execute une mission complete")
     r.add_argument("objective", help="objectif en langage naturel")
