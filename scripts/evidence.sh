@@ -368,7 +368,7 @@ if [ "$FAIRE_TIERS" -eq 1 ]; then
     fi
 fi
 
-titre "2 ter. Le banc mesure VOTRE modele, et refuse de faire semblant"
+titre "7. Le banc mesure VOTRE modele, et refuse de faire semblant"
 
 # Un CLI externe est appele par subprocess : un faux modele sert de temoin, et il prouve
 # aussi la regle la plus importante — un modele demande et indisponible ARRETE la mesure.
@@ -401,7 +401,7 @@ assert isinstance(f.provider, CliProvider), f
 print('      binaire resolu :', f.provider.binary, '—', f.instances, 'instances pour le panel')
 "
 
-titre "3 quinquies. Les commandes citees par les documents existent"
+titre "8. Les commandes citees par les documents existent"
 
 # L'oracle est le parseur de la CLI elle-meme : aucune interpretation possible. Ce controle
 # a deja trouve deux defauts reels dans ce depot (jio sync promis et inexistant, jio
@@ -423,7 +423,7 @@ else
     echo "    aucun document a verifier"
 fi
 
-titre "3 sexies. Ecrire des artefacts ne detruit rien"
+titre "9. Ecrire des artefacts ne detruit rien"
 
 # Un fichier de l'utilisateur n'est jamais ecrase : sa version reste, la notre va a cote.
 # Le registre .jio/generated.json signe en plus les fichiers que le format empeche de
