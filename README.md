@@ -331,6 +331,39 @@ Ce chantier a trouvé deux défauts dans JIO lui-même, tous deux de la famille
   propre fichier était déclaré fautif. La détection interroge maintenant l'analyseur
   de `doctest` lui-même (source de vérité unique).
 
+**6. Quand plusieurs candidats se contredisent, le silence est le vrai danger.** Avec une
+spécification incomplète — le cas normal — deux réponses peuvent satisfaire toutes les règles
+et se contredire sur ce que les règles ne couvrent pas. Mesure :
+
+```
+ordre des candidats         sans comparaison  avec comparaison
+le faux en premier                      FAUX             juste
+le faux au milieu                      juste             juste
+le faux en dernier                     juste             juste
+```
+
+Le candidat livré dépendait de **l'ordre de génération** (`_better` accepte tout candidat
+dont le ratio est au moins égal : c'est donc le dernier arrivé qui gagne à égalité). JIO
+compare désormais les candidats à égalité de preuves en les exécutant sur les mêmes entrées
+dérivées — **coût : zéro appel de modèle**, les candidats sont déjà payés :
+
+- un désaccord devient un constat **nommé**, avec l'entrée exacte et les valeurs obtenues ;
+- quand une majorité stricte de candidats s'accorde, c'est elle qui est livrée ;
+- **jamais bloquant** : un désaccord peut porter sur un comportement non spécifié, et deux
+  implémentations correctes peuvent différer — l'accuser serait le faux positif que tout ce
+  projet refuse.
+
+Deux erreurs corrigées en route, et c'est la partie instructive : j'avais écrit que le moteur
+gardait « le premier arrivé » — **déduction non vérifiée**, le code prend le dernier ; et mon
+premier oracle de mesure comparait `mean([2, 4])`, où les deux implémentations rendent `3` :
+la mesure ne mesurait rien. Les deux sont corrigés, et le test dit pourquoi.
+
+**7. Un axe examiné puis écarté.** Pondérer les votes des critiques par leur fiabilité
+mesurée était une piste séduisante. Mesure faite avant de construire : un critique **aveugle**
+(taux de détection 0 %) ne change pas la décision d'un panel de trois — le vote majoritaire
+l'absorbe déjà. L'axe n'a donc **pas** été construit : une brique qui ne change rien est du
+poids, pas une amélioration.
+
 ---
 
 ## Le chemin réel est prouvé, pas seulement décrit
