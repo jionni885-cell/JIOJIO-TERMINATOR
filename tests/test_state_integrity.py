@@ -184,8 +184,8 @@ def test_doctor_detecte_le_retard_sur_le_distant(tmp_path):
         os.chdir(ancien)
 
     assert etat is not None
-    branche, avance, recul, distant = etat
-    assert distant is True
+    branche, avance, recul, distant, distant_existe = etat
+    assert distant is True and distant_existe is True
     assert recul == 1 and avance == 0, etat
 
 
@@ -216,7 +216,8 @@ def test_doctor_avoue_quand_il_ne_peut_pas_comparer(tmp_path):
         os.chdir(ancien)
 
     assert etat is not None
-    assert etat[3] is False, "l'absence de distant doit etre avouee, pas maquillee"
+    assert etat[3] is False, "l'absence de distant comparable doit etre avouee"
+    assert etat[4] is False, "et l'absence de distant CONFIGURE doit etre distinguee"
 
 
 def test_doctor_n_ecrit_jamais_dans_le_depot():
@@ -227,3 +228,45 @@ def test_doctor_n_ecrit_jamais_dans_le_depot():
     assert "Etat du depot" in res.stdout
     apres = _git(REPO, "status", "--porcelain").stdout
     assert avant == apres, "`doctor` a modifie le depot"
+
+
+def test_un_distant_configure_sans_reference_comparable_est_distingue(tmp_path):
+    """Deux situations differentes, et le diagnostic doit le dire.
+
+    Constate en usage reel : un depot avec `origin` configure mais sans reference
+    locale de la branche affichait « aucun depot `origin` : impossible de dire si ce
+    travail est sauvegarde ailleurs ». C'etait faux : le distant etait la. La seule
+    chose qui manquait etait un `git fetch` — et l'utilisateur, lui, etait envoye
+    verifier `git remote -v`.
+
+    Un diagnostic qui se trompe sur la CAUSE est pire qu'un diagnostic muet : il
+    envoie reparer ce qui n'est pas casse.
+    """
+    import os
+
+    travail = tmp_path / "avec-distant"
+    travail.mkdir()
+    _git(travail, "init", "-q", "-b", "main")
+    _git(travail, "config", "user.email", "t@exemple.invalid")
+    _git(travail, "config", "user.name", "T")
+    (travail / "x.txt").write_text("x\n", encoding="utf-8")
+    _git(travail, "add", "-A")
+    _git(travail, "commit", "-qm", "seul")
+    # Un distant CONFIGURE, mais aucune reference locale recuperee : c'est l'etat
+    # exact dans lequel on ne peut pas comparer.
+    _git(travail, "remote", "add", "origin", "https://exemple.invalid/x.git")
+
+    ancien = os.getcwd()
+    os.chdir(travail)
+    try:
+        from jio.cli import _git_state
+
+        etat = _git_state()
+    finally:
+        os.chdir(ancien)
+
+    assert etat is not None
+    branche, avance, recul, distant, distant_existe = etat
+    assert distant is False, "sans reference locale, impossible de comparer"
+    assert distant_existe is True, "mais le distant existe : le diagnostic doit le dire"
+    assert branche == "main"

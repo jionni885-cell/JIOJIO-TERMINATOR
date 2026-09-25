@@ -483,6 +483,25 @@ devait répondre.
 
 ---
 
+**11. Un diagnostic qui se trompe sur la cause est pire qu'un diagnostic muet.** `jio doctor`
+affichait « aucun dépôt `origin` : impossible de dire si ce travail est sauvegardé ailleurs » sur un
+dépôt **qui avait** `origin` configuré — et il envoyait l'utilisateur vérifier `git remote -v`, une
+chose qui n'était pas en cause. Deux questions différentes étaient confondues : *un distant
+existe-t-il ?* et *peut-on comparer ?*. Le diagnostic distingue maintenant les deux et donne la
+commande exacte qui rend la comparaison possible :
+
+```
+branche arena/…  ·  AUCUN DISTANT COMPARABLE  (distant present)
+    `origin` est configure, mais la branche arena/… n'a pas de
+    reference locale : impossible de dire si ce travail est sauvegarde.
+    Rendre la comparaison possible :  git fetch origin arena/…
+```
+
+Le second cas, lui, dit ce qu'il en est vraiment : « aucun dépôt distant configuré : ce travail
+n'existe QUE ici ». Deux états différents, deux phrases différentes — et un test par état.
+
+---
+
 ## Le chemin réel est prouvé, pas seulement décrit
 
 Aucune clé API dans l'environnement de développement : on ne peut donc pas mesurer un

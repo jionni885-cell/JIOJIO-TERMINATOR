@@ -329,15 +329,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if etat is None:
         print("    pas un depot git (ou git absent) — tracabilite NON disponible")
     else:
-        branche, avance, recul, distant = etat
+        branche, avance, recul, distant, distant_existe = etat
         if not distant:
             # « 0 en retard » quand on n'a AUCUN distant a comparer serait un
             # mensonge par omission : c'est exactement le silence qui a fait passer
             # inapercu le retour en arriere du depot. On dit ce qu'on ne peut pas
-            # savoir.
-            print(f"    branche {branche}  ·  aucun distant comparable")
-            print("        (aucun depot `origin` : impossible de dire si ce travail est")
-            print("         sauvegarde ailleurs. `git remote -v` pour verifier.)")
+            # savoir — et on ne se trompe pas sur la CAUSE, ce qui etait le cas :
+            # un depot avec `origin` configure mais sans reference locale affichait
+            # « aucun depot origin », en envoyant l'utilisateur verifier une chose
+            # qui n'etait pas en cause.
+            print(f"    branche {branche}  ·  AUCUN DISTANT COMPARABLE"
+                  f"  ({'distant present' if distant_existe else 'aucun distant configure'})")
+            if distant_existe:
+                print(f"        `origin` est configure, mais la branche {branche} n'a pas de")
+                print("        reference locale : impossible de dire si ce travail est")
+                print(f"        sauvegarde. Rendre la comparaison possible :  git fetch origin {branche}")
+            else:
+                print("        Aucun depot distant configure : ce travail n'existe QUE ici.")
+                print("        Verifier avec `git remote -v` (et pousser si besoin).")
         else:
             print(f"    branche {branche}  ·  {avance} commit(s) en avance  ·  {recul} en retard")
         if distant and recul and not avance:
@@ -354,13 +363,37 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
-def _git_state() -> tuple[str, int, int, bool] | None:
-    """`(branche, en avance, en retard, distant_connu)` par rapport au distant.
+def _git_state() -> tuple[str, int, int, bool, bool] | None:
+    """`(branche, en avance, en retard, distant_connu, distant_existe)`.
+
+    Les deux derniers champs ne sont PAS la meme question, et les confondre a produit
+    un diagnostic faux :
+      * `distant_existe`  : un depot distant est configure (`origin`) ;
+      * `distant_connu`   : une reference COMPARABLE existe localement.
+
+    Constate en usage reel : un depot avec `origin` configure mais sans reference
+    locale de la branche affichait « aucun depot `origin` : impossible de dire si ce
+    travail est sauvegarde ailleurs ». C'est le diagnostic du silence : il envoie
+    l'utilisateur verifier `git remote -v` alors que le distant est la, et que la
+    seule chose qui manque est un `git fetch`.
+    
 
     Que des lectures : on ne modifie JAMAIS le depot depuis `doctor`. Un diagnostic
     qui agit est un diagnostic qu'on n'ose plus lancer.
     """
     import subprocess
+
+    def _distant_configure(sonde) -> bool:
+        """`origin` (ou un autre distant) est-il configure ?
+
+        Question DIFFERENTE de « peut-on comparer » : un depot peut avoir un distant
+        et aucune reference locale. Les confondre a produit un diagnostic faux.
+        """
+        for nom in ("origin", "upstream"):
+            code, _ = sonde("remote", "get-url", nom)
+            if code == 0:
+                return True
+        return False
 
     def git(*argv: str) -> tuple[int, str]:
         try:
@@ -389,15 +422,17 @@ def _git_state() -> tuple[str, int, int, bool] | None:
             ref = candidat
             break
     else:
-        return branche, 0, 0, False    # aucun distant comparable : on le DIT
+        # Aucune reference comparable : on le DIT — en distinguant « pas de distant »
+        # de « distant present, reference absente ».
+        return branche, 0, 0, False, _distant_configure(git)
     code, comptes = git("rev-list", "--left-right", "--count", f"{ref}...HEAD")
     if code != 0 or not comptes:
-        return branche, 0, 0, False
+        return branche, 0, 0, False, True
     try:
         retard, avance = (int(x) for x in comptes.split()[:2])
     except Exception:
-        return branche, 0, 0, False
-    return branche, avance, retard, True
+        return branche, 0, 0, False, True
+    return branche, avance, retard, True, True
 
 
 def cmd_tasks(args: argparse.Namespace) -> int:
