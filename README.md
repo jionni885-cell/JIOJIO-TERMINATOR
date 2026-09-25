@@ -671,6 +671,46 @@ est nommé et consultable. C'est un choix, et il est écrit dans le code.
 
 ---
 
+## Un contenu non fiable ne fixe pas le temps de travail de l'outil
+
+Un document est du contenu **non fiable** par défaut. Deux mesures, toutes deux
+trouvées en cherchant la limite — pas en la supposant :
+
+| Entrée hostile | Avant | Après |
+|---|---|---|
+| Une ligne contenant 20 000 calculs | **114 secondes** (rescan de la ligne entière pour chaque calcul) | 0,03 s, borné, et `NON verifiee(s) (limite de volume)` dans le bilan |
+| `"1 + " × 50000` — une longue chaîne **sans** `=` | **plus de 600 secondes** : le moteur d'expressions régulières essayait toutes les découpées possibles d'un groupe répété | 0,006 s — **il ne peut plus y avoir de retour arrière**, la grammaire ne l'exprime plus |
+
+Le second cas a imposé une réécriture, et elle est instructive. La détection part
+désormais du **résultat annoncé** (`= 42`, `vaut 42`) et **remonte** l'expression à la
+main, dans une fenêtre bornée. Une expression n'est plus une expression régulière : elle
+ne peut donc plus exploser.
+
+### Deux pièges que cette réécriture a révélés
+
+- **Évaluer une PARTIE des termes.** Une somme de 40 termes dépasse la borne : la
+  descente pouvait n'en prendre que la fin et la comparer au total — un refus inventé.
+  Un contrôle de continuation à gauche l'interdit, et le calcul est compté
+  « trop long pour être évalué », ni vérifié ni accusé.
+- **`4 mises à jour sur 4 = 75 %`** était lu comme le calcul `4 = 75`, donc refusé :
+  une accusation fausse sur une phrase correcte. Un calcul doit contenir **au moins un
+  opérateur**.
+
+## Trois codes de sortie, parce que « rien à vérifier » n'est ni un succès ni un échec
+
+```
+0  conforme sur ce qui est verifiable
+1  au moins une affirmation REFUTEE
+3  RIEN a verifier — document sans matiere prouvable
+```
+
+Le `3` existe pour une raison précise : sans lui, il fallait choisir entre faire passer
+un document muet pour un quitus, ou le signaler comme un défaut. Aucune des deux n'est
+vraie. Dans `jio scan`, ces documents apparaissent comme « non testables ici », jamais
+comme des problèmes.
+
+---
+
 ## Un balayage doit être lisible : deux faux positifs, deux corrections
 
 `jio scan .` sur ce dépôt — l'audit le plus simple qu'un utilisateur lance — donnait

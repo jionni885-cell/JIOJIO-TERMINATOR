@@ -175,6 +175,19 @@ class ProseProver:
                 stdout=(
                     f"{rapport.verifiees} affirmation(s) verifiee(s), aucune refutee. "
                     f"{rapport.signalees} signalee(s) non concluante(s)."
+                    + (
+                        # La preuve est PARTIELLE : le dire dans la preuve ELLE-MEME,
+                        # pas seulement dans un compteur. Un document volumineux ne
+                        # doit pas pouvoir se faire passer pour entierement verifie.
+                        f" LIMITE DE VOLUME ATTEINTE : {rapport.ignorees} affirmation(s) "
+                        "n'ont PAS ete verifiees."
+                        if rapport.ignorees else ""
+                    )
+                    + (
+                        f" {rapport.non_evaluees} calcul(s) trop long(s) pour etre "
+                        "evalue(s) : declares, jamais accuses."
+                        if rapport.non_evaluees else ""
+                    )
                 ),
             )
 

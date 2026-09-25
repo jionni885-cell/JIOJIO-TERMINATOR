@@ -27,7 +27,7 @@ import sys
 
 import pytest
 
-from jio.verify.claims import Genre, extraction, verifier
+from jio.verify.claims import MAX_AFFIRMATIONS, Genre, extraction, verifier
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 CORPUS = REPO / "evidence" / "claims"
@@ -301,3 +301,134 @@ def test_la_racine_par_defaut_est_celle_du_depot() -> None:
     resultat = _jio("claims", "evidence/claims/rapport_sain.md")
     assert resultat.returncode == 0
     assert f"racine des chemins cites : {REPO}" in resultat.stdout, resultat.stdout
+
+
+# --------------------------------------------------------------------------- #
+# 5. Un document est du contenu NON FIABLE : il ne fixe pas le temps de travail
+# --------------------------------------------------------------------------- #
+
+
+def test_une_ligne_de_vingt_mille_calculs_ne_bloque_pas() -> None:
+    """Mesure : 114 secondes avant correction, 0,03 apres.
+
+    La cause etait double, et les deux comptent :
+      * `_plages_citees` rescannait la LIGNE entiere pour chaque calcul (O(n^2)) ;
+      * au-dela de `MAX_AFFIRMATIONS`, plus rien n'etait borne.
+    Un contenu non fiable ne doit pas pouvoir imposer sa duree a l'outil.
+    """
+    import time
+
+    texte = "1 + 2 = 3 " * 20000
+    debut = time.monotonic()
+    rapport = verifier(texte, racine=None)
+    ecoule = time.monotonic() - debut
+
+    assert ecoule < 10.0, f"trop lent : {ecoule:.1f}s"
+    assert rapport.verifiees == MAX_AFFIRMATIONS
+    assert rapport.ignorees > 0, "le volume NON verifie doit etre declare"
+    assert "NON verifiee" in rapport.resume()
+
+
+def test_une_longue_chaine_sans_egal_ne_bloque_pas() -> None:
+    """Le pire cas trouve : `"1 + " * 50000` faisait boucler le moteur d'expressions.
+
+    La version precedente cherchait `gauche = droite` d'un seul motif, avec un groupe
+    repete : sans `=`, le moteur essayait toutes les decoupes possibles. La descente
+    bornee a partir du `=` supprime ce retour arriere — il ne peut plus y en avoir,
+    la grammaire ne l'exprime plus.
+    """
+    import time
+
+    debut = time.monotonic()
+    rapport = verifier("1 + " * 50000 + "1", racine=None)
+    assert time.monotonic() - debut < 10.0
+    assert rapport.verifications == ()
+
+
+@pytest.mark.parametrize("texte", ["x := 5", "y == 7", "z >= 3", "a != 4"])
+def test_les_operateurs_python_ne_sont_pas_des_calculs(texte: str) -> None:
+    """`=` d'affectation ou de comparaison n'annonce aucun resultat."""
+    assert extraction(texte) == (), texte
+
+
+def test_une_somme_longue_est_verifiee_si_elle_tient_dans_la_borne() -> None:
+    juste = " + ".join(str(i) for i in range(1, 21)) + " = 210"
+    assert verifier(juste, racine=None).verifiees == 1
+
+    faux = " + ".join(str(i) for i in range(1, 21)) + " = 211"
+    rapport = verifier(faux, racine=None)
+    assert rapport.refutees == 1 and rapport.bloquantes
+
+
+def test_une_chaine_trop_longue_est_declaree_jamais_accusee() -> None:
+    """Ni verifiee, ni accusee : evaluer une PARTIE des termes inventerait un refus.
+
+    C'est le piege du jour : une somme de 40 termes depasse la borne, et le motif
+    pouvait en extraire la FIN pour la comparer au total. Le controle de continuation
+    a gauche l'empeche, et le calcul est compte comme non evalue.
+    """
+    texte = " + ".join(str(i) for i in range(1, 41)) + " = 999"
+    rapport = verifier(texte, racine=None)
+    assert rapport.refutees == 0, "aucun refus invente"
+    assert rapport.verifiees == 0
+    assert rapport.non_evaluees == 1, rapport.resume()
+    assert "trop long" in rapport.resume()
+
+
+def test_la_preuve_porte_ses_propres_lacunes() -> None:
+    """Un document volumineux ne doit pas pouvoir se faire passer pour entierement verifie."""
+    from jio.verify.prose_prover import ProseProver
+
+    texte = "1 + 2 = 3 " * 400
+    resultat = ProseProver(racine=None).prove(texte, None)
+    assert resultat.passed, "les calculs verifies sont justes"
+    assert "LIMITE DE VOLUME ATTEINTE" in resultat.witnesses[-1].stdout
+
+
+# --------------------------------------------------------------------------- #
+# 6. « Rien a verifier » a son propre code : ni succes, ni echec
+# --------------------------------------------------------------------------- #
+
+
+def test_les_trois_codes_de_sortie_sont_distincts(tmp_path: pathlib.Path) -> None:
+    """0 conforme · 1 refute · 3 rien a verifier.
+
+    Sans le 3, il fallait choisir entre deux mises en scene egalement fausses : faire
+    passer un document muet pour un quitus, ou le signaler comme un defaut. Un
+    appelant — un hook, une CI — doit pouvoir distinguer les deux.
+    """
+    vide = tmp_path / "note.md"
+    vide.write_text("# Note\n\nUne intention, sans aucun fait verifiable.\n",
+                    encoding="utf-8")
+    sain = tmp_path / "sain.md"
+    sain.write_text("# Rapport\n\n12 + 30 = 42 ms.\n", encoding="utf-8")
+    faux = tmp_path / "faux.md"
+    faux.write_text("# Rapport\n\n12 + 30 = 99 ms.\n", encoding="utf-8")
+
+    assert _jio("claims", str(vide)).returncode == 3
+    assert _jio("claims", str(sain)).returncode == 0
+    assert _jio("claims", str(faux)).returncode == 1
+
+
+def test_un_document_muet_nest_pas_un_defaut_pour_le_scan(tmp_path: pathlib.Path) -> None:
+    """`jio scan` distingue deja « non testable » de « probleme » : on le verrouille."""
+    projet = tmp_path / "projet"
+    projet.mkdir()
+    (projet / "note.md").write_text("# Note\n\nRien de verifiable ici.\n", encoding="utf-8")
+    (projet / "code.py").write_text("def f(x: int) -> int:\n    return x\n", encoding="utf-8")
+
+    resultat = _jio("scan", str(projet), "--no-learn", "--no-linters")
+    assert "PROBLEME" not in resultat.stdout, resultat.stdout
+    assert "NON TESTABLE" in resultat.stdout.upper(), resultat.stdout
+
+
+def test_le_signe_multiplication_dans_une_citation_reste_non_bloquant() -> None:
+    """Le marquage « cite » doit survivre a la remontee de l'expression.
+
+    Regression reelle : les offsets transmis a `_est_cite` etaient ABSOLUS alors que
+    la fonction les compare SUR LA LIGNE. Le calcul faux cite par un document qui en
+    PARLE redevenait bloquant — le texte le plus utile devenait le seul refuse.
+    """
+    rapport = verifier("Le rapport annoncait `7 × 6 = 43` avant correction.", racine=None)
+    assert rapport.refutees == 0 and rapport.signalees == 1
+    assert "CITE" in rapport.verifications[0].message

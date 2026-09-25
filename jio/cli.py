@@ -796,6 +796,16 @@ def _racine_du_document(chemin: Path) -> Path:
 def _rapport_prose(chemin: Path, racine: Path | None, *, titre: str) -> int:
     """Imprime le rapport de prose et rend le CODE DE SORTIE. Implementation unique.
 
+    Trois codes, et la distinction est le sujet :
+      0  conforme sur ce qui est verifiable ;
+      1  au moins une affirmation REFUTEE ;
+      3  RIEN a verifier — ni succes, ni echec.
+
+    Le 3 existe parce que confondre « document muet » et « document fautif » obligeait
+    a choisir entre deux mauvaises reponses : soit un document sans matiere passait
+    pour un quitus, soit il etait signale comme un defaut. Aucune des deux n'est vraie.
+    
+
     `jio claims` et `jio audit <document>` appellent cette fonction : deux entrees,
     une seule doctrine. Deux implementations auraient fini par diverger sur le seul
     point qui compte — quand dire « refute ».
@@ -814,11 +824,24 @@ def _rapport_prose(chemin: Path, racine: Path | None, *, titre: str) -> int:
         print("    aucune affirmation verifiable trouvee. Ce n'est PAS un quitus : un")
         print("    document sans calcul, sans code et sans chemin cite n'offre rien a")
         print("    prouver — et jio ne pretend pas juger le reste.")
+        print("    Code de sortie 3 : « rien a verifier » n'est NI un succes, NI un")
+        print("    echec. Un appelant peut donc distinguer les deux, au lieu de")
+        print("    confondre un document muet avec un document fautif (code 1).")
         print()
-        return 1
+        return 3
     for verification in rapport.verifications:
         marque = "ok " if verification.ok else ("KO " if verification.bloquant else "!  ")
         print(f"    [{marque}] {verification.message}")
+    if rapport.ignorees or rapport.non_evaluees:
+        print()
+        if rapport.ignorees:
+            print(f"    [!!] LIMITE DE VOLUME : {rapport.ignorees} affirmation(s) au-dela "
+                  "de la limite declaree n'ont PAS ete verifiees. Ce rapport est "
+                  "PARTIEL — il ne dit rien de ces affirmations-la.")
+        if rapport.non_evaluees:
+            print(f"    [!!] {rapport.non_evaluees} calcul(s) trop long(s) pour etre "
+                  "evalue(s) : NI verifies, ni accuses. Evaluer une partie des termes "
+                  "et la comparer au total inventerait un refus.")
     print()
     print(f"  BILAN : {rapport.resume()}")
     if not rapport.conforme:
@@ -1371,8 +1394,9 @@ DOSSIERS_IGNORES = frozenset({
 #: Sans lui, le corpus de preuves de ce depot (`evidence/**/fautifs/`,
 #: `evidence/claims/rapport_fautif.md`) etait signale comme 16 defauts du projet :
 #: un balayage qui crie sur ses propres fixtures est un balayage qu'on ignore.
-#: Le fichier lui-meme dit ce qu'il est — comme `# noqa`, mais verifiable : le
-#: marqueur est COMPTE et AFFICHE, jamais applique en silence.
+#: Le fichier lui-meme dit ce qu'il est — a la maniere des directives de silence des
+#: linters, mais VERIFIABLE : le marqueur est compte et affiche, jamais applique en
+#: silence.
 MARQUEUR_CORPUS = "jio:corpus-fautif"
 
 
@@ -1828,6 +1852,8 @@ def build_parser() -> argparse.ArgumentParser:
     cl.add_argument("--racine", default="",
                     help="racine ou chercher les chemins cites (defaut : dossier du fichier)")
     cl.set_defaults(func=cmd_claims)
+    cl.epilog = ("codes de sortie : 0 conforme · 1 affirmation refutee · "
+                 "3 rien a verifier (ni succes, ni echec)")
 
     prov = sub.add_parser(
         "providers", help="liste les fournisseurs, et les SONDE avec --prove")

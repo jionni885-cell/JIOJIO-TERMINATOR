@@ -412,10 +412,18 @@ if [ -d "$CORPUS_CLAIMS" ]; then
     printf '    %-22s ' "sans affirmation"
     if "$PYTHON" -m jio claims "$CORPUS_CLAIMS/note_sans_affirmation.md" --racine "$RACINE" \
          >/dev/null 2>&1; then
-        echo "code 0 — MAUVAIS : une note sans fait verifiable passerait pour un quitus."
+        code_note=0
     else
-        echo "code != 0 — rien a verifier n'est pas un quitus, et c'est DIT."
+        code_note=$?
     fi
+    # Trois codes, et la distinction est le sujet : 0 conforme, 1 refute, 3 RIEN a
+    # verifier. Confondre 1 et 3 obligerait a choisir entre faire passer un document
+    # muet pour un quitus, ou signaler un defaut qui n'existe pas.
+    case "$code_note" in
+        3) echo "code 3 — rien a verifier : NI un succes, NI un echec, et c'est DIT." ;;
+        0) echo "code 0 — MAUVAIS : une note sans fait verifiable passerait pour un quitus." ;;
+        *) echo "code $code_note — inattendu (1 attendu pour un refus, 3 pour une absence de matiere)." ;;
+    esac
 else
     echo "    corpus absent : etape ignoree."
 fi
