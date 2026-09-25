@@ -402,6 +402,19 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # Un outil dont l'etat peut reculer SANS LE DIRE n'est pas un outil de confiance.
     # On le dit, avec la commande exacte pour reparer.
     # ---------------------------------------------------------------- #
+    suspect = _depot_suspect()
+    if suspect is not None:
+        commits, non_suivis = suspect
+        print("  /!\\ DEPOT SUSPECT : l'historique local a peut-etre ete reinitialise.")
+        print(f"      {commits} commit(s) local(aux) pour {non_suivis} fichier(s) NON SUIVIS.")
+        print("      Le travail est sur le disque, mais git ne le suit plus : un commit")
+        print("      maintenant fabriquerait un historique absurde.")
+        print("      Reparation SANS perte (recupere l'historique distant) :")
+        print("        git fetch origin <branche>")
+        print("        git reset --soft FETCH_HEAD   # HEAD suit le distant, vos fichiers restent")
+        print("        git status                    # vos modifications redeviennent visibles")
+        print()
+
     etat = _git_state()
     print("  Etat du depot :")
     if etat is None:
@@ -511,6 +524,50 @@ def _git_state() -> tuple[str, int, int, bool, bool] | None:
     except Exception:
         return branche, 0, 0, False, True
     return branche, avance, retard, True, True
+
+
+def _depot_suspect() -> tuple[int, int] | None:
+    """`(commit(s) locaux, fichiers non suivis)` quand le depot a l'air reinitialise.
+
+    Incident reel, vecu DEUX fois par ce projet : l'environnement d'execution restaure
+    `.git` a son etat initial entre deux sessions. Le travail est intact sur le disque,
+    mais le depot ne suit plus rien : `git log` revient au commit initial et tout le code
+    apparait comme « non suivi ».
+
+    Les avertissements existants de `doctor` parlaient du DISTANT (en retard, reference
+    absente) : ils supposent tous que le local suit quelque chose et qu'on peut comparer.
+    Or dans cet incident, la comparaison est impossible — la reference distante vient
+    d'etre effacee avec le reste. Il fallait un signal qui ne depende d'AUCUN reseau :
+    un depot qui contient beaucoup de fichiers de projet et presque aucun commit est
+    l'empreinte exacte de cet accident.
+
+    On ne modifie rien, jamais : `doctor` observe, et donne la commande de reparation.
+    """
+    import subprocess
+
+    def git(*argv: str) -> tuple[int, str]:
+        try:
+            proc = subprocess.run(["git", *argv], capture_output=True, text=True, timeout=10)
+        except Exception:
+            return 1, ""
+        return proc.returncode, proc.stdout.strip()
+
+    code, _ = git("rev-parse", "--is-inside-work-tree")
+    if code != 0:
+        return None
+    code, commits = git("rev-list", "--count", "HEAD")
+    if code != 0 or not commits.isdigit():
+        return None
+    code, statut = git("status", "--porcelain")
+    if code != 0:
+        return None
+    non_suivis = sum(1 for ligne in statut.splitlines() if ligne.startswith("??"))
+
+    # Seuils volontairement larges : on veut rater le moins possible de vrais accidents,
+    # et un depot neuf de l'utilisateur (1 commit, 3 fichiers) ne doit pas declencher.
+    if int(commits) <= 3 and non_suivis >= 20:
+        return int(commits), non_suivis
+    return None
 
 
 def cmd_tasks(args: argparse.Namespace) -> int:

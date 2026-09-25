@@ -1,0 +1,101 @@
+"""Le depot peut perdre son historique SANS LE DIRE — il doit le dire.
+
+Incident reel, vecu **deux fois** par ce projet : entre deux sessions, l'environnement
+d'execution restaure `.git` a son etat initial. Le travail est intact sur le disque, mais
+le depot ne suit plus rien : `git log` revient au commit initial, `git status` affiche tout
+le code comme « non suivi », et `.git/config` ne connait meme plus notre branche (le
+refspec d'origine ne recupere que `main`).
+
+Les avertissements existants de `doctor` parlaient du DISTANT (« en retard », « reference
+absente »). Ils supposent qu'on peut comparer — or dans cet accident la reference distante
+vient d'etre effacee avec le reste. Il fallait un signal qui ne depende d'aucun reseau :
+un depot qui contient beaucoup de fichiers de projet et presque aucun commit est
+l'empreinte exacte de cet accident.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from jio.cli import _depot_suspect, main
+
+pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git absent")
+
+
+def _git(*argv: str, cwd: Path) -> None:
+    subprocess.run(
+        ["git", "-c", "user.email=a@b", "-c", "user.name=test", *argv],
+        cwd=cwd, check=True, capture_output=True,
+    )
+
+
+@pytest.fixture()
+def depot_reinitialise(tmp_path: Path, monkeypatch) -> Path:
+    """Un depot qui a l'empreinte de l'accident : 1 commit, et le travail non suivi."""
+    monkeypatch.chdir(tmp_path)
+    _git("init", "-q", cwd=tmp_path)
+    _git("commit", "-q", "--allow-empty", "-m", "Initial commit", cwd=tmp_path)
+    for i in range(25):
+        (tmp_path / f"module_{i}.py").write_text("x = 1\n", encoding="utf-8")
+    return tmp_path
+
+
+def test_un_depot_reinitialise_est_detecte(depot_reinitialise: Path) -> None:
+    suspect = _depot_suspect()
+    assert suspect is not None, "l'accident n'est pas detecte"
+    commits, non_suivis = suspect
+    assert commits == 1
+    assert non_suivis == 25
+
+
+def test_un_depot_sain_n_est_pas_signale(tmp_path: Path, monkeypatch) -> None:
+    """Le controle doit se taire sur un depot normal : un faux positif ici ferait
+    ignorer l'avertissement le jour ou il compte."""
+    monkeypatch.chdir(tmp_path)
+    _git("init", "-q", cwd=tmp_path)
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _git("add", "-A", cwd=tmp_path)
+    _git("commit", "-q", "-m", "vrai travail", cwd=tmp_path)
+    for i in range(25):
+        _git("commit", "-q", "--allow-empty", "-m", f"etape {i}", cwd=tmp_path)
+    assert _depot_suspect() is None
+
+
+def test_un_projet_neuf_avec_quelques_fichiers_n_est_pas_signale(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Un depot tout neuf n'a pas l'empreinte de l'accident : il faut les DEUX signaux.
+
+    Le seuil est volontairement large (20 fichiers non suivis ET <= 3 commits) : rater un
+    vrai accident coute l'historique du projet, signaler un depot neuf coute une ligne
+    d'avertissement fausse — et un faux positif ici ferait ignorer le vrai.
+    """
+    monkeypatch.chdir(tmp_path)
+    _git("init", "-q", cwd=tmp_path)
+    _git("commit", "-q", "--allow-empty", "-m", "Initial commit", cwd=tmp_path)
+    for i in range(3):
+        (tmp_path / f"note_{i}.md").write_text("brouillon\n", encoding="utf-8")
+    assert _depot_suspect() is None
+
+
+def test_doctor_dit_la_REPARATION_et_pas_seulement_le_probleme(
+    depot_reinitialise: Path, capsys
+) -> None:
+    """Un diagnostic sans commande a lancer laisse l'utilisateur sans prise.
+
+    Les deux lignes essentielles sont imprimees : `git fetch` puis `git reset --soft`,
+    qui Recupere l'historique distant sans toucher aux fichiers sur le disque (c'est
+    exactement la reparation qui a servi deux fois dans ce projet).
+    """
+    assert main(["doctor"]) == 0
+    sortie = capsys.readouterr().out
+
+    assert "DEPOT SUSPECT" in sortie
+    assert "git fetch origin" in sortie
+    assert "git reset --soft FETCH_HEAD" in sortie
+    # Et pas de conseil dangereux : un `--hard` detruirait le travail non suivi.
+    assert "--hard" not in sortie
