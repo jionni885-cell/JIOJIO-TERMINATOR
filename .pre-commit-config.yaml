@@ -31,3 +31,14 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      # Le hook qui manquait : les DOCUMENTS. Le README, les notes de conception et les
+      # rapports de preuve contiennent des calculs, des blocs et des chemins — et c'est la
+      # que vivent les erreurs qu'aucun test ne voit. N'echoue que sur une refutation :
+      # un document sans matiere prouvable ne bloque pas un commit.
+      - id: jio-claims
+        name: JIO — faits verifiables des documents
+        entry: python -m jio claims --hook
+        language: system
+        files: \.(md|markdown|rst|txt|org|adoc)$
+        exclude: ^evidence/

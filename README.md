@@ -676,6 +676,44 @@ est nommé et consultable. C'est un choix, et il est écrit dans le code.
 
 ---
 
+## Le hook pre-commit qui vérifie les **documents**
+
+Le dépôt déclarait `jio-scan-strict` comme « échoue aussi si le projet est incohérent à
+l'import » — avec **exactement la même commande** que le hook normal. Une promesse sans
+implémentation, dans le fichier même qui prétend attraper ce genre de chose.
+
+Le mode `--strict` existe maintenant : il fait échouer ce que le mode normal se contente
+d'afficher — les **réserves** (une règle n'a pas su trancher) et les fichiers **non
+testables** (la vérification n'a pas pu avoir lieu). Sur ce dépôt : code 0 sur `jio/`
+seul, code 1 sur l'ensemble. Une réserve n'est pas une accusation, mais elle n'est pas un
+quitus non plus : en CI, elle doit être levée ou déclarée.
+
+Et un hook qui manquait : **`jio-claims`**, sur les documents modifiés. Le README, les
+notes de conception et les rapports contiennent des calculs, des blocs et des chemins —
+c'est là que vivent les erreurs qu'aucun test ne voit.
+
+```yaml
+- id: jio-claims
+  entry: jio claims --hook
+  files: \.(md|markdown|rst|txt|org|adoc)$
+```
+
+Le mode `--hook` a **son propre contrat**, et il est étroit à dessein : il n'échoue que sur
+une affirmation **réfutée**. Sans lui, le hook aurait un choix impossible — ignorer le code
+3 (et un document muet passerait pour un quitus), ou le traiter comme un échec (et un
+commit serait refusé sans qu'aucune faute n'existe). `jio claims` hors hook garde les trois
+codes ; le hook les absorbe pour ce qu'ils sont.
+
+```
+    [ok] README.md : 12 verifiee(s), 4 signalee(s) non concluante(s)
+    [--] note_sans_affirmation.md : rien a verifier (ni succes, ni echec)
+    [KO] rapport_fautif.md : 2 affirmation(s) refutee(s)
+```
+
+Ce dernier point a été trouvé par un test écrit **avant** de considérer le travail fini :
+au premier jet, un document muet s'affichait `[ok] 0 vérifiée(s)` — un succès à zéro
+faute, c'est-à-dire l'inverse de ce qu'il est.
+
 ## Un contenu non fiable ne fixe pas le temps de travail de l'outil
 
 Un document est du contenu **non fiable** par défaut. Deux mesures, toutes deux

@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 from .core.env import bool_env, float_env, int_env, str_env
+from .verify.claims import RapportProse
 from typing import Sequence
 
 from dataclasses import replace as _replace
@@ -826,6 +827,22 @@ def _racine_du_document(chemin: Path) -> Path:
     return chemin.parent
 
 
+def _rapport_du_document(
+    chemin: Path, racine: Path | None
+) -> tuple[RapportProse, Path]:
+    """Verifie un document et rend `(rapport, racine_utilisee)`, sans RIEN afficher.
+
+    Deux appelants, une seule verification : le rapport detaille de `jio claims`, et la
+    ligne compacte du hook pre-commit. Deux implementations auraient fini par diverger sur
+    le seul point qui compte — quand dire « refute ».
+    """
+    from .verify.claims import verifier
+
+    texte = chemin.read_text(encoding="utf-8", errors="replace")
+    ou = racine if racine is not None else _racine_du_document(chemin)
+    return verifier(texte, racine=ou), ou
+
+
 def _rapport_prose(chemin: Path, racine: Path | None, *, titre: str) -> int:
     """Imprime le rapport de prose et rend le CODE DE SORTIE. Implementation unique.
 
@@ -843,11 +860,7 @@ def _rapport_prose(chemin: Path, racine: Path | None, *, titre: str) -> int:
     une seule doctrine. Deux implementations auraient fini par diverger sur le seul
     point qui compte — quand dire « refute ».
     """
-    from .verify.claims import verifier
-
-    texte = chemin.read_text(encoding="utf-8", errors="replace")
-    ou = racine if racine is not None else _racine_du_document(chemin)
-    rapport = verifier(texte, racine=ou)
+    rapport, ou = _rapport_du_document(chemin, racine)
 
     print()
     print(f"  {titre} · {chemin}")
@@ -897,12 +910,67 @@ def cmd_claims(args: argparse.Namespace) -> int:
     un bloc presente comme Python, un chemin cite. C'est exactement la que se logent
     les hallucinations, et on peut les PROUVER plutot que les relire.
     """
-    chemin = Path(args.fichier)
-    if not chemin.exists():
-        print(f"  fichier introuvable : {chemin}", file=sys.stderr)
-        return 2
     racine = Path(args.racine) if getattr(args, "racine", "") else None
-    return _rapport_prose(chemin, racine, titre="AFFIRMATIONS VERIFIABLES")
+    fichiers = [Path(f) for f in args.fichier]
+    hook = bool(getattr(args, "hook", False))
+
+    # Mode hook : pre-commit lance la commande avec TOUS les fichiers modifies d'un coup.
+    # Il faut donc que « rien a verifier » (code 3) ne fasse pas echouer un commit, alors
+    # que le meme code 3 reste distinct d'un succes en usage direct. Le contrat du hook est
+    # etroit et explicite : echouer UNIQUEMENT sur une affirmation refutee.
+    if hook:
+        print()
+        print("  HOOK PRE-COMMIT  ·  faits verifiables des documents modifies")
+        print()
+        refutes = 0
+        for chemin in fichiers:
+            if not chemin.exists():
+                continue
+            rapport, _ = _rapport_du_document(chemin, racine)
+            if not rapport.verifications:
+                # « 0 verifiee(s) » se lirait comme un succes a zero faute. C'est le
+                # contraire : le document n'offre RIEN a prouver. Le tiret le dit.
+                print(f"    [--] {chemin.name} : rien a verifier (ni succes, ni echec)")
+                continue
+            if rapport.refutees:
+                refutes += 1
+                print(f"    [KO] {chemin.name} : {rapport.refutees} affirmation(s) refutee(s)")
+                for verification in rapport.bloquantes[:4]:
+                    print(f"         · {verification.message[:130]}")
+            else:
+                detail = f"{rapport.verifiees} verifiee(s)"
+                if rapport.signalees:
+                    detail += f", {rapport.signalees} signalee(s) non concluante(s)"
+                print(f"    [ok] {chemin.name} : {detail}")
+        print()
+        if refutes:
+            print(f"  {refutes} document(s) refute(s) : corriger, ou retirer l'affirmation.")
+            print("  (`jio claims <fichier>` pour le detail complet.)")
+            print()
+            return 1
+        print("  Aucun fait refute. Le hook ne bloque QUE sur une refutation : un document")
+        print("  sans matiere prouvable n'est ni un succes ni un echec.")
+        print()
+        return 0
+
+    if not fichiers:
+        print("  aucun fichier indique", file=sys.stderr)
+        return 2
+    for chemin in fichiers:
+        if not chemin.exists():
+            print(f"  fichier introuvable : {chemin}", file=sys.stderr)
+            return 2
+    if len(fichiers) == 1:
+        return _rapport_prose(fichiers[0], racine, titre="AFFIRMATIONS VERIFIABLES")
+
+    # Plusieurs fichiers : le pire code l'emporte, dans l'ordre de gravite 1 > 3 > 0.
+    # Un document refute ne doit pas etre noye par un document muet.
+    codes: list[int] = []
+    for chemin in fichiers:
+        codes.append(_rapport_prose(chemin, racine, titre=f"AFFIRMATIONS VERIFIABLES · {chemin}"))
+    if 1 in codes:
+        return 1
+    return 3 if 3 in codes else 0
 
 
 def cmd_providers(args: argparse.Namespace) -> int:
@@ -1810,6 +1878,28 @@ def cmd_scan(args: argparse.Namespace) -> int:
     print("    Lecture du resultat : code 0 = rien trouve ; code 1 = au moins un defaut")
     print("    reel avec sa preuve. Un fichier sans regle executable n'est PAS un")
     print("    fichier correct : c'est un fichier que ces regles-la ne savent pas juger.")
+
+    # --- mode strict : une porte de CI n'a pas les memes exigences qu'un humain ----- #
+    # `.pre-commit-hooks.yaml` annoncait `jio-scan-strict` comme « echoue aussi si le
+    # projet est incoherent a l'import » — avec exactement la MEME commande que le hook
+    # normal. Une promesse sans implementation est un artefact qui ment sur lui-meme, et
+    # c'est precisement ce que ce projet traque ailleurs. Le mode existe maintenant, et il
+    # couvre ce qui etait deja affiche sans jamais faire echouer : les RESERVES (une regle
+    # n'a pas su trancher) et les fichiers NON TESTABLES (import incoherent, analyse
+    # impossible). Le mode normal les montre ; le mode strict refuse de les laisser passer.
+    if getattr(args, "strict", False):
+        print()
+        print("  MODE STRICT — les reserves et les fichiers non testables font echouer.")
+        bloquants = len(reserves) + len(environment)
+        if bloquants == 0:
+            print("    -> 0 reserve, 0 non testable : la porte est franchie.")
+        else:
+            print(f"    -> {len(reserves)} reserve(s) et {len(environment)} fichier(s) non "
+                  "testable(s) : a instruire.")
+            print("       Une reserve n'est pas une accusation, mais elle n'est pas un quitus")
+            print("       non plus : en CI, elle doit etre levee ou declaree.")
+        print()
+        return 1 if (problems or reserves or environment) else 0
     print()
     return 1 if problems else 0
 
@@ -1978,9 +2068,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     cl = sub.add_parser(
         "claims", help="verifie les affirmations d'un document (calculs, code, chemins)")
-    cl.add_argument("fichier", help="document a verifier (markdown, texte)")
-    cl.add_argument("--racine", default="",
-                    help="racine ou chercher les chemins cites (defaut : dossier du fichier)")
+    cl.add_argument(
+        "fichier", nargs="+",
+        help="document(s) a verifier (.md, .rst, .txt, ...) — pre-commit en passe plusieurs",
+    )
+    cl.add_argument("--racine", default="", help="racine des chemins cites")
+    cl.add_argument(
+        "--hook",
+        action="store_true",
+        help=(
+            "mode pre-commit : n'echoue QUE sur une affirmation refutee. "
+            "« rien a verifier » ne bloque pas un commit."
+        ),
+    )
     cl.set_defaults(func=cmd_claims)
     cl.epilog = ("codes de sortie : 0 conforme · 1 affirmation refutee · "
                  "3 rien a verifier (ni succes, ni echec)")
@@ -2042,6 +2142,11 @@ def build_parser() -> argparse.ArgumentParser:
     a.set_defaults(func=cmd_audit)
 
     sc = sub.add_parser("scan", help="audite un projet entier et n'affiche que les problemes")
+    sc.add_argument(
+        "--strict",
+        action="store_true",
+        help="echoue aussi sur les RESERVES et les fichiers non testables (mode CI)",
+    )
     sc.add_argument("--tout", action="store_true",
                     help="balayer AUSSI les dossiers habituellement ignores "
                          "(environnements virtuels, caches, dependances)")

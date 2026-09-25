@@ -368,6 +368,48 @@ if [ "$FAIRE_TIERS" -eq 1 ]; then
     fi
 fi
 
+titre "3 ter bis. Les hooks pre-commit : une promesse ecrite doit avoir une implementation"
+
+# Le defaut trouve dans ce depot : `jio-scan-strict` annoncait « echoue aussi si le projet
+# est incoherent a l'import » avec EXACTEMENT la meme commande que le hook normal. On
+# verifie donc trois choses : le standard de l'ecosysteme accepte les manifestes, chaque
+# hook declare une entree qui existe, et le mode strict change quelque chose d'observable.
+if [ -x "$RACINE/.venv/bin/pre-commit" ]; then
+    for f in .pre-commit-config.yaml .pre-commit-hooks.yaml; do
+        printf '    %-26s ' "$f"
+        if "$RACINE/.venv/bin/pre-commit" validate-"$( [ "$f" = ".pre-commit-config.yaml" ] && echo config || echo manifest )" "$f" >/dev/null 2>&1; then
+            echo "valide par pre-commit"
+        else
+            echo "INVALIDE"
+        fi
+    done
+else
+    echo "    pre-commit absent : validation des manifestes ignoree"
+fi
+
+printf '    %-26s ' "mode strict"
+if "$PYTHON" -m jio scan jio --exclude-tests --no-learn --strict >/dev/null 2>&1; then
+    echo "code 0 sur le code du projet (une porte qui refuse tout serait desactivee)"
+else
+    echo "PROBLEME : le code du projet ne passe pas sa propre porte stricte"
+fi
+
+# Le hook lui-meme, lance comme pre-commit le lance : tous les documents modifies d'un
+# coup. Un document muet ne doit pas faire echouer ; un document refute doit faire echouer.
+TMP_HOOK=$(mktemp -d)
+printf '# Rapport\n\n12 + 30 = 42 ms.\n' > "$TMP_HOOK/sain.md"
+printf '# Note\n\nAucun fait verifiable.\n' > "$TMP_HOOK/muet.md"
+printf '# Rapport\n\nLe total vaut 7 x 6 = 43 ms.\n' > "$TMP_HOOK/faux.md"
+printf '    %-26s ' "document muet"
+"$PYTHON" -m jio claims --hook "$TMP_HOOK/muet.md" >/dev/null 2>&1 && echo "code 0 (ne bloque pas)" || echo "PROBLEME : un document muet bloque un commit"
+printf '    %-26s ' "document refute"
+if "$PYTHON" -m jio claims --hook "$TMP_HOOK/sain.md" "$TMP_HOOK/faux.md" >/dev/null 2>&1; then
+    echo "PROBLEME : une refutation n'a pas bloque"
+else
+    echo "code 1 (bloque, et cite la refutation)"
+fi
+rm -rf "$TMP_HOOK"
+
 titre "3 quater bis. Le serveur MCP : ecrit ne veut pas dire BRANCHE"
 
 # Deux faits, tous deux verifiables sans cle API :

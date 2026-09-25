@@ -527,3 +527,63 @@ def test_une_fenetre_qui_coupe_ne_produit_jamais_de_refus() -> None:
     # Le meme calcul, ecrit court, est bien juge : la prudence ne coute rien ici.
     assert verifier("12 + 30 = 42", racine=None).verifiees == 1
     assert verifier("12 + 30 = 99", racine=None).refutees == 1
+
+
+# --------------------------------------------------------------------------- #
+# 8. Le mode hook : une porte de commit ne doit bloquer QUE sur une refutation
+# --------------------------------------------------------------------------- #
+
+
+def test_le_hook_ne_bloque_pas_sur_un_document_qui_na_rien_a_verifier(
+    tmp_path: pathlib.Path,
+) -> None:
+    """« Rien a verifier » (code 3) ne doit pas empecher un commit.
+
+    Sans ce mode, le hook aurait un choix impossible : soit il ignore le code 3 (et un
+    document muet passe pour un quitus), soit il bloque (et un commit est refuse sans
+    qu'aucune faute n'existe). Le hook a donc SON contrat, etroit et ecrit : echouer
+    UNIQUEMENT sur une affirmation refutee.
+    """
+    muet = tmp_path / "note.md"
+    muet.write_text("# Note\n\nUne intention, sans aucun fait verifiable.\n", encoding="utf-8")
+
+    resultat = _jio("claims", "--hook", str(muet))
+
+    assert resultat.returncode == 0, resultat.stdout
+    assert "rien a verifier" in resultat.stdout
+    # Le code 3 reste distinct en usage direct : c'est le hook qui l'absorbe, pas la
+    # commande.
+    assert _jio("claims", str(muet)).returncode == 3
+
+
+def test_le_hook_bloque_sur_une_refutation_et_dit_laquelle(tmp_path: pathlib.Path) -> None:
+    faux = tmp_path / "rapport.md"
+    faux.write_text("# Rapport\n\nLe total vaut 7 x 6 = 43 ms.\n", encoding="utf-8")
+
+    resultat = _jio("claims", "--hook", str(faux))
+
+    assert resultat.returncode == 1
+    assert "[KO]" in resultat.stdout
+    assert "7 x 6" in resultat.stdout, "la refutation doit etre citee, pas seulement comptee"
+
+
+def test_le_hook_accepte_plusieurs_fichiers_et_le_pire_gagne(tmp_path: pathlib.Path) -> None:
+    """pre-commit passe tous les fichiers modifies d'un coup.
+
+    Un document refute ne doit pas etre noye par un document muet : c'est l'ordre de
+    gravite 1 > 3 > 0, ecrit noir sur blanc dans le code.
+    """
+    sain = tmp_path / "sain.md"
+    sain.write_text("# Rapport\n\n12 + 30 = 42 ms.\n", encoding="utf-8")
+    muet = tmp_path / "muet.md"
+    muet.write_text("# Note\n\nAucun fait.\n", encoding="utf-8")
+    faux = tmp_path / "faux.md"
+    faux.write_text("# Rapport\n\n12 + 30 = 99 ms.\n", encoding="utf-8")
+
+    assert _jio("claims", "--hook", str(sain), str(muet)).returncode == 0
+    assert _jio("claims", "--hook", str(sain), str(faux)).returncode == 1
+    assert _jio("claims", "--hook", str(muet), str(faux)).returncode == 1
+
+    # Hors mode hook, un document muet parmi d'autres reste signale (code 3) : la
+    # distinction n'est pas perdue, elle est seulement desactivee pour un commit.
+    assert _jio("claims", str(sain), str(muet)).returncode == 3

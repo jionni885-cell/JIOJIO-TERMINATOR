@@ -23,9 +23,23 @@
 - id: jio-scan-strict
   name: JIO — audit strict (aucune reserve toleree)
   description: >
-    Meme audit, mais echoue aussi si le projet est incoherent a l'import. A utiliser
-    une fois la base assainie.
-  entry: jio scan . --exclude-tests --no-learn
+    Meme audit, mais `--strict` : echoue AUSSI sur les reserves (une regle n'a pas su
+    trancher) et sur les fichiers non testables (import incoherent, analyse impossible).
+    A utiliser une fois la base assainie.
+  entry: jio scan . --exclude-tests --no-learn --strict
   language: python
   pass_filenames: false
   always_run: true
+
+- id: jio-claims
+  name: JIO — faits verifiables des documents (calculs, blocs, chemins)
+  description: >
+    Recalcule les calculs annonces, compile les blocs presentes comme du Python et
+    verifie les chemins cites, dans les documents modifies. N'echoue QUE sur une
+    affirmation refutee : un document sans matiere prouvable n'est ni un succes ni un
+    echec, et ne doit pas bloquer un commit.
+  entry: jio claims --hook
+  language: python
+  files: \.(md|markdown|rst|txt|org|adoc)$
+  # Les noms de fichiers sont passes a `jio claims --hook` : c'est le mode ou
+  # « rien a verifier » ne bloque pas, et ou seule une refutation fait echouer.
