@@ -113,6 +113,12 @@ _CALCUL_DROITE = re.compile(
     # 7 x 6 = 43. » est une phrase, et exiger « pas de point apres » faisait manquer
     # tous les calculs en fin de phrase — donc ceux qu'un rapport ecrit vraiment.
     r"\s*(?P<droite>-?\d+(?:[.,]\d+)?)(?![\w])(?!\.\d)"
+    # Un RESULTAT n'est pas suivi d'une operation. Dans « le total vaut 7 x 6 = 43 »,
+    # le mot « vaut » matchait « vaut 7 » : 7 est le premier TERME d'une expression,
+    # pas un resultat. Aucune expression ne se remontait alors a sa gauche, et le
+    # rapport annoncait « 1 calcul trop long pour etre evalue » — une LACUNE INVENTEE.
+    # Une lacune fausse est pire qu'aucune : elle apprend a ignorer les vraies.
+    r"(?!\s*[" + _CLASSE_OPERATEURS + r"]\s*-?\d)"
 )
 
 #: Une chaine d'operateurs : `1 + 2`, `3 x 4`, `100/4`. La repetition est BORNEE
@@ -132,8 +138,14 @@ _CHAINE = re.compile(
 _FENETRE_EXPRESSION = 240
 
 
-def _expression_avant(ligne: str, fin: int) -> str | None:
-    """L'expression arithmetique qui se termine juste avant `fin`, ou `None`.
+def _expression_avant_detail(ligne: str, fin: int) -> tuple[str | None, str]:
+    """L'expression qui se termine juste avant `fin`, ET la cause de son absence.
+
+    Rend `(expression, cause)` ou `cause` vaut `ok`, `coupee` ou `absente`. La cause
+    n'est pas un ornement : « coupee » demande de raccourcir l'expression, « absente »
+    demande de l'ecrire. Les confondre faisait afficher « calcul trop long » pour un
+    chiffre qu'AUCUNE expression n'accompagnait — un message faux dans la seule partie
+    du rapport consacree a l'honnetete.
 
     Remonte a partir du `=` : on borne la fenetre, on exige que la chaine colle
     exactement a la fin de cette fenetre, et on VERIFIE qu'elle ne continue pas
@@ -144,7 +156,7 @@ def _expression_avant(ligne: str, fin: int) -> str | None:
     fenetre = ligne[debut_fenetre:fin].rstrip()
     correspondance = _CHAINE.search(fenetre)
     if correspondance is None:
-        return None
+        return None, "absente"
     depart = debut_fenetre + correspondance.start("expr")
     # La chaine continue-t-elle a gauche ? Si oui, elle a ete coupee (par la fenetre
     # ou par la borne de termes) : on s'abstient. Evaluer une PARTIE des termes et la
@@ -154,10 +166,39 @@ def _expression_avant(ligne: str, fin: int) -> str | None:
     # pas : `\d+` est gourmand, donc l'expression commence toujours au debut de la
     # suite de chiffres. Exiger « pas de chiffre avant » refusait tout sur une ligne
     # repetant plusieurs calculs (« 1 + 2 = 3 1 + 2 = 3 »), mesure faite.
-    avant = ligne[:depart].rstrip()
-    if avant and avant[-1] in OPERATEURS:
-        return None
-    return correspondance.group("expr").strip()
+    if _continue_a_gauche(ligne[:depart]):
+        return None, "coupee"
+    # La fenetre a peut-etre coupe le DEBUT de l'expression (ligne de plus de
+    # `_FENETRE_EXPRESSION` caracteres) : la chaine commence alors au premier caractere
+    # de la fenetre, et le chiffre precedent serait ignore. S'abstenir est la seule
+    # sortie sure — un refus invente coute plus cher qu'un fait non verifie.
+    if debut_fenetre > 0 and correspondance.start("expr") == 0:
+        return None, "coupee"
+    return correspondance.group("expr").strip(), "ok"
+
+
+def _continue_a_gauche(avant: str) -> bool:
+    """Un OPERATEUR reste-t-il a gauche de l'expression ? (donc : est-elle coupee ?)
+
+    Piege trouve en auditant le README de ce depot : « le calcul fAUX » se termine par
+    un `x`, et `x` est le symbole de multiplication de la prose francaise. La garde le
+    prenait pour un operateur, declarait la chaine coupee, et le rapport affichait
+    « 1 calcul trop long » sur une phrase qui ne contient aucun calcul coupe.
+
+    Un operateur alphabetique (`x`) doit donc etre DETACHE pour en etre un : precede
+    d'un separateur ou du debut. `3 x 4` : oui. `faux` : non.
+    """
+    gauche = avant.rstrip()
+    if not gauche or gauche[-1] not in OPERATEURS:
+        return False
+    if not gauche[-1].isalpha():
+        return True
+    return len(gauche) < 2 or not (gauche[-2].isalnum() or gauche[-2] == "_")
+
+
+def _expression_avant(ligne: str, fin: int) -> str | None:
+    """L'expression arithmetique qui se termine juste avant `fin`, ou `None`."""
+    return _expression_avant_detail(ligne, fin)[0]
 
 _BLOC = re.compile(r"```(?P<langue>[A-Za-z0-9_+-]*)\n(?P<code>.*?)```", re.DOTALL)
 #: Un chemin cite : au moins un dossier, une extension connue, entre backticks.
@@ -273,7 +314,7 @@ def extraction(texte: str) -> tuple[Affirmation, ...]:
 
 
 def _extraction_detail(texte: str) -> tuple[tuple[Affirmation, ...], int, int]:
-    """Rend `(affirmations, ignorees_par_volume, chaines_non_evaluees)`.
+    """Rend `(affirmations, ignorees_par_volume, chaines_coupees)`.
 
     Les deux compteurs existent parce qu'une verification PARTIELLE doit se savoir
     partielle. Deux limites, toutes deux declarees dans le rapport :
@@ -282,7 +323,12 @@ def _extraction_detail(texte: str) -> tuple[tuple[Affirmation, ...], int, int]:
         ne fixe pas le temps de travail de l'outil) ;
       * `chaines_non_evaluees` : un calcul dont la chaine depasse la borne de termes,
         ou que la fenetre a coupee. On ne l'evalue PAS sur une partie de ses termes :
-        comparer la fin d'une longue somme a son total inventerait un refus.
+        comparer la fin d'une longue somme a son total inventerait un refus ;
+    Un resultat annonce dont AUCUNE expression n'est lisible a gauche n'est pas compte :
+    « le total vaut 42 ms » est une phrase, `seq=0` est un extrait de code. Les compter
+    produisait DOUZE lacunes inventees sur le seul README de ce depot (mesure) — et une
+    lacune inventee apprend a ignorer les vraies. Seule une chaine COUPEE est declaree :
+    la, un calcul existe et n'a pas pu etre juge.
 
     Les deux etaient d'abord silencieux. Un calcul faux de trente-trois termes passait
     alors sans etre ni verifie ni compte : exactement le silence que ce projet refuse.
@@ -314,9 +360,16 @@ def _extraction_detail(texte: str) -> tuple[tuple[Affirmation, ...], int, int]:
         ligne_texte = texte[debut_ligne:fin_ligne if fin_ligne != -1 else len(texte)]
         if debut_ligne not in fragments:
             fragments[debut_ligne] = _fragments_cites(ligne_texte)
-        gauche = _expression_avant(ligne_texte, calcul.start() - debut_ligne)
+        gauche, cause = _expression_avant_detail(ligne_texte, calcul.start() - debut_ligne)
         if gauche is None:
-            non_evaluees += 1
+            # Seule une chaine COUPEE est une lacune : un calcul existe et n'a pas pu
+            # etre juge. Une annonce sans expression (« le total vaut 42 ms », `seq=0`)
+            # n'est pas un calcul manque, c'est du texte ou du code : la compter
+            # fabriquait des lacunes, et une lacune inventee apprend a ignorer les
+            # vraies. La cause est calculee par `_expression_avant_detail`, donc il n'y
+            # a qu'un seul endroit qui sait POURQUOI il a refuse.
+            if cause == "coupee":
+                non_evaluees += 1
             continue
         depart = debut_ligne + ligne_texte.rfind(gauche)
         trouvailles.append(
@@ -334,7 +387,11 @@ def _extraction_detail(texte: str) -> tuple[tuple[Affirmation, ...], int, int]:
             )
         )
         if len(trouvailles) >= MAX_AFFIRMATIONS:
-            return _trier(trouvailles), _compter_reste(texte, len(trouvailles)), non_evaluees
+            return (
+                _trier(trouvailles),
+                _compter_reste(texte, len(trouvailles)),
+                non_evaluees,
+            )
 
     for chemin in _CHEMIN.finditer(texte):
         brut = chemin.group("chemin")

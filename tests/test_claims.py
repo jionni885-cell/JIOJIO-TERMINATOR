@@ -432,3 +432,98 @@ def test_le_signe_multiplication_dans_une_citation_reste_non_bloquant() -> None:
     rapport = verifier("Le rapport annoncait `7 × 6 = 43` avant correction.", racine=None)
     assert rapport.refutees == 0 and rapport.signalees == 1
     assert "CITE" in rapport.verifications[0].message
+
+
+# --------------------------------------------------------------------------- #
+# 7. Une lacune declaree doit dire la VRAIE cause de son existence
+# --------------------------------------------------------------------------- #
+
+
+def test_mot_annonce_milieu_dexpression_nest_pas_un_resultat() -> None:
+    """« le total vaut 7 x 6 = 43 » : `vaut` annonçait `7`, premier TERME.
+
+    Le motif matchait « vaut 7 », ne trouvait aucune expression a gauche, et le
+    rapport declairait « 1 calcul trop long pour etre evalue » : une lacune INVENTEE.
+    Une lacune fausse est pire qu'aucune — elle apprend a ignorer les vraies.
+    """
+    rapport = verifier("Le total vaut 7 x 6 = 43 et le gain est de 12 + 30 = 42.",
+                       racine=None)
+    assert len(rapport.verifications) == 2, rapport.resume()
+    assert rapport.refutees == 1 and rapport.verifiees == 1
+    assert rapport.non_evaluees == 0, "aucun calcul n'est trop long ici"
+
+
+@pytest.mark.parametrize(
+    ("phrase", "verifiees", "refutees"),
+    [
+        ("3 x 4 vaut 12", 1, 0),
+        ("7 x 6 vaut 43", 0, 1),
+        ("la somme donne 12 + 30 = 42", 1, 0),
+        ("le total fait 5 + 5 = 10 aujourd'hui", 1, 0),
+    ],
+)
+def test_les_mots_annonce_restent_des_annonces(
+    phrase: str, verifiees: int, refutees: int
+) -> None:
+    """Refuser un resultat suivi d'une operation ne doit pas casser `A vaut B`."""
+    rapport = verifier(phrase, racine=None)
+    assert (rapport.verifiees, rapport.refutees) == (verifiees, refutees), rapport.resume()
+
+
+def test_une_annonce_sans_expression_nest_pas_une_lacune() -> None:
+    """« le total vaut 42 ms », `seq=0` : du texte, du code — pas un calcul manque.
+
+    Un compteur dedie a ces cas produisait DOUZE lacunes inventees sur le seul README
+    de ce depot (mesure). Une lacune inventee apprend a ignorer les vraies : le
+    compteur a ete retire, et la distinction ne sert plus qu'a classer.
+
+    Seule une chaine COUPEE est une lacune : la, un calcul existe et n'a pas pu etre
+    juge.
+    """
+    for phrase in ("le total vaut 42 ms", "Chaque processus repartait a `seq=0`.",
+                   "`double(1)=2` puis `double(2)=4`"):
+        rapport = verifier(phrase, racine=None)
+        assert rapport.non_evaluees == 0, f"{phrase!r} -> {rapport.resume()}"
+        assert "trop long" not in rapport.resume(), phrase
+
+    somme_en_mots = "la somme de " + " + ".join(str(i) for i in range(1, 41)) + " = 820"
+    declaree = verifier(somme_en_mots, racine=None)
+    assert declaree.non_evaluees == 1, "la, un calcul existe vraiment et est coupe"
+    assert declaree.refutees == 0, "coupee ne veut pas dire fausse"
+    assert "trop long" in declaree.resume()
+
+
+def test_le_mot_faux_ne_se_termine_pas_par_une_multiplication() -> None:
+    """Le `x` de « faux » est une LETTRE, pas un operateur.
+
+    Trouve en auditant le README de ce depot : la garde de continuation lisait le
+    dernier caractere, declarait la chaine coupee, et annoncait « 1 calcul trop long »
+    sur une phrase ou aucun calcul n'etait coupe. Un operateur alphabetique doit etre
+    DETACHE pour en etre un.
+    """
+    rapport = verifier("preuve du calcul faux  7 x 6 vaut 42, le texte annonce 43",
+                       racine=None)
+    assert rapport.verifiees == 1 and rapport.non_evaluees == 0, rapport.resume()
+
+    # Mais un vrai `x` de multiplication, detache, coupe toujours la chaine : sinon
+    # on evaluerait la fin d'une longue somme et on inventerait un refus.
+    coupee = verifier("3 x " + " + ".join(str(i) for i in range(1, 41)) + " = 2", racine=None)
+    assert coupee.refutees == 0 and coupee.non_evaluees == 1, coupee.resume()
+
+
+def test_une_fenetre_qui_coupe_ne_produit_jamais_de_refus() -> None:
+    """Ligne de plus de 240 caracteres : la fenetre peut couper le DEBUT de l'expression.
+
+    Le controle de continuation ne voit qu'un OPERATEUR a gauche ; si la coupe tombe au
+    MILIEU d'un nombre, le chiffre precedent lui echappe. La chaine lue serait alors un
+    fragment compare a un total qu'il n'a jamais produit : un refus invente, sur un
+    document qui n'a rien annonce de faux.
+    """
+    nombre_gegant = "6" * 300
+    rapport = verifier(f"{nombre_gegant} + 7 = 3", racine=None)
+    assert rapport.refutees == 0, "un fragment de nombre ne s'accuse pas"
+    assert rapport.non_evaluees == 1, rapport.resume()
+
+    # Le meme calcul, ecrit court, est bien juge : la prudence ne coute rien ici.
+    assert verifier("12 + 30 = 42", racine=None).verifiees == 1
+    assert verifier("12 + 30 = 99", racine=None).refutees == 1

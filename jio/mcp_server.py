@@ -56,6 +56,27 @@ _AUDIT_SCHEMA: dict[str, Any] = {
     "required": ["path"],
 }
 
+_CLAIMS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "text": {
+            "type": "string",
+            "description": (
+                "The document to verify, passed DIRECTLY as text — a draft you are "
+                "about to deliver. Markdown, plain text, report."
+            ),
+        },
+        "root": {
+            "type": "string",
+            "description": (
+                "Project root used to resolve cited file paths, confined to "
+                "JIO_ROOT. Omit to skip path checking entirely."
+            ),
+        },
+    },
+    "required": ["text"],
+}
+
 _SKILLS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -90,6 +111,18 @@ TOOLS: tuple[dict[str, Any], ...] = (
             "before producing a deliverable."
         ),
         "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "jio_claims",
+        "description": (
+            "Verify the CHECKABLE FACTS of a document you are about to deliver: "
+            "stated arithmetic (recomputed), fenced code blocks labelled as Python "
+            "(must compile), cited file paths (must exist). Returns the refuted "
+            "claims with their proof. Exit meaning: conforme / refuted / nothing to "
+            "verify — the last is NOT a pass. A wrong number is the cheapest way to "
+            "be confidently wrong, and it is detectable in milliseconds."
+        ),
+        "inputSchema": _CLAIMS_SCHEMA,
     },
     {
         "name": "jio_skills",
@@ -229,6 +262,57 @@ def _tool_audit(args: dict[str, Any]) -> str:
     return "\n".join(out)
 
 
+def _tool_claims(args: dict[str, Any]) -> str:
+    """Verifie les faits verifiables d'un TEXTE.
+
+    Le texte arrive directement, pas par un chemin : un agent qui redige tient son
+    brouillon en contexte, et lui demander d'ecrire un fichier pour pouvoir le
+    verifier serait une friction qui garantit que la verification n'aura pas lieu.
+    """
+    from .verify.claims import verifier
+
+    texte = str(args.get("text", ""))
+    if not texte.strip():
+        return "REFUS : aucun texte fourni."
+    if len(texte) > MAX_SOURCE:
+        return f"REFUS : document trop long ({len(texte)} caracteres)."
+
+    racine: Path | None = None
+    demande = str(args.get("root", ""))
+    if demande:
+        try:
+            racine = _confined(demande)
+        except PermissionError as exc:
+            return f"REFUS : {exc}"
+
+    rapport = verifier(texte, racine=racine)
+    if not rapport.verifications:
+        return (
+            "RIEN A VERIFIER — ce document ne contient aucun fait controlable (aucun "
+            "calcul annonce, aucun bloc annonce comme Python). Ce n'est NI un succes, "
+            "NI un echec : le document n'offre rien a prouver."
+        )
+
+    out = [rapport.resume(), ""]
+    for verification in rapport.verifications:
+        marque = "ok" if verification.ok else ("KO" if verification.bloquant else "!!")
+        out.append(f"[{marque}] {verification.message[:300]}")
+    out.append("")
+    if rapport.bloquantes:
+        out.append(
+            "NON CONFORME — une affirmation refutee est un fait, pas une opinion. "
+            "Corrigez le texte, ou retirez l'affirmation."
+        )
+    else:
+        out.append("CONFORME sur ce qui est verifiable ; le reste est declare non verifie.")
+    if rapport.ignorees or rapport.non_evaluees:
+        out.append(
+            f"PARTIEL : {rapport.ignorees} affirmation(s) au-dela de la limite de volume "
+            f"et {rapport.non_evaluees} calcul(s) trop long(s) : NON verifies."
+        )
+    return "\n".join(out)
+
+
 def _tool_contract(_args: dict[str, Any]) -> str:
     from .artifacts.doctrine import FULL
 
@@ -261,6 +345,9 @@ def _tool_skills(args: dict[str, Any]) -> str:
 _HANDLERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "jio_prove": _tool_prove,
     "jio_audit": _tool_audit,
+    # La prose : le seul outil qui repond a « mon brouillon dit-il quelque chose de
+    # faux ? » sans rien executer de l'agent, et sans quitter son contexte.
+    "jio_claims": _tool_claims,
     "jio_contract": _tool_contract,
     "jio_skills": _tool_skills,
 }

@@ -695,6 +695,23 @@ ne peut donc plus exploser.
 - **`4 mises à jour sur 4 = 75 %`** était lu comme le calcul `4 = 75`, donc refusé :
   une accusation fausse sur une phrase correcte. Un calcul doit contenir **au moins un
   opérateur**.
+- **`vaut` au milieu d'une expression.** Dans `le total vaut 7 x 6 = 43`, le mot
+  `vaut` annonçait `7` — le premier *terme* de l'expression, pas un résultat. Le rapport
+  déclarait alors « 1 calcul trop long pour être évalué » : une lacune **inventée**. Un
+  résultat n'est jamais suivi d'une opération ; lui interdire cette suite a supprimé le
+  faux motif. Une lacune fausse est pire qu'aucune : elle apprend à ignorer les vraies.
+- **Une lacune inventée coûte plus cher qu'une lacune manquante.** Un compteur dédié aux
+  résultats annoncés *sans expression lisible* (`le total vaut 42 ms`, `seq=0`) a
+  produit **douze lacunes inventées sur le seul README de ce dépôt**. Ces cas ne sont pas
+  des calculs manqués : c'est du texte, ou du code en ligne. Le compteur existe toujours
+  dans le code — il sert à *classer* — mais il ne compte plus rien. Seule une chaîne
+  réellement **coupée** par la borne est déclarée : là, un calcul existe et n'a pas pu
+  être jugé.
+- **Le `x` de « faux » n'est pas une multiplication.** La garde de continuation lisait
+  le dernier caractère de la fenêtre ; le mot « f**aux** » finissait donc par le symbole
+  `x`, la chaîne était déclarée coupée, et le rapport annonçait « 1 calcul trop long »
+  sur une phrase qui n'en contenait aucun. Un opérateur alphabétique n'en est un que
+  s'il est **détaché** : `3 x 4` oui, `faux` non.
 
 ## Trois codes de sortie, parce que « rien à vérifier » n'est ni un succès ni un échec
 
@@ -895,12 +912,15 @@ vers les artefacts natifs de chaque outil :
 | **GitHub Copilot** | `.github/copilot-instructions.md` |
 | **Tout client MCP** | serveur `jio mcp` — stdio, JSON-RPC 2.0, zéro dépendance |
 
-Le serveur MCP expose `jio_prove` (prouver une source contre des règles exécutables),
-`jio_audit` (auditer un fichier), `jio_contract` (les trois états de livraison) et
-`jio_skills`. Tout chemin est **confiné** à `JIO_ROOT` : un serveur d'outils qui lit
-n'importe quel fichier sur demande est une vulnérabilité, pas une fonctionnalité.
+Le serveur MCP expose cinq outils : `jio_prove` (prouver une source contre des règles
+exécutables), `jio_audit` (auditer un fichier), `jio_contract` (les trois états de
+livraison), `jio_skills`, et `jio_claims` — qui prend le **texte** d'un document, pas un
+chemin, parce qu'une IA qui rédige tient son brouillon en contexte et lui demander
+d'écrire un fichier pour pouvoir le vérifier garantirait que la vérification n'ait pas
+lieu. Tout chemin est **confiné** à `JIO_ROOT` : un serveur d'outils qui lit n'importe
+quel fichier sur demande est une vulnérabilité, pas une fonctionnalité.
 
-Les 7 agents (`.opencode/agents/`) et les 10 compétences Hermes (`.hermes/skills/`)
+Les 7 agents (`.opencode/agents/`) et les 11 compétences Hermes (`.hermes/skills/`)
 partagent la même doctrine. Deux garde-fous structurels : le **vérificateur n'a pas
 le droit d'écrire** (un vérificateur qui peut réparer ce qu'il juge finit toujours par
 le déclarer conforme), et `AGENTS.md` reste **sous 150 lignes** — au-delà, un fichier
