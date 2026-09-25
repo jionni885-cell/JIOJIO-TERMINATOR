@@ -565,6 +565,60 @@ il est maintenant porté par le consensus et affiché.
 
 ---
 
+## Quand il n'y a pas de code à exécuter : la prose a ses témoins
+
+Tout ce qui précède prouve du **code**. Une mission généraliste — analyse, rapport,
+note de synthèse — n'a rien à exécuter : JIO s'abstenait, et c'est précisément là que
+se logent les hallucinations, dans du texte que personne ne recalcule.
+
+Un document contient pourtant des affirmations **vraies ou fausses sans
+interprétation**. `jio claims` en vérifie trois genres :
+
+| Genre | Ce qui est vérifié | Sévérité |
+|---|---|---|
+| Calcul annoncé | `7 × 6 = 43` → évalué par un **AST restreint** (nombres et 4 opérations, aucun `eval`) : la valeur réelle est écrite dans le refus | **bloquant** |
+| Bloc présenté comme `python` | compilé : une erreur de syntaxe est un fait, pas une opinion | **bloquant** |
+| Chemin cité (`` `a/b.py` ``) | existence sous `--racine` | **signalé**, jamais accusé |
+
+La retenue est une décision, pas une indulgence : un document d'architecture cite des
+fichiers **à créer**. Un outil qui accuse là-dessus se fait désactiver en deux jours.
+Et « rien à vérifier » n'est pas un quitus — `jio claims` renvoie alors **1** en le
+disant, pour qu'une note vide ne passe pas pour un document conforme.
+
+Un document fautif est refusé avec sa preuve, un document sain reste totalement muet :
+
+```
+document               code      bilan
+rapport_sain.md        code 0    6 affirmation(s) verifiee(s) · 0 refutee(s) · 0 signalee(s)
+rapport_fautif.md      code 1    5 affirmation(s) verifiee(s) · 2 refutee(s) dont 2 bloquante(s)
+preuve du calcul faux  7 x 6 vaut 42, le texte annonce 43
+-> le fautif est REFUTE (code 1), le sain reste MUET (code 0) : le temoin discrimine.
+sans affirmation       code != 0 — rien a verifier n'est pas un quitus, et c'est DIT.
+```
+
+Rejouable : `bash scripts/evidence.sh`, étape **3 quinquies** (corpus versionné dans
+`evidence/claims/`).
+
+### Quatre bugs, tous du même genre : une vérification qui ne vérifiait rien
+
+`verifier()` rendait une liste **vide** alors que `extraction()` trouvait bien les deux
+calculs du document. Un vérificateur qui ne trouve rien ne dit pas « tout va bien » : il
+dit qu'il n'a rien regardé — et personne ne peut faire la différence de l'extérieur.
+
+| Bug | Cause | Correctif |
+|---|---|---|
+| Le vrai signe `×` n'était pas reconnu | classe de caractères écrite **à la main** (`[-+*/×x]`) : un caractère non-ASCII s'y perd sans bruit | classe **construite** depuis la table des opérateurs |
+| Tout calcul en fin de phrase échappait | regard final `(?![\w.])` : un nombre suivi d'un **point** était refusé, donc exactement la façon dont un rapport écrit ses calculs | `(?![\w])(?!\.\d)` — refuser un chiffre qui suit, pas une ponctuation |
+| Aucune expression n'était acceptée | `ast.walk` visite **aussi les nœuds d'opérateur** (`ast.Add`, `ast.Mult`) : aucune catégorie autorisée ne les acceptait, donc *toute* expression était refusée | descente explicite de l'arbre, **le contrôle et le calcul dans la même fonction** |
+| `eval()` sur du contenu non fiable | — | supprimé : le calcul est fait sur les seuls nœuds admis |
+
+Le troisième est le plus instructif : la fonction de contrôle était **toujours fausse**,
+et comme elle était écrite à part du calcul, rien ne le signalait. Contrôle et calcul
+partagent maintenant un seul passage — un test couvre chacun des quatre bugs
+(`tests/test_claims.py`).
+
+---
+
 ## Le rendre omniprésent : CI et hook standard
 
 Un défaut prouvé ne doit jamais atteindre un commit. JIO s'installe donc là où le

@@ -345,4 +345,46 @@ if [ "$FAIRE_TIERS" -eq 1 ]; then
     fi
 fi
 
+titre "3 quinquies. La PROSE : un document a des affirmations vraies ou fausses"
+# Tout le harness prouvait du CODE. Sur une mission generaliste (rapport, analyse,
+# note) il n'y avait rien a executer, donc JIO s'abstenait. Ce temoin verifie ce qui,
+# dans un texte, se PROUVE au lieu de se relire : un calcul annonce, un bloc presente
+# comme Python, un chemin cite. Corpus dans evidence/claims/, donc rejouable.
+CORPUS_CLAIMS="$RACINE/evidence/claims"
+TMP_CLAIMS=$(mktemp -d)
+if [ -d "$CORPUS_CLAIMS" ]; then
+    printf '    %-22s %-9s %s\n' "document" "code" "bilan"
+    for document in rapport_sain.md rapport_fautif.md; do
+        # Le CODE DE SORTIE est le contrat (0 = conforme, 1 = refute). Le lire apres un
+        # `|| true` donnerait toujours 0 : on teste donc l'invocation elle-meme.
+        if sortie=$("$PYTHON" -m jio claims "$CORPUS_CLAIMS/$document" --racine "$RACINE" 2>&1); then
+            code=0
+        else
+            code=$?
+        fi
+        bilan=$(printf '%s' "$sortie" | grep -oE 'BILAN : .*' | head -1 | cut -c9- || true)
+        printf '    %-22s %-9s %s\n' "$document" "code $code" "${bilan:-?}"
+        printf '%s\n' "$sortie" >> "$TMP_CLAIMS/brut.txt"
+    done
+    printf '    %-22s ' "preuve du calcul faux"
+    preuve=$(grep -oE '7 . 6 vaut 42, le texte annonce 43' "$TMP_CLAIMS/brut.txt" | head -1 || true)
+    echo "${preuve:-(absente — a instruire)}"
+    if grep -q 'NON CONFORME' "$TMP_CLAIMS/brut.txt" \
+       && grep -qi 'conforme sur ce qui est verifiable' "$TMP_CLAIMS/brut.txt"; then
+        echo "    -> le fautif est REFUTE (code 1), le sain reste MUET (code 0) : le temoin discrimine."
+    else
+        echo "    -> ATTENTION : la discrimination n'est pas etablie ci-dessus."
+    fi
+    printf '    %-22s ' "sans affirmation"
+    if "$PYTHON" -m jio claims "$CORPUS_CLAIMS/note_sans_affirmation.md" --racine "$RACINE" \
+         >/dev/null 2>&1; then
+        echo "code 0 — MAUVAIS : une note sans fait verifiable passerait pour un quitus."
+    else
+        echo "code != 0 — rien a verifier n'est pas un quitus, et c'est DIT."
+    fi
+else
+    echo "    corpus absent : etape ignoree."
+fi
+rm -rf "$TMP_CLAIMS"
+
 titre "Termine"

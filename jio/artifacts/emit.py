@@ -44,6 +44,8 @@ jio doctor                 etat du systeme, fournisseurs detectes
 jio bench --skill 0.30     mesure le gain du harness (S0 -> S3, controle a budget egal)
 jio audit <fichier>        audite un artefact ; derive des regles executables de lui-meme
 jio run "<objectif>"       mission complete avec la boucle verifiee
+jio claims <document>      verifie les faits d'une prose : calculs annonces, blocs
+                           presentes comme Python, chemins cites (0 = conforme)
 jio trace <journal>        rejoue et verifie un journal (chaine de hachage + exploits)
 ```
 Le banc est executable sans aucune cle API : les reponses sont simulees, la

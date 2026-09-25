@@ -691,6 +691,87 @@ def _attach_learning(engine, state_dir: Path, *, disable: bool = False) -> None:
     )
 
 
+def _racine_du_document(chemin: Path) -> Path:
+    """Racine ou chercher les chemins cites par un document.
+
+    Un document cite `jio/loop/engine.py` : ce chemin est ecrit RELATIVEMENT A LA
+    RACINE DU DEPOT, jamais relativement au dossier du document. Prendre le dossier du
+    document transformait chaque citation juste en « chemin introuvable » — du bruit,
+    et le bruit fait desactiver un outil aussi surement qu'une fausse accusation.
+    Faute de depot, on retombe sur le dossier du document : c'est la seule reference
+    dont on dispose alors, et elle est exacte.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=10, cwd=chemin.parent,
+            check=False,  # un dossier hors depot n'est pas une erreur
+        )
+    except Exception:
+        proc = None
+    if proc is not None and proc.returncode == 0 and proc.stdout.strip():
+        return Path(proc.stdout.strip())
+    return chemin.parent
+
+
+def _rapport_prose(chemin: Path, racine: Path | None, *, titre: str) -> int:
+    """Imprime le rapport de prose et rend le CODE DE SORTIE. Implementation unique.
+
+    `jio claims` et `jio audit <document>` appellent cette fonction : deux entrees,
+    une seule doctrine. Deux implementations auraient fini par diverger sur le seul
+    point qui compte — quand dire « refute ».
+    """
+    from .verify.claims import verifier
+
+    texte = chemin.read_text(encoding="utf-8", errors="replace")
+    ou = racine if racine is not None else _racine_du_document(chemin)
+    rapport = verifier(texte, racine=ou)
+
+    print()
+    print(f"  {titre} · {chemin}")
+    print(f"  racine des chemins cites : {ou}")
+    print()
+    if not rapport.verifications:
+        print("    aucune affirmation verifiable trouvee. Ce n'est PAS un quitus : un")
+        print("    document sans calcul, sans code et sans chemin cite n'offre rien a")
+        print("    prouver — et jio ne pretend pas juger le reste.")
+        print()
+        return 1
+    for verification in rapport.verifications:
+        marque = "ok " if verification.ok else ("KO " if verification.bloquant else "!  ")
+        print(f"    [{marque}] {verification.message}")
+    print()
+    print(f"  BILAN : {rapport.resume()}")
+    if not rapport.conforme:
+        print("    VERDICT : NON CONFORME — une affirmation refutee est un fait, pas")
+        print("    une opinion. Corriger le texte, ou retirer l'affirmation.")
+        print()
+        return 1
+    print("    VERDICT : conforme sur ce qui est verifiable (le reste est declare")
+    print("    non verifie, jamais suppose vrai).")
+    print()
+    return 0
+
+
+def cmd_claims(args: argparse.Namespace) -> int:
+    """Verifie les affirmations VERIFIABLES d'un document : calculs, code, chemins.
+
+    Les missions generalistes — analyse, rapport, note de recherche — n'ont pas
+    d'oracle executable, donc JIO s'abstenait. Un texte contient pourtant des
+    affirmations qui sont vraies ou fausses sans interpretation : un calcul annonce,
+    un bloc presente comme Python, un chemin cite. C'est exactement la que se logent
+    les hallucinations, et on peut les PROUVER plutot que les relire.
+    """
+    chemin = Path(args.fichier)
+    if not chemin.exists():
+        print(f"  fichier introuvable : {chemin}", file=sys.stderr)
+        return 2
+    racine = Path(args.racine) if getattr(args, "racine", "") else None
+    return _rapport_prose(chemin, racine, titre="AFFIRMATIONS VERIFIABLES")
+
+
 def cmd_providers(args: argparse.Namespace) -> int:
     """Liste les fournisseurs detectes, et — avec `--prove` — les sonde pour de vrai.
 
@@ -828,6 +909,15 @@ def cmd_audit(args: argparse.Namespace) -> int:
         print(f"  fichier introuvable : {path}", file=sys.stderr)
         return 2
     source = path.read_text(encoding="utf-8", errors="replace")
+
+    # Une seule porte, deux familles de temoins. Sur un document, auditer comme du
+    # code rendait « la source ne compile pas » : vrai, et inutile — l'utilisateur
+    # n'apprend rien. Un document est juge par ses propres temoins de prose.
+    from .verify.claims import est_un_document
+
+    if not getattr(args, "task", "") and est_un_document(path, source):
+        racine = Path(args.racine) if getattr(args, "racine", "") else None
+        return _rapport_prose(path, racine, titre="AUDIT (prose)")
 
     task = TASKS_BY_ID.get(args.task) if args.task else None
     origin = ""
@@ -1475,6 +1565,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="tours de boucle maximum")
     b.set_defaults(func=cmd_bench)
 
+    cl = sub.add_parser(
+        "claims", help="verifie les affirmations d'un document (calculs, code, chemins)")
+    cl.add_argument("fichier", help="document a verifier (markdown, texte)")
+    cl.add_argument("--racine", default="",
+                    help="racine ou chercher les chemins cites (defaut : dossier du fichier)")
+    cl.set_defaults(func=cmd_claims)
+
     prov = sub.add_parser(
         "providers", help="liste les fournisseurs, et les SONDE avec --prove")
     prov.add_argument(
@@ -1517,6 +1614,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.set_defaults(func=cmd_run)
 
     a = sub.add_parser("audit", help="audite un artefact contre une specification")
+    a.add_argument("--racine", default="",
+                   help="document : racine ou chercher les chemins cites")
     a.add_argument("file")
     a.add_argument("--task", default="", help="id de tache du banc pour les oracles")
     a.add_argument("--entrypoint", default="", help="fonction a auditer (sinon la premiere)")
