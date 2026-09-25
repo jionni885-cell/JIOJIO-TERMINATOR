@@ -18,10 +18,10 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Iterator, Mapping
 
 from .errors import IntegrityViolation
-from .types import TrustLevel, canonical, digest_of, now
+from .types import TrustLevel, digest_of, now
 
 GENESIS = "0" * 32
 

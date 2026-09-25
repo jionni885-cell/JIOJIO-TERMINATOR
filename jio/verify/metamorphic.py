@@ -21,9 +21,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable
 
-from ..core.types import Claim, Severity
+from ..core.types import Severity
 
 
 @dataclass(frozen=True)

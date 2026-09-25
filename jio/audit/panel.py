@@ -23,7 +23,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Callable, Protocol, Sequence
 
-from ..core.types import Finding, Rule, Severity, Spec, Verdict, Vote
+from ..core.types import Finding, Severity, Spec, Verdict, Vote
 from ..providers.base import Message, Provider
 
 

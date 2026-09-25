@@ -314,7 +314,11 @@ PYE
     "$PYTHON" -m pytest -q tests/test_real_path.py 2>&1 | tail -2
 
     titre "5. Le banc : le harness a budget d'appels egal"
-    "$PYTHON" -m jio bench --rounds 1 2>&1 | sed -n '/RESULTATS/,$p' | head -14
+    # On n'affiche pas des taux, on affiche ce qui les rend lisibles : le tableau AVEC
+    # leurs intervalles de confiance, puis l'ECART et son verdict. Un ecart dont
+    # l'intervalle contient zero est indéterminé a ce nombre d'essais — c'est la seule
+    # conclusion que ces chiffres portent, et elle doit figurer dans la preuve.
+    "$PYTHON" -m jio bench --rounds 1 2>&1 | sed -n '/RESULTATS/,/^  QUAND LA MISSION/p' | head -30
 
     titre "6. Le projet s'audite lui-meme"
     "$PYTHON" -m jio scan jio --exclude-tests --no-learn 2>&1 | tail -5

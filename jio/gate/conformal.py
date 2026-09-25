@@ -37,7 +37,7 @@ import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable
 
 
 @dataclass(frozen=True)
@@ -107,7 +107,6 @@ class ConformalGate:
             self._tau = self.default_tau
             return self._tau
 
-        n = len(self.calibration)
         candidates = sorted({c.score for c in self.calibration})
         best = 1.0
         for tau in candidates:

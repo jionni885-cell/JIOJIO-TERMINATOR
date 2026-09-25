@@ -28,12 +28,12 @@ verification ». Le moniteur surveille donc specifiquement ce seuil.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Sequence
 
 from ..core.errors import IntegrityViolation
 from ..core.journal import Event, Journal
-from ..core.types import Exploit, ExploitKind, IntegrityReport, Severity
+from ..core.types import Exploit, ExploitKind, IntegrityReport
 
 #: Chemins qui ne doivent JAMAIS etre lus par l'agent.
 PROTECTED_PATHS: tuple[str, ...] = (

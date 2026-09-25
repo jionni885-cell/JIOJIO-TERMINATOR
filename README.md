@@ -221,9 +221,14 @@ observé, aucune n'a été décidée en théorie) :
 **3. Ne pas réinventer ce que d'autres font mieux.** Ruff, Flake8 et Pyflakes sont
 l'état de l'art pour repérer les vraies erreurs en Python. `jio scan` les branche
 quand ils sont présents (ruff, sinon flake8, sinon pyflakes), avec le jeu de règles
-« vrais bugs » de la littérature CI — `E9,F63,F7,F811,F82`, **aucune règle de style** :
-un projet qui passe ses tests ne doit pas être déclaré fautif parce qu'il n'aime pas
-l'ordre des imports.
+« vrais bugs » — `E9,F` : erreurs de syntaxe, noms non définis, et **code mort**
+(import inutilisé, variable jamais lue, f-string sans valeur). Les règles de *style*
+(ordre des imports, longueur de ligne) restent dehors : un projet qui passe ses tests ne
+doit pas être déclaré fautif parce qu'il n'aime pas l'ordre de ses imports.
+
+La porte a été élargie **après** avoir mis ce dépôt à zéro sur `F` — 24 imports morts et 2
+variables mortes écartés, dont un `build_bank()` reconstruit à chaque tirage du banc. Une
+porte qu'on élargit avant de nettoyer est une porte qu'on apprend à ignorer.
 
 Chaque constat nomme son outil (`[ruff:F821]`) : c'est une preuve vérifiable, mais
 elle n'est pas de JIO, et le dire est la moindre des choses. Les messages sont
@@ -712,6 +717,60 @@ ne peut donc plus exploser.
   `x`, la chaîne était déclarée coupée, et le rapport annonçait « 1 calcul trop long »
   sur une phrase qui n'en contenait aucun. Un opérateur alphabétique n'en est un que
   s'il est **détaché** : `3 x 4` oui, `faux` non.
+
+## Un écart sans barre d'erreur n'est pas un résultat
+
+Le banc affichait « +20,0 points » pour l'isolation de l'effet à `--runs 3`. Le chiffre
+était exact — **et la conclusion, fausse**. Ce jour-là, chaque bras comptait 15 essais :
+l'intervalle de confiance à 95 % de cet écart est `[-5,9 ; +48,0]`. Il **contient zéro**.
+La phrase affichée disait « le gain vient bien de la VÉRIFICATION » ; la seule chose
+établie était que 15 essais ne suffisent pas à le départager.
+
+Le banc a alors été relancé plus grand, en acceptant d'avance ce qu'il dirait :
+
+| Essais par bras | Écart « échantillonnage seul » → « vérification » | IC95 | Lecture |
+|---|---|---|---|
+| 15 | +20,0 points | `[-5,9 ; +48,0]` | indéterminé |
+| 25 | +16,0 points | `[-5,1 ; +38,6]` | indéterminé |
+| **60** | **+1,7 point** | `[-13,5 ; +16,9]` | **indéterminé — et l'effet réel est petit** |
+
+Trois conclusions, toutes inconfortables :
+
+1. **Le gain total du harness est démontré** : `+41,7 points`, IC95 `[+27,7 ; +59,2]`, à
+   60 essais par bras. Le harness aide — la mesure le porte.
+2. **L'attribution de ce gain à la vérification seule ne l'est pas.** À budget d'appels
+   égal, l'écart entre « plusieurs candidats sans vérification » et « plusieurs candidats
+   avec vérification » n'est pas distinguable du bruit sur ce jeu de tâches. Le récit
+   précédent (« +20 points grâce à la vérification ») reposait sur 15 essais.
+3. **La vérification garde un rôle prouvé, mais ce n'est pas celui-là** : c'est elle qui
+   empêche une erreur d'être livrée **sans rien dire**. Ce chiffre est resté à `0` partout,
+   et il ne dépend d'aucun test statistique.
+
+Le même traitement s'applique au banc de **mémoire** (`jio learn`), qui publiait « gain
+attribuable : +0,0 point » sans dire si zéro était un résultat ou une absence de
+résolution. À 40 essais par bras, les deux écarts (artefact de graine et gain attribuable)
+valent `+0,0` avec un intervalle `[-12,1 ; +12,1]` : le banc écrit « indéterminé à cet
+échantillon », et si l'artefact de loterie devenait significatif, il prévient que le banc
+est trop petit pour attribuer l'effet à la mémoire plutôt qu'à la graine.
+
+Le banc dit maintenant son propre budget de mesure :
+
+```
+      sans vérification   73.3%   avec vérification   83.3%   écart +10.0 points  IC95 [-10.1 ; +31.0]
+      -> écart POSITIF mais l'intervalle CONTIENT zéro : INDETERMINE a ce nombre d'essais.
+         Pour démontrer un écart de +10.0 points : environ 352 essai(s) par bras,
+         soit `--runs 71` sur ce jeu de 5 tâche(s).
+```
+
+Deux détails qui font la différence entre mesurer et croire :
+
+- **Wilson, pas l'intervalle normal.** Le normal rend une largeur **nulle** à 0 % et à
+  100 % — exactement les deux valeurs qui comptent ici (« 0 erreur livrée », « 100 % de
+  réussite à haute compétence »). Il annoncerait « zéro erreur, donc zéro risque ».
+- **Le quantile normal est vérifié contre la table.** Le premier jet rendait `0,24` là où
+  la table dit `1,96` : des intervalles cinq fois trop étroits, donc des écarts déclarés
+  significatifs qui ne l'étaient pas. Le test compare à la table connue, jamais à la
+  fonction elle-même — et il a attrapé deux erreurs de signe dans les queues.
 
 ## Trois codes de sortie, parce que « rien à vérifier » n'est ni un succès ni un échec
 

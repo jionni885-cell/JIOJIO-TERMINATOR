@@ -152,6 +152,18 @@ class MesureProse:
             f"appels {self.appels:.1f}"
         )
 
+    def intervalle(self) -> tuple[float, float]:
+        """IC95 du taux de justes — un taux sans barre d'erreur invite a surinterpreter.
+
+        `essais` vaut `runs * len(PROSE_TASKS)` : c'est ce nombre, souvent petit, qui
+        commande la largeur de l'intervalle. Le banc l'affiche pour que personne n'ait a
+        le deviner.
+        """
+        from .incertitude import intervalle_wilson
+
+        justes = round(self.jio * self.essais)
+        return intervalle_wilson(justes, self.essais)
+
 
 def mesurer_prose(
     *,

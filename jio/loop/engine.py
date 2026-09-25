@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Mapping, Sequence
+from typing import Mapping, Sequence
 
 from ..audit.blame import BlameLedger, FirstErrorLocator
 from ..audit.consensus import ConsensusEngine, ConsensusOutcome
@@ -28,8 +28,6 @@ from ..audit.panel import AuditPanel, CriticReport
 from ..core.errors import (
     BudgetExhausted,
     FailClosed,
-    IntegrityViolation,
-    OscillationDetected,
 )
 from ..core.journal import Journal
 from ..core.types import (

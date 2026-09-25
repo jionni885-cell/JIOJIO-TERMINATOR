@@ -28,7 +28,7 @@ Aucune sonde ne modifie l'etat, n'ecrit un fichier, ni ne lance une mission.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ..core.types import Rule, RuleKind, Spec
 from ..providers.base import Message, Provider

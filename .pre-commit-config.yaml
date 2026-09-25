@@ -18,7 +18,9 @@ repos:
     rev: v0.16.8
     hooks:
       - id: ruff
-        args: ["--select", "E9,F63,F7,F811,F82"] # vrais bugs ; aucun style
+        # Pyflakes en entier : code mort et noms non definis. Les regles de STYLE
+        # (ordre des imports, longueur de ligne) restent volontairement exclues.
+        args: ["--select", "E9,F"]
         files: ^(jio|tests|scripts)/
 
   - repo: local

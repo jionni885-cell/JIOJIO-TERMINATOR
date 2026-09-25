@@ -15,7 +15,7 @@ frontiere : c'est ce qui rend le banc honnete, et c'est aussi le principe des
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from ..core.types import Rule, RuleKind, Spec

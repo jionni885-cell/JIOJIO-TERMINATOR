@@ -44,7 +44,7 @@ import json
 from dataclasses import dataclass
 
 from ..core.types import Severity
-from .properties import _cases_for, _doctest_seeds, generate_inputs
+from .properties import _cases_for
 
 __all__ = ["Divergence", "comparer", "PROBE_BUDGET"]
 

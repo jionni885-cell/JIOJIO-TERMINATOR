@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .doctrine import FULL
 
 __all__ = ["AgentSpec", "SkillSpec", "AGENTS", "SKILLS", "PRINCIPLES"]
 

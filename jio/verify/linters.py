@@ -37,10 +37,16 @@ from typing import Sequence
 __all__ = ["LintFinding", "LinterReport", "analyse"]
 
 #: Jeu de regles « vrais bugs ». Base : le jeu classique des integrations continues
-#: (`E9,F63,F7,F82`). On y ajoute `F811` (nom redefini) : c'est exactement la trace
-#: laissee par un renommage incomplet, et c'est sans bruit sur du code reel
-#: (verifie sur deux corpus avant d'etre active). Aucune regle de style.
-BUG_RULES = "E9,F63,F7,F811,F82"
+#: (`E9,F63,F7,F82`, avec `F811` deja inclus dans `F`). On l'a ELARGI a `F` en entier :
+#: pyflakes signale du code mort — import inutilise, variable assignee jamais lue,
+#: f-string sans valeur — et non des preferences. La difference avec le style est ce qui
+#: decide : `F401` sur un module signale souvent un branchement oublie, alors que l'ordre
+#: des imports ne casse rien.
+#:
+#: L'elargissement a ete fait APRES avoir mis le depot a zero sur `F` (24 imports morts et
+#: 2 variables mortes ecartes, mesure) : elargir une porte avant de nettoyer garantit
+#: qu'on l'ignorera. Aucune regle de style — `I`, `E501` et compagnie restent dehors.
+BUG_RULES = "E9,F"
 
 #: Traduction des constats. L'interface est en francais, mais le message d'origine
 #: est TOUJOURS conserve : traduire, c'est expliquer, jamais remplacer la preuve.

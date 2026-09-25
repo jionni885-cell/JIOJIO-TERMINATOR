@@ -89,6 +89,37 @@ class ABCResult:
         """B -> C : effet du mecanisme, tirages identiques. La mesure qui compte."""
         return self.warm_rate - self.control_rate
 
+    def intervalle(self, bras_gauche: int, bras_droite: int) -> tuple[float, float, bool]:
+        """IC95 et significativite de la difference entre deux bras.
+
+        Le banc de code affichait un ecart sans barre d'erreur et tirait une conclusion
+        que 15 essais ne portaient pas. Ce banc-la a exactement le meme probleme, avec un
+        `total` encore plus petit : il rend donc, lui aussi, son intervalle et son
+        verdict, au lieu d'un chiffre nu.
+        """
+        from ..bench.incertitude import ecart_a_la_une
+
+        gauche = [1.0] * bras_gauche + [0.0] * (self.total - bras_gauche)
+        droite = [1.0] * bras_droite + [0.0] * (self.total - bras_droite)
+        return ecart_a_la_une(gauche, droite)
+
+    def budget_de_mesure(self) -> int:
+        """Combien d'essais par bras pour demontrer le gain attribuable observe."""
+        from ..bench.incertitude import essais_necessaires
+
+        return essais_necessaires(self.control_rate, self.warm_rate)
+
+    def budget_du_bruit(self) -> int:
+        """Combien d'essais pour demontrer l'artefact de loterie (qui ne devrait pas exister).
+
+        Symetrique du precedent, et plus utile qu'il n'y parait : si le bruit exige peu
+        d'essais a se demontrer, c'est que le banc est trop petit pour attribuer quoi que
+        ce soit a la memoire.
+        """
+        from ..bench.incertitude import essais_necessaires
+
+        return essais_necessaires(self.cold_rate, self.control_rate)
+
 
 def run_abc(
     *,

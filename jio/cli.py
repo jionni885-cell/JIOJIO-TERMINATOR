@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -32,7 +33,7 @@ from .audit.integrity import IntegrityMonitor
 from .bench.tasks import TASKS, TASKS_BY_ID, Task, build_bank
 from .bench.temoins import TraducteurSimule
 from .core.journal import Journal
-from .core.types import Mission, MissionReport, MissionStatus, Severity
+from .core.types import Mission, MissionReport, MissionStatus
 from .gate.conformal import ConformalGate
 from .loop.engine import Engine, EngineConfig, WorkItem
 from .providers.registry import detect_clis
@@ -491,13 +492,18 @@ def _bench_prose(args: argparse.Namespace) -> int:
           f"  ·  {args.runs} tirage(s)  ·  {len(PROSE_TASKS)} tache(s)")
     print("  Aucune cle API requise : les documents sont simules, la VERIFICATION est reelle.")
     print()
-    print("    bras                                   justes   comparaison")
-    print("    -------------------------------------- -------  --------------------------")
+    print("    bras                                   justes       IC95   comparaison")
+    print("    -------------------------------------- -------  ----------  --------------------")
     total = {"essais": 0, "silencieux": 0, "sous_reserve": 0, "abstentions": 0}
     for skill in sorted({0.0, 0.35, float(args.skill)}):
         mesure = mesurer_prose(skill=skill, runs=args.runs, max_rounds=args.rounds,
                                racine=Path.cwd())
-        print(mesure.resume(f"competence {skill:.2f}"))
+        bas, haut = mesure.intervalle()
+        resume = mesure.resume(f"competence {skill:.2f}")
+        # L'IC95 est insere au bon endroit dans une ligne deja longue : on ne reformate
+        # pas `resume()` (il sert au journal), on ajoute la colonne ici.
+        avant, _, apres = resume.partition("%")
+        print(f"{avant}%  [{bas:.0%} ; {haut:.0%}]{apres}")
         total["essais"] += mesure.essais
         total["silencieux"] += mesure.erreurs_silencieuses
         total["sous_reserve"] += mesure.sous_reserve
@@ -556,10 +562,12 @@ def cmd_bench(args: argparse.Namespace) -> int:
     justes: list[tuple[str, bool]] = []
     started = time.monotonic()
 
+    # `build_bank()` ne depend d'aucune graine ni d'aucune tache : le construire une
+    # fois au lieu de `len(seeds) * len(TASKS)` fois ne change aucun resultat et evite
+    # de refaire le meme travail a chaque tirage du banc.
+    bank = build_bank()
     for seed in seeds:
         for task in TASKS:
-            correct = task.correct
-            bank = build_bank()
             generators = [
                 SimulatedProvider(
                     name=f"gen{i}", model="sim-1",
@@ -685,28 +693,53 @@ def cmd_bench(args: argparse.Namespace) -> int:
         "S4b": "AUCUN ORACLE : traducteur FAUX (lue a l'envers)",
     }
     base = _mean(results["S0"]) or 1e-9
-    print(f"    {'config':<40} {'reussite':>9} {'appels':>7} {'vs S0':>7}")
-    print(f"    {'-' * 40} {'-' * 9} {'-' * 7} {'-' * 7}")
+    print(f"    {'config':<40} {'reussite':>9} {'IC95':>15} {'appels':>7} {'vs S0':>7}")
+    print(f"    {'-' * 40} {'-' * 9} {'-' * 15} {'-' * 7} {'-' * 7}")
     for key in ("S0", "S1", "S1b", "S2", "S3", "S4", "S4c", "S4b"):
         rate = _mean(results[key])
         budget = _mean(calls[key])
-        print(f"    {labels[key]:<40} {rate:>8.1%} {budget:>7.1f} {rate / base:>6.2f}x")
+        bas, haut = _wilson(results[key])
+        print(f"    {labels[key]:<40} {rate:>8.1%} "
+              f"{f'[{bas:.0%} ; {haut:.0%}]':>15} {budget:>7.1f} {rate / base:>6.2f}x")
+    print()
+    print("    Lire l'IC95 avant de conclure : un ecart dont l'intervalle contient zero")
+    print("    est INDETERMINE a ce nombre d'essais, pas demontre. `--runs` elargit n.")
+    print()
     print()
 
     # --- la seule comparaison qui compte : a budget d'appels EGAL ---------- #
     s1b, s2 = _mean(results["S1b"]), _mean(results["S2"])
-    delta = (s2 - s1b) * 100
+    delta, (bas_d, haut_d), tranche = _ecart(results["S1b"], results["S2"])
     print("  ISOLATION DE L'EFFET")
     print("    echantillonnage seul vs verification, MEME nombre d'appels du modele :")
     print(f"      sans verification {s1b:>7.1%}   avec verification {s2:>7.1%}   "
-          f"ecart {delta:+.1f} points")
-    if delta > 0:
-        print("      -> le gain vient bien de la VERIFICATION, pas du nombre d'essais.")
+          f"ecart {delta:+.1f} points  IC95 [{bas_d:+.1f} ; {haut_d:+.1f}]")
+    if tranche and delta > 0:
+        print("      -> l'intervalle EXCLUT zero : le gain vient de la VERIFICATION, pas")
+        print("         du nombre d'essais.")
+    elif delta > 0:
+        print("      -> ecart POSITIF mais l'intervalle CONTIENT zero : INDETERMINE a ce")
+        print("         nombre d'essais. Augmenter --runs avant de conclure quoi que ce soit.")
+        # Un constat « indéterminé » sans budget de mesure laisse l'utilisateur sans
+        # prise. On calcule le nombre d'essais qu'il faudrait POUR CETTE TAILLE D'EFFET :
+        # c'est la difference entre « je ne sais pas » et « voici ce qu'il faudrait ».
+        from .bench.incertitude import essais_necessaires
+
+        besoin = essais_necessaires(s1b, s2)
+        taches = max(1, len(results["S0"]) // max(1, args.runs))
+        if besoin > 0:
+            print(f"         Pour demontrer un ecart de {delta:+.1f} points : environ "
+                  f"{besoin} essai(s) par bras,")
+            print(f"         soit `--runs {math.ceil(besoin / taches)}` sur ce jeu de "
+                  f"{taches} tache(s).")
     else:
         print("      -> sur ce jeu de taches, l'echantillonnage suffisait : resultat honnete.")
     print()
-    print(f"    gain total du harness : {(_mean(results['S3']) - _mean(results['S0'])) * 100:+.1f} points"
+    gain, (bas_g, haut_g), tranche_g = _ecart(results["S0"], results["S3"])
+    print(f"    gain total du harness : {gain:+.1f} points  IC95 [{bas_g:+.1f} ; {haut_g:+.1f}]"
           "  (cible mesuree dans la litterature : +15 a +54)")
+    print(f"    {'significatif' if tranche_g else 'INDETERMINE a cet echantillon'}"
+          f" — {len(results['S0'])} essai(s) par bras.")
     print()
     print("  QUAND LA MISSION NE FOURNIT AUCUN ORACLE — le cas de toute mission reelle")
     print("    sans oracle, le moteur ne peut RIEN prouver : il s'abstient, et il le dit.")
@@ -1281,10 +1314,31 @@ def cmd_learn(args: argparse.Namespace) -> int:
           f"  ({res.warm_rate:.1%})")
     print()
     print("  ISOLATION DE L'EFFET")
-    print(f"    A -> B  artefact de loterie de graine : {res.lottery_artifact * 100:+.1f} points")
+    ecart_ab, (bas_ab, haut_ab), tranche_ab = res.intervalle(res.cold_success, res.control_success)
+    ecart_bc, (bas_bc, haut_bc), tranche_bc = res.intervalle(res.control_success, res.warm_success)
+    print(f"    A -> B  artefact de loterie de graine : {res.lottery_artifact * 100:+.1f} points"
+          f"  IC95 [{bas_ab:+.1f} ; {haut_ab:+.1f}]")
     print("            (le prompt change, la probabilite non : attendu ~0)")
-    print(f"    B -> C  gain ATTRIBUABLE a la memoire : {res.isolated_gain * 100:+.1f} points")
+    print(f"    B -> C  gain ATTRIBUABLE a la memoire : {res.isolated_gain * 100:+.1f} points"
+          f"  IC95 [{bas_bc:+.1f} ; {haut_bc:+.1f}]")
     print("            (prompts identiques, seule la probabilite differe : causalement propre)")
+    # Un ecart sans intervalle se lit comme un resultat. Ici, avec un `total` de quelques
+    # dizaines d'essais, l'immense majorite des ecarts sont INDETERMINES — et c'est une
+    # information sur le banc, pas sur la memoire.
+    if not tranche_bc:
+        besoin = res.budget_de_mesure()
+        print("    -> l'intervalle du gain attribuable CONTIENT zero : INDETERMINE a cet")
+        print(f"       echantillon ({res.total} essai(s) par bras).")
+        if besoin:
+            print(f"       Pour demontrer {res.isolated_gain * 100:+.1f} points : environ "
+                  f"{besoin} essai(s) par bras.")
+        else:
+            print("       Aucun nombre d'essais ne demontrera un effet nul.")
+    else:
+        print("    -> l'intervalle du gain attribuable EXCLUT zero : effet demontre.")
+    if tranche_ab:
+        print("    ATTENTION : l'artefact de loterie est lui aussi significatif — le banc")
+        print("    est trop petit pour attribuer l'effet a la memoire plutot qu'a la graine.")
     print()
     print(f"    echecs memorises : {res.recorded}   ·   missions ou un souvenir a ete rappele : "
           f"{res.missions_with_recall}")
@@ -1712,9 +1766,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if remembered:
         print(f"    {remembered} probleme(s) memorise(s) : la prochaine execution saura quoi")
         print(f"    eviter, et pourquoi. Consulter : jio memory --state {args.state}")
-    print(f"    Lecture du resultat : code 0 = rien trouve ; code 1 = au moins un defaut")
-    print(f"    reel avec sa preuve. Un fichier sans regle executable n'est PAS un")
-    print(f"    fichier correct : c'est un fichier que ces regles-la ne savent pas juger.")
+    print("    Lecture du resultat : code 0 = rien trouve ; code 1 = au moins un defaut")
+    print("    reel avec sa preuve. Un fichier sans regle executable n'est PAS un")
+    print("    fichier correct : c'est un fichier que ces regles-la ne savent pas juger.")
     print()
     return 1 if problems else 0
 
@@ -1812,6 +1866,23 @@ def _check(source: str, task: Task) -> bool:
     sandbox = Sandbox(timeout=15)
     program = source + "\n\n" + "\n".join(task.checks[k] for k in task.checks)
     return sandbox.run_python(program, tag="oracle").ok
+
+
+def _wilson(echantillon: Sequence[float]) -> tuple[float, float]:
+    """Intervalle de confiance a 95 % d'un taux observe (voir `jio.bench.incertitude`)."""
+    from .bench.incertitude import intervalle_wilson
+
+    succes = sum(1 for valeur in echantillon if valeur >= 1.0)
+    return intervalle_wilson(succes, len(echantillon))
+
+
+def _ecart(
+    gauche: Sequence[float], droite: Sequence[float]
+) -> tuple[float, tuple[float, float], bool]:
+    """Ecart en points, son intervalle, et s'il exclut zero (donc s'il est significatif)."""
+    from .bench.incertitude import ecart_a_la_une
+
+    return ecart_a_la_une(gauche, droite)
 
 
 def _mean(values: Sequence[float]) -> float:

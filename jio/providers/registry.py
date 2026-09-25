@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Sequence
+from typing import Iterable, Sequence
 
 from .base import Provider
 from .cli import CliProvider

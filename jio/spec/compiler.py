@@ -19,7 +19,7 @@ et declarer honnetement ce qu'il n'a PAS su convertir.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Sequence
 
 from ..core.types import Rule, RuleKind, Spec

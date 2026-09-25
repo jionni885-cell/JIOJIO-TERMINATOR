@@ -72,12 +72,20 @@ def test_le_jeu_de_regles_ne_contient_aucune_regle_de_style() -> None:
 
     Un projet qui passe ses tests ne doit pas etre declare fautif parce qu'il
     n'aime pas l'ordre des imports. C'est ainsi qu'un outil perd sa credibilite.
+
+    Le jeu a ete ELARGI a `F` en entier : pyflakes signale du code mort (import jamais
+    utilise, variable jamais lue, f-string sans valeur), pas des preferences. La ligne est
+    celle-ci : `F401` sur un module peut signaler un branchement oublie ; l'ordre des
+    imports ne casse rien. L'elargissement a ete fait APRES avoir mis le depot a zero sur
+    `F` — elargir une porte avant de nettoyer, c'est apprendre a l'ignorer.
     """
     codes = set(BUG_RULES.split(","))
 
-    assert codes == {"E9", "F63", "F7", "F811", "F82"}
-    for style_rule in ("E501", "I001", "D", "ANN", "N", "UP", "C901", "PLR"):
-        assert not any(code.startswith(style_rule) for code in codes)
+    assert codes == {"E9", "F"}
+    for style_rule in ("E501", "I", "D", "ANN", "N", "UP", "C901", "PLR", "RUF"):
+        assert not any(
+            code != "F" and code.startswith(style_rule) for code in codes
+        ), f"regle de style dans le jeu : {style_rule}"
 
 
 def test_lecture_du_format_condense() -> None:

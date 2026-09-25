@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from jio.core.journal import GENESIS, Journal
 from jio.core.types import TrustLevel
