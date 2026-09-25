@@ -310,7 +310,7 @@ la vérification est *externe* et *adversariale* — ce qu'aucun modèle seul ne
 | **GitHub Copilot** | `.github/copilot-instructions.md` | idem |
 | **N'importe quel client MCP** | serveur MCP `jio` | `jio_verify`, `jio_audit`, `jio_consensus`, `jio_prove` en outils |
 
-**Un seul `jio sync` propage le cerveau anti-erreur dans tout l'écosystème.**
+**Un seul `jio sync` propage le cerveau anti-erreur dans tout l'écosystème.** (Il écrit les artefacts de tous les dialectes et branche le serveur MCP ; il préserve tout fichier qui ne porte pas sa marque.)
 
 ---
 

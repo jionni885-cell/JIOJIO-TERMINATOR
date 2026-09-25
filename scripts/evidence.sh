@@ -368,6 +368,67 @@ if [ "$FAIRE_TIERS" -eq 1 ]; then
     fi
 fi
 
+titre "3 quinquies. Les commandes citees par les documents existent"
+
+# L'oracle est le parseur de la CLI elle-meme : aucune interpretation possible. Ce controle
+# a deja trouve deux defauts reels dans ce depot (jio sync promis et inexistant, jio
+# --version pris pour une sous-commande).
+DOCS=$(git -C "$RACINE" ls-files '*.md' '*.rst' '*.txt' | grep -v '^evidence/' || true)
+if [ -n "$DOCS" ]; then
+    # shellcheck disable=SC2086
+    ( cd "$RACINE" && PYTHONPATH="$RACINE" "$PYTHON" -m jio claims --hook $DOCS ) \
+        > /tmp/jio_claims_docs.txt 2>&1
+    CODE_DOCS=$?
+    echo "    $(grep -c '\[ok\]' /tmp/jio_claims_docs.txt || true) document(s) verifies, \
+$(grep -c '\[--\]' /tmp/jio_claims_docs.txt || true) sans matiere prouvable, \
+$(grep -c '\[KO\]' /tmp/jio_claims_docs.txt || true) refute(s) — code $CODE_DOCS"
+    if [ "$CODE_DOCS" != "0" ]; then
+        grep "\[KO\]" /tmp/jio_claims_docs.txt | sed 's/^/    /'
+        exit 1
+    fi
+else
+    echo "    aucun document a verifier"
+fi
+
+titre "3 sexies. Ecrire des artefacts ne detruit rien"
+
+# Un fichier de l'utilisateur n'est jamais ecrase : sa version reste, la notre va a cote.
+# Le registre .jio/generated.json signe en plus les fichiers que le format empeche de
+# marquer (les JSON, ou un commentaire est interdit).
+TMP_ECRITURE=$(mktemp -d)
+printf '# mes conventions\n- ne jamais utiliser eval\n' > "$TMP_ECRITURE/AGENTS.md"
+# `sync` rend 1 quand il a du PRESERVER un fichier : ce n'est pas un succes, et ce n'est
+# pas une erreur non plus. On capture le code sans laisser `set -e` interrompre le script.
+CODE_SYNC=0
+( cd "$RACINE" && PYTHONPATH="$RACINE" "$PYTHON" -m jio sync --root "$TMP_ECRITURE" ) \
+    > /tmp/jio_sync_1.txt 2>&1 || CODE_SYNC=$?
+echo "    projet neuf, avec un AGENTS.md ecrit a la main :"
+grep -E "=>|PRESERVE" /tmp/jio_sync_1.txt | sed 's/^/    /'
+echo "    code de sortie : $CODE_SYNC (1 = quelque chose a ete PRESERVE, donc pas un succes)"
+if [ "$CODE_SYNC" != "1" ]; then
+    echo "    ECHEC : la preservation du fichier de l'utilisateur devait rendre 1" >&2
+    rm -rf "$TMP_ECRITURE"; exit 1
+fi
+if ! grep -q "ne jamais utiliser eval" "$TMP_ECRITURE/AGENTS.md"; then
+    echo "    ECHEC : le fichier de l'utilisateur a ete modifie" >&2
+    rm -rf "$TMP_ECRITURE"
+    exit 1
+fi
+echo "    AGENTS.md de l'utilisateur : intact octet pour octet."
+( cd "$RACINE" && PYTHONPATH="$RACINE" "$PYTHON" -m jio sync --root "$TMP_ECRITURE" ) \
+    > /tmp/jio_sync_2.txt 2>&1 || true
+grep "=>" /tmp/jio_sync_2.txt | sed 's/^/    2e passage : /'
+# Le registre porte l'empreinte de ce que NOUS avons ecrit : c'est lui qui permet de
+# mettre a jour un fichier que son format empeche de signer (les JSON, sans commentaires).
+ENTREES=$("$PYTHON" -c "import json,sys; print(len(json.load(open(sys.argv[1]))['fichiers']))" \
+    "$TMP_ECRITURE/.jio/generated.json")
+echo "    registre .jio/generated.json : $ENTREES fichier(s) signe(s)"
+if [ "$ENTREES" -lt 20 ]; then
+    echo "    ECHEC : le registre devrait signer l'essentiel des fichiers emis" >&2
+    rm -rf "$TMP_ECRITURE"; exit 1
+fi
+rm -rf "$TMP_ECRITURE"
+
 titre "3 bis ter. Le budget de contexte : ce que la configuration coute"
 
 # Un fichier de contexte trop long est SURVOLE : il occupe la fenetre et n'apporte rien.

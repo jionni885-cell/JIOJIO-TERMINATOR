@@ -1285,6 +1285,72 @@ def cmd_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sync(args: argparse.Namespace) -> int:
+    """`jio sync` : propager tout le cerveau anti-erreur dans l'ecosysteme, en une fois.
+
+    Les documents promettaient `jio sync` a trois endroits, et la commande n'existait pas :
+    `jio claims docs/ROADMAP.md` l'a refute. C'est exactement ce que la verification des
+    commandes citees sert a attraper.
+
+    Elle fait ce que la promesse dit, et rien de plus :
+      * elle ecrit tous les artefacts natifs (les dialectes de contexte, les agents
+        opencode, les competences Hermes) sous la racine visee ;
+      * elle branche le serveur MCP pour chaque outil, sans jamais modifier une
+        configuration existante ;
+      * elle n'ecrase jamais un fichier qui n'est pas de nous.
+
+    Elle ne touche PAS a git : `scripts/sync.sh` fait cela, avec ses propres garde-fous.
+    Deux roles, deux commandes — celle-ci propage, l'autre synchronise le DEPOT.
+    """
+    from .artifacts import TARGETS, manifest
+    from .artifacts.wiring import DIALECTES, brancher
+    from .artifacts.write_guard import ecrire_manifest
+
+    racine = Path(args.root).expanduser()
+    print(BANNER)
+    print(f"  PROPAGATION  ·  racine : {racine.resolve()}")
+    print()
+
+    if args.dry_run:
+        for rel in sorted(manifest()):
+            print(f"    [simulation] {rel}")
+        print()
+        print("    mode simulation : rien n'a ete ecrit. Relancez avec --write.")
+        print()
+        return 0
+
+    print(f"    artefacts natifs ({len(TARGETS)} cibles)")
+    # Le registre `.jio/generated.json` remplace toute heuristique : il porte l'empreinte
+    # de ce que NOUS avons ecrit, ce qui permet de savoir si quelqu'un y a touche depuis.
+    decisions = ecrire_manifest(racine, manifest())
+    for decision in sorted(decisions, key=lambda d: d.chemin):
+        if decision.action == "inchange":
+            continue
+        marque = {"preserve": "PRESERVE", "remplace": "mis a jour"}.get(
+            decision.action, decision.action
+        )
+        print(f"      {marque:11} {decision.chemin} — {decision.detail}")
+    ecrits = sum(1 for d in decisions if d.ecrit)
+    preserves = [d for d in decisions if d.action == "preserve"]
+    print(f"    => {ecrits} ecrit(s), {len(decisions) - ecrits - len(preserves)} deja a jour, "
+          f"{len(preserves)} preserve(s)")
+
+    print()
+    print("    serveur MCP")
+    dialectes = [d for d in DIALECTES if not args.mcp or d[0] == args.mcp]
+    for nom, _fichier, description in dialectes:
+        # `brancher` ecrit le fichier s'il est ABSENT et rend le fragment sinon : la
+        # configuration de l'utilisateur n'est jamais reecrite.
+        _ecrit, message = brancher(racine, nom)
+        premiere = message.splitlines()[0] if message else ""
+        print(f"      {nom:<12} {description:<40} {premiere}")
+    print()
+    print("    Pour synchroniser le DEPOT (et non les artefacts) : scripts/sync.sh")
+    print("    Aucun fichier ne portant pas la marque de jio n'a ete touche.")
+    print()
+    return 1 if preserves else 0
+
+
 def _brancher_mcp(args: argparse.Namespace) -> int:
     """`jio artifacts --mcp <dialecte>` : brancher le serveur MCP, sans rien ecraser."""
     from .artifacts.wiring import DIALECTES, brancher
@@ -1403,7 +1469,7 @@ def cmd_artifacts(args: argparse.Namespace) -> int:
         return _budget_contexte(args)
     if getattr(args, "mcp", None):
         return _brancher_mcp(args)
-    from .artifacts import TARGETS, manifest, write_manifest
+    from .artifacts import TARGETS, manifest
 
     targets = tuple(args.target) if args.target else TARGETS
     try:
@@ -1425,13 +1491,32 @@ def cmd_artifacts(args: argparse.Namespace) -> int:
         return 0
 
     root = Path(args.root)
-    written = write_manifest(root, targets)
-    print(f"  {len(written)} fichier(s) ecrit(s) sous {root.resolve()}")
+    # On n'ecrase pas un fichier qui n'est PAS de nous (voir write_guard) : `AGENTS.md`
+    # est precisement le fichier ou un projet met ses conventions, editees a la main.
+    from .artifacts.write_guard import ecrire_manifest
+
+    decisions = ecrire_manifest(root, files)
+    ecrits = [d for d in decisions if d.ecrit]
+    preserves = [d for d in decisions if d.action == "preserve"]
+    a_jour = [d for d in decisions if d.action == "inchange"]
+    detail = f", {len(a_jour)} deja a jour" if a_jour else ""
+    print(f"  {len(ecrits)} fichier(s) ecrit(s){detail} sous {root.resolve()}")
+    for decision in preserves:
+        print(f"    PRESERVE : {decision.chemin} — {decision.detail}")
+    avertis = [d for d in decisions if d.action == "remplace" and "modifiee" in d.detail]
+    for decision in avertis:
+        print(f"    ATTENTION : {decision.chemin} — {decision.detail}")
     print()
+    if preserves:
+        # Un fichier NON ecrit n'est pas un succes : un appelant qui enchaine doit pouvoir
+        # s'en apercevoir (meme regle que le hook `jio claims`).
+        print("  Des fichiers ont ete PRESERVES : ils ne portent pas la marque de jio, donc")
+        print("  ils sont a vous. Leur version jio est ecrite a cote (suffixe .jio).")
+        print()
     print("  Une seule doctrine, tous les dialectes : pour modifier le contenu,")
     print("  editez jio/artifacts/doctrine.py ou definitions.py, jamais les fichiers generes.")
     print()
-    return 0
+    return 1 if preserves else 0
 
 
 def cmd_trust(args: argparse.Namespace) -> int:
@@ -2155,6 +2240,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="etat du systeme").set_defaults(func=cmd_doctor)
     sub.add_parser("tasks", help="liste le banc d'essai").set_defaults(func=cmd_tasks)
+    p_sync = sub.add_parser(
+        "sync", help="propage le cerveau anti-erreur : artefacts natifs + MCP"
+    )
+    p_sync.add_argument(
+        "--root", default=".", help="racine a equiper (defaut : dossier courant)"
+    )
+    p_sync.add_argument(
+        "--mcp", default=None, help="ne brancher qu'un seul outil (defaut : tous)"
+    )
+    p_sync.add_argument(
+        "--dry-run", dest="dry_run", action="store_true",
+        help="montrer ce qui serait ecrit, sans rien ecrire",
+    )
+    p_sync.set_defaults(func=cmd_sync)
+
     sub.add_parser("version", help="version").set_defaults(
         func=lambda a: (print(f"jio {__version__}") or 0)
     )

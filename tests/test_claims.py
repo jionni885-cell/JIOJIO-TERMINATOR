@@ -176,7 +176,11 @@ def test_un_bloc_dune_autre_langue_nest_pas_compile_comme_python() -> None:
     """
     texte = "```bash\npython -m jio doctor --verify --all || echo \"echec : $?\"\n```\n"
     rapport = verifier(texte, racine=None)
-    assert rapport.verifications == (), rapport.resume()
+    # Ce test porte sur la COMPILATION : un bloc annonce `bash` ne doit jamais etre accuse
+    # comme du Python. Les autres genres peuvent s'exprimer (une commande citee dans un
+    # bloc est SIGNALEE, jamais bloquante) : ce qui est interdit ici, c'est le refus.
+    assert rapport.bloquantes == (), rapport.resume()
+    assert all(v.affirmation.genre is not Genre.BLOC_CODE for v in rapport.verifications)
 
     # Meme contenu annonce comme Python : la, c'est un fait, et c'est bloquant.
     fautif = "```python\npython -m jio doctor --verify --all || echo \"echec : $?\"\n```\n"

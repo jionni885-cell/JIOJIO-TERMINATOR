@@ -577,18 +577,55 @@ note de synthèse — n'a rien à exécuter : JIO s'abstenait, et c'est précis�
 se logent les hallucinations, dans du texte que personne ne recalcule.
 
 Un document contient pourtant des affirmations **vraies ou fausses sans
-interprétation**. `jio claims` en vérifie trois genres :
+interprétation**. `jio claims` en vérifie quatre genres :
 
 | Genre | Ce qui est vérifié | Sévérité |
 |---|---|---|
 | Calcul annoncé | `7 × 6 = 43` → évalué par un **AST restreint** (nombres et 4 opérations, aucun `eval`) : la valeur réelle est écrite dans le refus | **bloquant** |
 | Bloc présenté comme `python` | compilé : une erreur de syntaxe est un fait, pas une opinion | **bloquant** |
 | Chemin cité (`` `a/b.py` ``) | existence sous `--racine` | **signalé**, jamais accusé |
+| Commande citée (`` `jio scan .` ``) | **le parseur de la CLI** : la sous-commande et chaque option existent-elles ? | **bloquant** hors bloc de code |
 
 La retenue est une décision, pas une indulgence : un document d'architecture cite des
 fichiers **à créer**. Un outil qui accuse là-dessus se fait désactiver en deux jours.
 Et « rien à vérifier » n'est pas un quitus — `jio claims` renvoie alors **1** en le
 disant, pour qu'une note vide ne passe pas pour un document conforme.
+
+### Les commandes citées : l'oracle est le programme lui-même
+
+L'option correcte est `jio scan --strict`. Avec une lettre de trop, l'utilisateur tombe
+droit dans un `unrecognized arguments` :
+
+```console
+$ jio scan . --stricte
+error: unrecognized arguments: --stricte
+```
+
+C'est un mensonge **vérifiable**, et il ne coûte aucun modèle : le parseur d'arguments du
+programme sait exactement quelles commandes existent. Pas d'heuristique, pas de confiance —
+la commande existe, ou elle n'existe pas.
+
+```
+[ok ] commande citee EXISTE : `jio scan ...`
+[KO ] option INCONNUE : `--stricte` sur `jio scan` — peut-etre `--strict` ?
+[KO ] commande INCONNUE : `jio scna` n'existe pas dans cette version de la CLI — peut-etre `jio scan` ?
+```
+
+Deux règles de retenue, chacune payée par une mesure :
+
+- **une commande en pleine phrase est une instruction** — le document demande de la taper,
+  donc une faute y est bloquante ; **dans un bloc de code, c'est un exemple** — souvent la
+  démonstration d'une erreur, donc signalée seulement. Sans cette distinction, la page qui
+  documente une ancienne option fausse serait déclarée non conforme, et le seul moyen de la
+  rendre conforme serait de ne plus en parler ;
+- **l'analyse s'arrête à la première coquille** (`|`, `&&`, `>`, `#`) : après, la ligne de
+  commande appartient à l'autre programme. Sans cela, `` `jio run "x" | jq .id` `` ferait
+  chercher une option `jio` chez `jq`.
+
+Le premier passage sur les documents de ce dépôt a trouvé **deux défauts réels** : `jio sync`
+promis dans trois documents alors que la commande n'existait pas (elle existe maintenant),
+et `jio --version` pris à tort pour une sous-commande (faux positif, corrigé). Sur les 30
+documents du dépôt : **0 réfutation** restante.
 
 Un document fautif est refusé avec sa preuve, un document sain reste totalement muet :
 
@@ -642,7 +679,7 @@ jio bench --prose --runs 5                 # mesure : aveugle vs vérifié
 | Étage | Sur du code | Sur un document |
 |---|---|---|
 | Spécification | dérivée de l'objectif | **statique** : la règle `P-000` est vraie par construction, la confier à un modèle serait lui demander d'autoriser sa propre existence |
-| Preuve | bac à sable, tests exécutés | calculs (AST restreint), blocs annoncés comme Python, chemins cités |
+| Preuve | bac à sable, tests exécutés | calculs (AST restreint), blocs annoncés comme Python, chemins cités, commandes citées |
 | Auto-cohérence (`self_check`) | exemples `>>>` | **désactivé** — un document n'a pas de documentation exécutable |
 | Mutation | mutants tués | **désactivé** — il n'y a pas de mutant à tuer |
 | Panel, consensus, porte, journal, garde-fous | identiques | **identiques** |

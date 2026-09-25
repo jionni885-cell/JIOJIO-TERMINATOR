@@ -7,7 +7,7 @@ Rien n'est « prévu » : soit c'est fait, soit c'est une phase nommée.
 
 ## Phase 0 — Socle (dépôt, contrats, journal)
 
-**Livrable :** `jio --version` fonctionne, les types du domaine sont figés, tout est testé.
+**Livrable :** `jio version` fonctionne, les types du domaine sont figés, tout est testé.
 
 - Structure du paquet Python `jio/` (installable, `pyproject.toml`, zéro dépendance obligatoire)
 - **Types du domaine** (`jio/core/types.py`) : `Mission` · `Spec` · `Rule` · `Artifact` ·
@@ -81,6 +81,8 @@ action d'écriture/exécution non autorisée.
 ## Phase 4 — Écosystème multi-outils (le hub)
 
 **Livrable :** `jio sync` propage le cerveau anti-erreur dans tout l'écosystème.
+
+C'est fait : `jio sync` écrit les artefacts natifs de tous les dialectes sous la racine visée, branche le serveur MCP pour chaque outil, et n'écrase jamais un fichier qui ne porte pas la marque de jio (le vôtre est préservé, la version jio est écrite à côté, suffixe `.jio`). Le dépôt lui-même se synchronise avec `scripts/sync.sh`, qui a ses propres garde-fous git.
 
 Une **source de vérité unique** (`jio/ecosystem/` + YAML) compile vers :
 

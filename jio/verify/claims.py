@@ -50,6 +50,7 @@ class Genre(str, Enum):
     ARITHMETIQUE = "arithmetique"
     BLOC_CODE = "bloc-code"
     CHEMIN = "chemin"
+    COMMANDE = "commande"
 
 
 #: Severite : ce qui est CERTAIN est bloquant, ce qui est probable est signale.
@@ -57,6 +58,11 @@ SEVERITE = {
     Genre.ARITHMETIQUE: "VIOLATION",
     Genre.BLOC_CODE: "VIOLATION",     # le bloc est ANNONCE comme python
     Genre.CHEMIN: "SIGNAL",
+    # Une commande citee qui n'existe pas est une VIOLATION : l'oracle est le parseur du
+    # programme lui-meme, donc il n'y a pas de doute a menager. Mais l'utilisateur doit
+    # pouvoir verifier l'affirmation inverse (`jio scan --stricte`), donc les documents qui
+    # PARLENT d'une commande fausse la citent — et une citation n'est jamais bloquante.
+    Genre.COMMANDE: "VIOLATION",
 }
 
 
@@ -393,6 +399,23 @@ def _extraction_detail(texte: str) -> tuple[tuple[Affirmation, ...], int, int]:
                 non_evaluees,
             )
 
+    # Les commandes citees : `jio scan . --strict`. L'oracle est le parseur de la CLI, donc
+    # il n'y a rien a interpreter — soit la sous-commande existe, soit elle n'existe pas.
+    from .commands import commandes_citees
+
+    for commande in commandes_citees(texte):
+        trouvailles.append(
+            Affirmation(
+                genre=Genre.COMMANDE,
+                extrait=commande.extrait,
+                position=commande.position,
+                detail=commande.sous_commande,
+                # Un document qui EXPLIQUE une erreur la montre dans un bloc de code : meme
+                # regle que pour les calculs cites — on signale, on ne condamne pas.
+                cite=commande.dans_bloc,
+            )
+        )
+
     for chemin in _CHEMIN.finditer(texte):
         brut = chemin.group("chemin")
         if Path(brut).suffix.lower() not in _EXTENSIONS:
@@ -508,6 +531,30 @@ def _verifier_une(affirmation: Affirmation, racine: Path) -> Verification | None
             message=(
                 f"calcul EXACT : « {affirmation.extrait} » — {gauche.strip()} vaut "
                 f"{obtenu:g}, le texte annonce {attendu:g}"
+            ),
+        )
+
+    if affirmation.genre is Genre.COMMANDE:
+        from .commands import commandes_citees, verifier_commande
+
+        # Le prefixe `jio ` est indispensable : l'extraction ne reconnait que des
+        # invocations completes (`jio scan . --strict`). Sans lui, elle ne trouvait rien
+        # et la verification rendait « None » — donc un silence parfait, sans un mot.
+        citees = commandes_citees(f"`jio {affirmation.extrait}`")
+        if not citees:
+            return None
+        refus = verifier_commande(citees[0])
+        if refus is None:
+            return Verification(
+                affirmation=affirmation, ok=True, bloquant=True,
+                message=f"commande citee EXISTE : `jio {affirmation.detail} ...`",
+            )
+        return Verification(
+            affirmation=affirmation, ok=False, bloquant=not affirmation.cite,
+            message=(
+                f"{refus}"
+                if not affirmation.cite
+                else f"{refus} (commande citee dans un bloc : on signale, on ne condamne pas)"
             ),
         )
 
