@@ -424,6 +424,38 @@ Essayez-le sans clé d'API :
 jio run "somme des pairs d'une liste" --simulate --task sum_even --no-oracle
 ```
 
+**9. Ce qui a été prouvé une fois ne se repaie pas.** Traduire les règles en témoins est un appel
+de modèle : sans mémoire, ce pari est repayé **à chaque mission identique**. La bibliothèque de
+témoins conserve les traductions qui ont participé à une livraison **prouvée** :
+
+```
+execution   statut                     traductions  memoire  juste
+1           delivered                            1        3    True
+2           delivered                            0        3    True
+3           delivered                            0        3    True
+```
+
+Trois propriétés, et la deuxième est la vraie raison d'être du module :
+
+- **porte d'entrée** : seule une livraison `DELIVERED` alimente la mémoire. Une abstention ou une
+  réserve ne prouve rien, donc elle n'a **rien à transmettre** — un faux témoin ne peut pas entrer
+  par cette porte ;
+- **le contenu d'une mémoire est du contenu hostile** : le fichier est vérifié par chaîne de hachage.
+  Édité à la main ou écrit par un autre programme, il est mis en **quarantaine** (renommé, jamais
+  supprimé) et **jamais appliqué**. La même vérification protège désormais la **mémoire des échecs**,
+  dont le contenu repart dans les prompts — c'était un vecteur d'injection, pas seulement un cache ;
+- **auto-réparation** : un témoin repris dans la mémoire qui se met à accuser **tous** les candidats
+  est **révoqué**, et la mission suivante re-traduit. Une mémoire ne s'auto-entretient pas en
+  accumulant des jugements faux.
+
+Trois bugs réels trouvés en écrivant ce module, tous du même genre — **une clé qui ne correspondait à
+rien, donc une fonction qui ne faisait rien en silence** : la révocation cherchait les règles par
+**nom** alors que le magasin les indexait par **empreinte d'énoncé** (aucune révocation n'aboutissait
+jamais) ; une reprise **partielle** court-circuitait la traduction des règles manquantes (une règle
+modifiée n'était plus jamais traduite, et la mission ne la prouvait plus du tout) ; et le chargement
+d'une mémoire utilisait `from_jsonl`, qui **lit sans vérifier** — la quarantaine n'avait donc jamais
+lieu.
+
 ---
 
 ## Le chemin réel est prouvé, pas seulement décrit

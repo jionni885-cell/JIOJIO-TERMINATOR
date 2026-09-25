@@ -84,7 +84,15 @@ def test_bloc_de_prompt_vide_sans_souvenir():
 
 
 def test_chaine_detecte_une_reecriture(tmp_path: Path):
-    """Une memoire editable est la chose la plus facile a reecrire discretement."""
+    """Une memoire editable est la chose la plus facile a reecrire discretement.
+
+    Deux niveaux sont verifies, et le second est nouveau :
+      * la chaine de hashes DETECTE la reecriture (`verify_chain`) ;
+      * une memoire dont la chaine ne tient pas n'est JAMAIS APPLIQUEE : elle est
+        mise en quarantaine (renommee, jamais supprimee) et le systeme repart d'une
+        memoire vide, en le disant. C'est ce qui empeche un fichier edite a la main
+        de faire entrer des instructions dans les prompts (`prompt_block`).
+    """
     path = tmp_path / "m.jsonl"
     memory = FailureMemory(path=path)
     _record(memory, "objectif A")
@@ -93,10 +101,21 @@ def test_chaine_detecte_une_reecriture(tmp_path: Path):
 
     text = path.read_text(encoding="utf-8").replace("cause reelle", "cause falsifiee")
     path.write_text(text, encoding="utf-8")
-    reborn = FailureMemory(path=path)
-    ok, bad = reborn.verify()
+
+    # Niveau 1 : la reecriture casse la chaine, et on sait OU.
+    from jio.core.journal import Journal
+
+    brut = Journal.from_jsonl(text)
+    ok, bad = brut.verify_chain()
     assert not ok, "une reecriture doit casser la chaine"
     assert bad >= 0
+
+    # Niveau 2 : et elle n'est jamais appliquee.
+    reborn = FailureMemory(path=path)
+    assert reborn.size == 0, "une memoire incoherente ne doit pas etre appliquee"
+    assert reborn.verify()[0], "la memoire repart d'une chaine neuve et saine"
+    assert any("incoherente" in n for n in reborn.journal.notices), reborn.journal.notices
+    assert list(tmp_path.glob("m.jsonl.corrompu-*")), "le fichier est conserve, jamais supprime"
 
 
 def test_empreinte_stable_et_sensible():

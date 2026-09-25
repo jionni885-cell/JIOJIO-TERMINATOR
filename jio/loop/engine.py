@@ -40,6 +40,7 @@ from ..core.types import (
     Mission,
     MissionReport,
     MissionStatus,
+    RuleKind,
     Severity,
     Spec,
     Stage,
@@ -50,6 +51,7 @@ from ..core.types import (
 from ..gate.conformal import ConformalGate
 from ..providers.base import Completion, Message, Provider
 from ..spec.compiler import SpecCompiler
+from ..spec.library import empreinte_regle
 from ..spec.witness import Temoignage, traduire
 from ..verify.executable import ExecutableProver, ProverResult
 
@@ -130,6 +132,10 @@ class Engine:
     router: object | None = None
     #: Memoire des echecs : les erreurs deja payees ne sont pas repayees.
     memory: object | None = None
+    #: Bibliotheque de temoins : une traduction VALIDEE par une livraison prouvee
+    #: devient une capacite durable, et la prochaine mission identique ne demande
+    #: plus rien au modele (cout de traduction ramene a zero).
+    bibliotheque: object | None = None
     #: Bras choisi par le routeur pour la mission en cours (interne).
     _arm: object | None = field(default=None, init=False, repr=False)
     #: Memoire du controle d'auto-coherence (interne, voir `__post_init__`).
@@ -153,6 +159,8 @@ class Engine:
         #: pas etre declaree livree sans reserve — c'est la doctrine « un etat se
         #: prouve avant d'etre cru ».
         self._regles_non_prouvees: set[str] = set()
+        #: Temoins repris dans la bibliotheque pour la mission en cours (aucune traduction).
+        self._temoins_memorises: bool = False
 
     # -- point d'entree ----------------------------------------------------- #
 
@@ -280,7 +288,8 @@ class Engine:
             # soit il est faux, soit il discrimine mal. Il ne peut donc pas, a lui
             # seul, faire rejeter un candidat — il declasse, et il s'AVOUE.
             if temoignage.tests:
-                self._signaler_temoins_non_discriminants(proved, temoignage, warnings, rnd)
+                self._signaler_temoins_non_discriminants(
+                    proved, temoignage, warnings, rnd, work.objective or spec.mission)
 
             proved.sort(key=lambda pair: pair[1].ratio, reverse=True)
             top_art, top_res = proved[0]
@@ -441,6 +450,18 @@ class Engine:
             ledger=ledger,
             infeasible=infeasible,
         )
+
+        # --- 9. CAPITALISER : une traduction validee devient une capacite ---------- #
+        # Seule une livraison PROUVEE alimente la bibliotheque : une abstention ou une
+        # reserve ne prouve rien, donc elle n'a rien a transmettre. La prochaine fois,
+        # les temoins sont repris sans appeler le modele — cout de traduction : zero.
+        gardes = self._conserver_les_temoins(spec, work, report)
+        if gardes:
+            self.journal.append(
+                "temoin-conserve",
+                {"mission_id": report.mission_id, "entrees": gardes,
+                 "objectif": (work.objective or spec.mission)[:200]},
+            )
         self._learn(mission, report)
         return report
 
@@ -490,6 +511,7 @@ class Engine:
         temoignage: Temoignage,
         warnings: list[Finding],
         rnd: int,
+        objectif_biblio: str,
     ) -> None:
         """Nomme l'ambiguite : un temoin que TOUS les candidats echouent.
 
@@ -541,6 +563,20 @@ class Engine:
                     "declaree NON PROUVEE, jamais supposee satisfaite."
                 ),
             ))
+        # Un temoin REPRIS dans la bibliotheque et qui se met a accuser tout le monde
+        # n'est plus un temoin : on le revoque, et la prochaine mission repayera une
+        # traduction. C'est le garde-fou qui empeche une memoire de s'auto-entretenir
+        # en accumulant des jugements faux.
+        if self._temoins_memorises and self.bibliotheque is not None:
+            for rid in sorted(discriminants):
+                try:
+                    self.bibliotheque.retirer(
+                        objectif=objectif_biblio, regle=rid,
+                        raison="repris dans la bibliotheque, mais echoue sur tous les "
+                               "candidats : il accuse tout le monde, il ne discrimine plus",
+                    )
+                except Exception:  # noqa: BLE001
+                    continue
         self._regles_non_prouvees.update(discriminants)
         self.journal.append(
             "temoins-non-discriminants",
@@ -860,11 +896,51 @@ class Engine:
         if self._temoignage is not None:
             return self._temoignage
 
+        objectif = work.objective or spec.mission
+
+        # -- 1. la bibliotheque d'abord : une traduction deja VALIDEE ne se repaie pas.
+        memorises = self._rappeler_les_temoins(spec, objectif)
         provider = self.spec_compiler.provider or (self.generators[0] if self.generators else None)
-        temoignage = traduire(
-            spec, provider, entrypoint=work.entrypoint,
-            objectif=work.objective or spec.mission,
-        )
+        manquantes = [r for r in spec.rules
+                      if r.kind is not RuleKind.ADVISORY and r.id not in memorises]
+        if memorises and not manquantes:
+            # Reprise COMPLETE : aucun appel au modele, la memoire suffit.
+            self._temoins_memorises = True
+            self._temoignage = Temoignage(tests=memorises, modele="bibliotheque")
+            self.journal.append(
+                "temoins",
+                {
+                    "regles": len(spec.rules),
+                    "traduites": sorted(memorises),
+                    "tests": {k: v[:400] for k, v in memorises.items()},
+                    "source": "bibliotheque",
+                    "appels": 0,
+                },
+            )
+            return self._temoignage
+
+        if memorises:
+            # Reprise PARTIELLE : on ne traduit que ce qui manque. La version
+            # precedente repartait avec les seuls temoins memorises des qu'il y en
+            # avait UN — une regle modifiee (ou nouvelle) n'etait alors jamais
+            # traduite, et la mission ne la prouvait plus du tout. Mesure : zero
+            # appel de traduction sur une specification dont un enonce avait change.
+            partielle = Spec(mission=spec.mission, rules=tuple(manquantes),
+                             under_specified=spec.under_specified,
+                             acceptance=spec.acceptance)
+            frais = traduire(partielle, provider, entrypoint=work.entrypoint,
+                             objectif=objectif)
+            if frais.tests:
+                self._temoins_memorises = False
+            temoignage = Temoignage(
+                tests={**memorises, **frais.tests},
+                aveux=dict(frais.aveux), refuses=dict(frais.refuses),
+                motif=frais.motif, appels=frais.appels, modele=frais.modele,
+            )
+        else:
+            temoignage = traduire(
+                spec, provider, entrypoint=work.entrypoint, objectif=objectif,
+            )
         self._temoignage = temoignage
         usage["calls"] = usage.get("calls", 0) + temoignage.appels
         self.journal.append(
@@ -884,6 +960,55 @@ class Engine:
             },
         )
         return temoignage
+
+    def _rappeler_les_temoins(self, spec: Spec, objectif: str) -> dict[str, str]:
+        """Reprend les temoins deja valides pour cette mission, sans appeler le modele.
+
+        La cle est (empreinte de l'objectif, empreinte de l'enonce de la regle) : une
+        specification qui change d'un mot ne retrouve rien, ce qui est le but — une
+        memoire qui s'applique a une specification differente serait un faux temoin.
+        """
+        if self.bibliotheque is None:
+            return {}
+        empreintes = {
+            r.id: empreinte_regle(r.id, r.statement)
+            for r in spec.rules
+            if r.kind is not RuleKind.ADVISORY
+        }
+        try:
+            rappeles = self.bibliotheque.rappeler(objectif, empreintes)
+        except Exception:  # noqa: BLE001 — une memoire defaillante ne bloque pas une mission
+            return {}
+        return {k: v for k, v in rappeles.items() if k in empreintes}
+
+    def _conserver_les_temoins(self, spec: Spec, work: WorkItem, report: MissionReport) -> int:
+        """Alimente la bibliotheque — uniquement sur une livraison PROUVEE.
+
+        La condition est le coeur du module : une abstention ou une reserve ne
+        prouve rien, donc elle n'a rien a transmettre. Un temoin FAUX ne peut pas
+        entrer par la porte d'une abstention.
+        """
+        if self.bibliotheque is None or self._temoignage is None:
+            return 0
+        if self._temoins_memorises or self._temoignage.modele == "bibliotheque":
+            return 0
+        if report.status is not MissionStatus.DELIVERED or not self._temoignage.tests:
+            return 0
+        objectif = work.objective or spec.mission
+        empreintes = {
+            r.id: empreinte_regle(r.id, r.statement)
+            for r in spec.rules
+            if r.kind is not RuleKind.ADVISORY
+        }
+        try:
+            return int(self.bibliotheque.retenir(
+                objectif=objectif,
+                empreintes=empreintes,
+                correspondance=self._temoignage.tests,
+                mission_id=report.mission_id,
+            ))
+        except Exception:  # noqa: BLE001
+            return 0
 
     def _checks_en_vigueur(self, work: WorkItem) -> Mapping[str, str]:
         """Les temoins valables pour cette mission, en un seul endroit.

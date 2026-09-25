@@ -80,19 +80,17 @@ class FailureMemory:
 
     def __post_init__(self) -> None:
         if self.journal is None:
-            self.journal = Journal(path=self.path)
             # `Journal(path=...)` OUVRE le fichier en ecriture : il ne relit rien.
             # Sans ce chargement explicite, la memoire ecrivait bien sur disque mais
             # repartait vide a chaque processus — une memoire qui oublie n'est pas
             # une memoire. Bug trouve par le test de rappel, pas par relecture.
-            if self.path is not None and self.path.exists():
-                try:
-                    text = self.path.read_text(encoding="utf-8")
-                    self.journal = Journal.from_jsonl(text, path=self.path)
-                except Exception:
-                    # Un journal illisible ne doit jamais bloquer : on repart d'un
-                    # journal vide plutot que de rendre le systeme inutilisable.
-                    self.journal = Journal(path=self.path)
+            #
+            # Et le chargement VERIFIE la chaine de hashes : le contenu de cette
+            # memoire repart dans les PROMPTS (voir `prompt_block`). Un fichier edite
+            # a la main, ou ecrit par un autre programme, est donc un vecteur
+            # d'injection en plus d'etre une memoire fausse. Chaine cassee -> mise en
+            # quarantaine (renommage, jamais suppression) et memoire vide, en le disant.
+            self.journal = Journal.load_verified(self.path)
         if self._records is None:
             self._records = self._load()
 

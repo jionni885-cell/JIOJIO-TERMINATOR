@@ -233,6 +233,81 @@ class Journal:
             )
         return j
 
+    @classmethod
+    def load_verified(
+        cls, path: str | os.PathLike[str] | None, *, quarantine: bool = True
+    ) -> Journal:
+        """Charge un journal du disque en VERIFIANT sa chaine de hashes.
+
+        `from_jsonl` ne verifie RIEN : il lit. Un fichier edite a la main, ou ecrit
+        par un autre programme, serait donc charge tel quel. Pour un journal de
+        mission, c'est genant ; pour une MEMOIRE dont le contenu repart dans les
+        prompts (memoire des echecs) ou dans les verdicts (bibliotheque de temoins),
+        c'est un vecteur d'injection. La verification se fait donc ICI, une fois :
+
+          * chaine valide  -> le journal est rendu tel quel ;
+          * chaine CASSEE  -> le fichier est mis en quarantaine (renomme, jamais
+            supprime), un journal vide est rendu, et `notices` dit ce qui s'est
+            passe. On ne perd jamais une memoire en silence.
+        """
+        if path is None:
+            return cls(path=None)
+        chemin = Path(path)
+        if not chemin.exists() or chemin.stat().st_size == 0:
+            return cls(path=chemin)
+        try:
+            texte = chemin.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            journal = cls(path=chemin)
+            journal.notices.append(f"memoire illisible ({exc}) : repart a vide")
+            return journal
+
+        try:
+            journal = cls.from_jsonl(texte, path=chemin)
+        except (ValueError, KeyError, TypeError) as exc:
+            # Un fichier qui n'est meme pas du JSON est traite comme une chaine
+            # cassee : meme traitement, meme visibilite. Un fichier illisible ne doit
+            # jamais bloquer une mission, mais il ne doit pas non plus disparaitre
+            # en silence.
+            return cls._quarantaine(chemin, f"illisible ({exc})", quarantine)
+        if not journal._events:  # noqa: SLF001 — meme classe
+            return journal
+        ok, bad = journal.verify_chain()
+        if ok:
+            return journal
+        return cls._quarantaine(chemin, f"chaine cassee a l'evenement {bad}", quarantine)
+
+    @classmethod
+    def _quarantaine(cls, chemin: Path, motif: str, quarantine: bool) -> Journal:
+        """Retire un fichier de memoire incoherent du chemin actif, en le DISANT.
+
+        Renommer, jamais supprimer : l'utilisateur doit pouvoir inspecter ce qu'on a
+        refuse d'appliquer. Et si le renommage est impossible, on n'ecrit RIEN a la
+        suite d'un fichier douteux — on repart d'une memoire vide, en memoire vive.
+        """
+        if not quarantine:
+            vide = cls(path=None)
+            vide.notices.append(f"memoire incoherente ({motif}) : IGNOREE.")
+            return vide
+        horodatage = int(time.time())
+        cible = chemin.with_name(f"{chemin.name}.corrompu-{horodatage}")
+        try:
+            chemin.rename(cible)
+        except OSError as exc:
+            vide = cls(path=None)
+            vide.notices.append(
+                f"memoire incoherente ({motif}) et impossible a deplacer ({exc}) : "
+                "elle est IGNOREE, rien n'est ecrit."
+            )
+            return vide
+        vide = cls(path=chemin)
+        vide.notices.append(
+            f"memoire incoherente ({motif}) : conservee sous {cible.name}, jamais "
+            "appliquee. Une chaine neuve commence."
+        )
+        return vide
+
+
     def summary(self) -> dict[str, Any]:
         counts: dict[str, int] = {}
         for ev in self._events:

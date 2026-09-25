@@ -636,11 +636,19 @@ def _attach_learning(engine, state_dir: Path, *, disable: bool = False) -> None:
     if disable:
         return
     from .learn import FailureMemory
+    from .spec.library import BibliothequeTemoins
     from .trust import TrustRouter
 
     state_dir.mkdir(parents=True, exist_ok=True)
     engine.memory = FailureMemory(
         path=Path(str_env("JIO_MEMORY", str(state_dir / "failures.jsonl")))
+    )
+    # Bibliotheque de temoins : une traduction DEJA VALIDEE par une livraison prouvee
+    # n'est pas repayee la fois suivante. Sans cet appel, la bibliotheque existerait
+    # sans jamais servir — « un composant qui ne s'execute pas n'existe pas », la
+    # lecon qui avait deja oblige a cabler la memoire des echecs.
+    engine.bibliotheque = BibliothequeTemoins(
+        path=Path(str_env("JIO_WITNESS_LIB", str(state_dir / "temoins.jsonl")))
     )
     engine.router = TrustRouter(
         path=Path(str_env("JIO_TRUST", str(state_dir / "trust.json"))),
@@ -694,6 +702,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     # annoncer un fait qui n'a pas encore eu lieu.
     for notice in getattr(engine.journal, "notices", []):
         print(f"  [journal] {notice}", file=sys.stderr)
+    # La memoire des temoins peut avoir ete mise en quarantaine (chaine cassee) :
+    # perdre une memoire sans le dire serait exactement le silence que ce projet
+    # refuse. On le dit, sur la sortie d'erreur, sans bloquer la mission.
+    for notice in getattr(engine.bibliotheque, "notices", []) or []:
+        print(f"  [temoins] {notice}", file=sys.stderr)
     print(render_report(report, verbose=args.verbose))
     if args.json:
         Path(args.json).write_text(report.to_json(), encoding="utf-8")

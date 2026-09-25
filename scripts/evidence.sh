@@ -206,6 +206,65 @@ print("       prouve rien sur eux (il peut etre faux), donc la regle est declare
 print("       PROUVEE — et il fait s'abstenir au lieu de faire rejeter.")
 PYE
 
+    titre "3 ter. La memoire des temoins : une traduction validee n'est pas repayee"
+    "$PYTHON" - <<'PYE'
+import pathlib, sys, tempfile
+sys.path.insert(0, ".")
+from jio.bench.tasks import TASKS, TASKS_BY_ID
+from jio.cli import _check, _simulated_engine
+from jio.core.types import Mission
+from jio.loop.engine import WorkItem
+from jio.spec.library import BibliothequeTemoins
+
+tache = TASKS_BY_ID["sum_even"]
+dossier = pathlib.Path(tempfile.mkdtemp(prefix="jio-biblio-"))
+chemin = dossier / "temoins.jsonl"
+appels = {"n": 0}
+
+
+class TraducteurCompte:
+    """Fidele, et il COMPTE : c'est le seul chiffre qui compte ici."""
+
+    name, model = "compte", "c-1"
+
+    def complete(self, messages, **kw):
+        from jio.bench.temoins import TraducteurSimule
+
+        if not hasattr(self, "_interne"):
+            self._interne = TraducteurSimule(taches=TASKS, fidelite=1.0)
+        appels["n"] += 1
+        return self._interne.complete(messages, **kw)
+
+
+def mission(numero):
+    biblio = BibliothequeTemoins(path=chemin)
+    moteur = _simulated_engine(tache, skill=0.85, seed=0, max_rounds=2,
+                               temoins=True, traducteur=TraducteurCompte())
+    moteur.bibliotheque = biblio
+    rap = moteur.run(Mission(objective=tache.objective, id=f"sum-{numero}", max_rounds=2),
+                     WorkItem(objective=tache.objective, entrypoint=tache.entrypoint,
+                              spec=tache.spec()))
+    return rap, biblio
+
+
+print("    Meme mission, repetee. La traduction des regles est un appel de modele :")
+print("    sans memoire, on repaie ce pari a chaque fois. Avec la bibliotheque, il est paye")
+print("    une seule fois — a condition qu'une livraison l'ait PROUVE la premiere fois.")
+print()
+print(f"    {'execution':<12}{'statut':<26}{'traductions':>12}{'memoire':>9}{'juste':>7}")
+for i in (1, 2, 3):
+    avant = appels["n"]
+    rap, biblio = mission(i)
+    print(f"    {i:<12}{rap.status.value:<26}{appels['n'] - avant:>12}{biblio.size:>9}"
+          f"{str(_check(rap.subject, tache)):>7}")
+print()
+print("    -> la premiere execution paie UNE traduction et capitalise ; les suivantes")
+print("       ne paient rien et livrent le meme resultat. Seule une livraison PROUVEE")
+print("       alimente la memoire : une abstention ou une reserve n'a rien a transmettre.")
+print("       Et le fichier est verifie par chaine de hachage : edite a la main, il est")
+print("       mis en quarantaine — renomme, jamais supprime — et jamais applique.")
+PYE
+
     titre "4. Le chemin reel (3 agents externes -> livraison auditee)"
     "$PYTHON" -m pytest -q tests/test_real_path.py 2>&1 | tail -2
 
