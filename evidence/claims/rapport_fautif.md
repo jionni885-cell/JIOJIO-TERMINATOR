@@ -1,3 +1,4 @@
+<!-- jio:corpus-fautif : fichier de preuve, fautif a DESSEIN. -->
 # Analyse de performance
 
 La latence mesuree est de 12 + 30 = 42 ms.

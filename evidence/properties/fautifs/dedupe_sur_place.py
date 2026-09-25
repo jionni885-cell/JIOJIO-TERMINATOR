@@ -1,3 +1,4 @@
+# jio:corpus-fautif : fichier de preuve, fautif a DESSEIN.
 def dedupe(values):
     """Supprime les doublons.
 

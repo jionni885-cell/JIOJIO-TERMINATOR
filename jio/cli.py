@@ -1338,7 +1338,59 @@ def _classify_failure(stderr: str, exit_code: int) -> str:
         return "environment"
     if "[RESERVE]" in text:
         return "reserve"
+    # Un fichier ABSENT, designe par un chemin absolu hors du projet : la regle
+    # cherche une donnee de demonstration qui n'est pas la (`/tmp/evidence/...`,
+    # corpus de test non regenere). Le code du projet n'y est pour rien — et l'accuser
+    # ferait passer un fichier de test parfaitement sain pour un defaut.
+    if "FileNotFoundError" in text or "No such file or directory" in text:
+        return "environment"
     return "defect"
+
+
+#: Dossiers qu'un balayage de projet ne doit JAMAIS traverser par defaut.
+#:
+#: Mesure du probleme : `jio scan .` sur ce depot balayait 1363 fichiers Python,
+#: dont l'environnement virtuel, et produisait 736 « problemes » — des faux positifs
+#: sur du code tiers, plus 285 secondes d'attente. Une liste de defauts qu'on ne peut
+#: pas lire ne vaut rien : elle est ignorée en entier, y compris ses vrais defauts.
+#:
+#: Ces dossiers ne contiennent pas le code du projet : ils contiennent des copies de
+#: dependances, des caches et des artefacts de construction. Le nom du dossier est
+#: compare SOUS la racine balayee, jamais au-dessus : on peut donc auditer un paquet
+#: installe en le nommant directement.
+DOSSIERS_IGNORES = frozenset({
+    ".git", ".hg", ".svn", ".venv", "venv", ".tox", ".nox", "env",
+    "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".pytype",
+    "node_modules", "site-packages", "dist-packages", "build", "dist",
+    ".eggs", ".idea", ".vscode", "vendor", "third_party", ".direnv",
+})
+
+
+#: Marqueur par lequel un fichier DECLARE contenir une faute VOLONTAIRE.
+#:
+#: Sans lui, le corpus de preuves de ce depot (`evidence/**/fautifs/`,
+#: `evidence/claims/rapport_fautif.md`) etait signale comme 16 defauts du projet :
+#: un balayage qui crie sur ses propres fixtures est un balayage qu'on ignore.
+#: Le fichier lui-meme dit ce qu'il est — comme `# noqa`, mais verifiable : le
+#: marqueur est COMPTE et AFFICHE, jamais applique en silence.
+MARQUEUR_CORPUS = "jio:corpus-fautif"
+
+
+def _corpus_volontaire(texte: str) -> bool:
+    """Vrai si le fichier se declare porteur d'une faute volontaire (3 premieres lignes)."""
+    return any(MARQUEUR_CORPUS in ligne for ligne in texte.splitlines()[:3])
+
+
+def _est_ignore(chemin: Path, racine: Path) -> bool:
+    """Vrai si le chemin traverse un dossier a ignorer, SOUS la racine donnee."""
+    try:
+        relatif = chemin.relative_to(racine)
+    except ValueError:
+        return False
+    for partie in relatif.parts[:-1]:
+        if partie in DOSSIERS_IGNORES or partie.endswith(".egg-info"):
+            return True
+    return False
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
@@ -1362,6 +1414,34 @@ def cmd_scan(args: argparse.Namespace) -> int:
                  if not (f.name.startswith("test_") or f.name == "conftest.py"
                          or "/tests/" in str(f) or "/test/" in str(f))]
 
+    # On IGNORE les dossiers qui ne contiennent pas le code du projet (mesure :
+    # sans ce filtre, `jio scan .` sur ce depot lisait 1363 fichiers — l'environnement
+    # virtuel — et rendait 736 faux positifs en 285 secondes). Ce qui est ignore est
+    # DIT plus bas : un balayage qui se tairait sur ce qu'il n'a pas regarde serait
+    # exactement le silence que ce projet refuse.
+    ignores: list[str] = []
+    if root.is_dir() and not getattr(args, "tout", False):
+        gardes = [f for f in files if not _est_ignore(f, root)]
+        if len(gardes) != len(files):
+            sous = {p.parts[len(root.parts)] for p in files
+                    if _est_ignore(p, root) and len(p.parts) > len(root.parts)}
+            ignores = sorted(sous)
+        files = gardes
+
+    # --- les DOCUMENTS du projet, juges par leurs propres temoins ------------ #
+    # Un depot contient du code ET de la prose : un README qui cite un fichier
+    # inexistant ou annonce un calcul faux est un defaut du depot, exactement comme
+    # une fonction qui ne compile pas. Les traiter dans le MEME balayage evite au
+    # passage d'oublier une moitie du projet.
+    documents = (
+        sorted(
+            d for suffixe in (".md", ".markdown", ".rst")
+            for d in root.rglob(f"*{suffixe}")
+            if not getattr(args, "tout", False) and not _est_ignore(d, root)
+        )
+        if root.is_dir() else []
+    )
+
     prover = ExecutableProver(sandbox=Sandbox(timeout=args.timeout))
     problems: list[tuple[Path, str, str]] = []    # fichier, regle, preuve
     environment: list[tuple[Path, str, str]] = []  # verification impossible : pas un defaut
@@ -1371,12 +1451,19 @@ def cmd_scan(args: argparse.Namespace) -> int:
     with_rules = 0
     checked = 0
 
+    corpus_volontaire: list[Path] = []
+
     for path in files:
         try:
             source = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         if len(source) > 500_000:
+            continue
+        if _corpus_volontaire(source):
+            # Le fichier DIT qu'il est faux a dessein : on le compte et on l'annonce,
+            # on ne le juge pas.
+            corpus_volontaire.append(path)
             continue
         try:
             derived = derive(source, path=path)
@@ -1432,6 +1519,35 @@ def cmd_scan(args: argparse.Namespace) -> int:
         if limits:
             partial.setdefault(path, []).extend(limits)
 
+    # --- documents : seuls les REFUS sont des defauts ------------------------ #
+    # Un calcul CITE, un chemin introuvable : signales, jamais accuses. Seule une
+    # affirmation refutee entre dans `problems`, et elle porte sa preuve.
+    from .verify.claims import verifier as verifier_la_prose
+
+    for document in documents:
+        try:
+            texte = document.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if len(texte) > 500_000:
+            continue
+        if _corpus_volontaire(texte):
+            corpus_volontaire.append(document)
+            continue
+        rapport = verifier_la_prose(texte, racine=root if root.is_dir() else root.parent)
+        if not rapport.verifications:
+            unverifiable.append(document)
+            continue
+        with_rules += 1
+        checked += rapport.verifiees + rapport.refutees
+        for verification in rapport.bloquantes:
+            problems.append((document, verification.affirmation.genre.value.upper(),
+                             verification.message[:200]))
+        for verification in rapport.verifications:
+            if not verification.ok and not verification.bloquant:
+                reserves.append((document, verification.affirmation.genre.value.upper(),
+                                 verification.message[:120]))
+
     # --- coherence des imports internes (aucune execution, deterministe) ----- #
     import_problems: list[tuple[Path, str, str]] = []
     if args.check_imports and len(files) > 1:
@@ -1475,7 +1591,14 @@ def cmd_scan(args: argparse.Namespace) -> int:
             )
 
     print()
-    print(f"  SCAN  {root}  ·  {len(files)} fichier(s) Python  ·  {checked} verification(s)")
+    print(f"  SCAN  {root}  ·  {len(files)} fichier(s) Python  ·  "
+          f"{len(documents)} document(s)  ·  {checked} verification(s)")
+    if ignores:
+        print(f"  dossiers ignores : {', '.join(ignores)}"
+              "   (--tout pour les inclure)")
+    if corpus_volontaire:
+        print(f"  corpus de fautes VOLONTAIRES : {len(corpus_volontaire)} fichier(s) "
+              f"exclu(s) sur leur propre declaration ({MARQUEUR_CORPUS})")
     print()
     if problems:
         print(f"  {len(problems)} PROBLEME(S) — avec la preuve :")
@@ -1763,6 +1886,9 @@ def build_parser() -> argparse.ArgumentParser:
     a.set_defaults(func=cmd_audit)
 
     sc = sub.add_parser("scan", help="audite un projet entier et n'affiche que les problemes")
+    sc.add_argument("--tout", action="store_true",
+                    help="balayer AUSSI les dossiers habituellement ignores "
+                         "(environnements virtuels, caches, dependances)")
     sc.add_argument("path", help="fichier ou repertoire")
     sc.add_argument("--exclude-tests", action="store_true",
                     help="ignorer test_*.py, conftest.py et les dossiers tests/")

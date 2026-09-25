@@ -1,3 +1,4 @@
+# jio:corpus-fautif : fichier de preuve, fautif a DESSEIN.
 def url_encode(value: str) -> bytes:
     return value[:4].encode("utf-8")
 

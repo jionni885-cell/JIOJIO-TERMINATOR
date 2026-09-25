@@ -1,3 +1,4 @@
+# jio:corpus-fautif : fichier de preuve, fautif a DESSEIN.
 class Compteur:
     """Un compteur qui part de zero et ne peut pas devenir negatif.
 

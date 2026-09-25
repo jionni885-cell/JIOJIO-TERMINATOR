@@ -50,12 +50,21 @@ def test_un_rapport_fautif_est_refute_avec_sa_preuve() -> None:
 
 
 def test_un_rapport_sain_est_muet() -> None:
-    """Le corpus sain compte autant que le corpus fautif."""
+    """Le corpus sain compte autant que le corpus fautif.
+
+    Le corpus sain contient A DESSEIN trois pieges qu'un verificateur naif condamne :
+    un exemple en **shell** (compile comme du Python = accusation fausse), un calcul
+    FAUX **cite** entre backticks (parler d'une erreur, c'est le sujet du document) et
+    un bloc non marque qui est une sortie de programme. Aucun ne doit bloquer.
+    """
     texte = (CORPUS / "rapport_sain.md").read_text(encoding="utf-8")
     rapport = verifier(texte, racine=REPO)
 
     assert rapport.conforme, [v.message for v in rapport.bloquantes]
-    assert rapport.signalees == 0, "aucun chemin, calcul ou bloc ne doit alerter ici"
+    assert rapport.refutees == 0, "aucun calcul juste ne doit etre declare faux"
+    # Un seul signalement, et c'est la citation volontaire : elle est ATTENDUE.
+    assert rapport.signalees == 1, rapport.resume()
+    assert "CITE" in rapport.verifications[-1].message
 
 
 def test_une_note_sans_affirmation_ne_donne_pas_de_quitus() -> None:
@@ -137,13 +146,59 @@ def test_un_chemin_existant_est_confirme(tmp_path: pathlib.Path) -> None:
     assert rapport.verifiees == 1 and rapport.signalees == 0
 
 
-def test_un_bloc_non_marque_nest_pas_juge(tmp_path: pathlib.Path) -> None:
-    """Une illustration n'est pas une specification : elle est signalee au plus."""
-    texte = "```\nregle metacode: faire quelque chose(\n```\n"
-    rapport = verifier(texte, racine=None)
-    assert rapport.refutees == 0, "un bloc non marque ne doit pas etre BLOQUANT"
+def test_un_bloc_non_marque_qui_nest_pas_du_code_nest_pas_juge() -> None:
+    """Un diagramme n'est pas une specification.
+
+    Avant : tout bloc non marque qui ne compilait pas etait signale. Sur le seul
+    README de ce depot, cela produisait 18 signalements — des tableaux ASCII et des
+    sorties de terminal. Un outil qui signale 18 fois pour rien cesse d'etre lu ; il
+    ne juge donc plus que ce qui est MANIFESTEMENT du code.
+    """
+    for illustration in ("```\nregle metacode: faire quelque chose(\n```\n",
+                         "```\n  config    reussite  appels\n  --------  --------  -----\n```\n"):
+        rapport = verifier(illustration, racine=None)
+        assert rapport.verifications == (), rapport.resume()
+
+
+def test_un_bloc_non_marque_qui_est_du_code_est_signale_sans_trancher() -> None:
+    """Le signal utile est conserve : du Python evident qui ne compile pas."""
+    rapport = verifier("```\ndef f(\n    return 1\n```\n", racine=None)
+    assert rapport.refutees == 0, "non marque : jamais bloquant"
     assert rapport.signalees == 1
-    assert "non marque" in rapport.verifications[0].message
+    assert "manifestement du code" in rapport.verifications[0].message
+
+
+def test_un_bloc_dune_autre_langue_nest_pas_compile_comme_python() -> None:
+    """Le faux positif le plus couteux : accuser un exemple de terminal.
+
+    Presque tout document technique contient une ligne de commande. La compiler comme
+    du Python la declare invalide — une accusation fausse, et bloquante.
+    """
+    texte = "```bash\npython -m jio doctor --verify --all || echo \"echec : $?\"\n```\n"
+    rapport = verifier(texte, racine=None)
+    assert rapport.verifications == (), rapport.resume()
+
+    # Meme contenu annonce comme Python : la, c'est un fait, et c'est bloquant.
+    fautif = "```python\npython -m jio doctor --verify --all || echo \"echec : $?\"\n```\n"
+    rapport2 = verifier(fautif, racine=None)
+    assert rapport2.refutees == 1 and rapport2.bloquantes
+
+
+def test_un_calcul_cite_entre_backticks_est_signale_jamais_bloquant() -> None:
+    """Un document qui parle d'une erreur doit pouvoir la citer.
+
+    La table des matieres d'un texte sur l'arithmetique cite forcement des calculs
+    faux, et un README qui explique ce que JIO attrape en cite un. Les confondre avec
+    des affirmations condamnait precisement les documents les plus utiles.
+    """
+    rapport = verifier("Une version precedente annoncait `7 x 6 = 43`, ce qui etait faux.",
+                       racine=None)
+    assert rapport.refutees == 0, "une citation ne condamne pas le document"
+    assert rapport.signalees == 1
+    assert "CITE" in rapport.verifications[0].message
+
+    # Non citee : c'est une affirmation, et elle est bloquante.
+    assert verifier("Le total vaut 7 x 6 = 43.", racine=None).bloquantes
 
 
 def test_sans_racine_les_chemins_ne_sont_pas_juges() -> None:

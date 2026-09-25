@@ -1,3 +1,4 @@
+# jio:corpus-fautif : fichier de preuve, fautif a DESSEIN.
 class Pile:
     """Pile LIFO : le dernier empile est le premier depile.
 

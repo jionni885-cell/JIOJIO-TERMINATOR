@@ -1,3 +1,4 @@
+# jio:corpus-fautif : fichier de preuve, fautif a DESSEIN.
 def collect(items, seen):
     """Collecte les elements et note la taille vue.
 

@@ -1,3 +1,4 @@
+# jio:corpus-fautif : fichier de preuve, fautif a DESSEIN.
 def mean(nums: list[float]) -> float:
     """Moyenne des valeurs.
 

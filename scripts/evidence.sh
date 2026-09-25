@@ -318,6 +318,25 @@ PYE
 
     titre "6. Le projet s'audite lui-meme"
     "$PYTHON" -m jio scan jio --exclude-tests --no-learn 2>&1 | tail -5
+    echo
+    # Le balayage ENTIER du depot, code ET documents. Deux proprietes y sont
+    # verifiees : il ne traverse pas l'environnement virtuel, et il exclut le corpus
+    # de fautes volontaires sur leur propre declaration — sinon il signalerait ses
+    # propres fixtures, ce qui le rendait illisible (mesure : 736 problemes, 285 s).
+    TMP_SCAN=$(mktemp -d)
+    if "$PYTHON" -m jio scan . --no-learn --exclude-tests > "$TMP_SCAN/brut.txt" 2>&1; then
+        code_scan=0
+    else
+        code_scan=$?
+    fi
+    grep -E '^  (SCAN|dossiers ignores|corpus de fautes)' "$TMP_SCAN/brut.txt" || true
+    echo "    -> code $code_scan : $( [ "$code_scan" -eq 0 ] && echo 'aucun probleme sur les regles verifiables' || echo 'PROBLEME(S) a instruire ci-dessus' )"
+    if grep -qE '^  dossiers ignores.*\.venv' "$TMP_SCAN/brut.txt"; then
+        echo "    -> l'environnement virtuel est ignore ET annonce."
+    else
+        echo "    -> ATTENTION : .venv n'est pas annonce comme ignore."
+    fi
+    rm -rf "$TMP_SCAN"
 fi
 
 if [ "$FAIRE_TIERS" -eq 1 ]; then
@@ -375,6 +394,21 @@ if [ -d "$CORPUS_CLAIMS" ]; then
     else
         echo "    -> ATTENTION : la discrimination n'est pas etablie ci-dessus."
     fi
+    printf '    %-22s ' "auto-audit du depot"
+    # Le depot s'audite LUI-MEME, prose comprise : la documentation du projet passe
+    # par ses propres temoins. C'est l'exigence « JIO doit s'auditer lui-meme »,
+    # appliquee au texte et pas seulement au code.
+    for document_du_depot in README.md docs/ROADMAP.md CLAUDE.md AGENTS.md; do
+        [ -f "$RACINE/$document_du_depot" ] || continue
+        if "$PYTHON" -m jio claims "$RACINE/$document_du_depot" --racine "$RACINE" \
+             > "$TMP_CLAIMS/depot.txt" 2>&1; then
+            printf '%s: conforme  ' "$document_du_depot"
+        else
+            printf '\n    %s : NON CONFORME -> %s\n' "$document_du_depot" \
+                "$(grep -oE 'BILAN : .*' "$TMP_CLAIMS/depot.txt" | head -1)"
+        fi
+    done
+    echo
     printf '    %-22s ' "sans affirmation"
     if "$PYTHON" -m jio claims "$CORPUS_CLAIMS/note_sans_affirmation.md" --racine "$RACINE" \
          >/dev/null 2>&1; then

@@ -671,6 +671,44 @@ est nommé et consultable. C'est un choix, et il est écrit dans le code.
 
 ---
 
+## Un balayage doit être lisible : deux faux positifs, deux corrections
+
+`jio scan .` sur ce dépôt — l'audit le plus simple qu'un utilisateur lance — donnait
+**736 problèmes en 285 secondes**. Les deux causes, mesurées :
+
+| Défaut | Ce qui se passait | Correctif |
+|---|---|---|
+| Il traversait l'**environnement virtuel** | 1363 fichiers Python au lieu de 105, des « problèmes » sur du code tiers, 285 s | dossier ignorés par défaut (`.venv`, `node_modules`, caches, `build`…), **et le dossier ignoré est affiché** ; `--tout` pour les inclure |
+| Il accusait **ses propres fixtures** | le corpus de preuve est faux *à dessein* : 16 « défauts » du projet, dont `evidence/claims/rapport_fautif.md` | le fichier se **déclare** (`# jio:corpus-fautif` ou `<!-- jio:corpus-fautif -->`), et le nombre de fichiers exclus est affiché |
+
+Après : **0 problème, 14 secondes**, et la sortie dit ce qu'elle n'a pas regardé :
+
+```
+  SCAN  .  ·  105 fichier(s) Python  ·  34 document(s)  ·  223 verification(s)
+  dossiers ignores : .venv   (--tout pour les inclure)
+  corpus de fautes VOLONTAIRES : 13 fichier(s) exclu(s) sur leur propre declaration
+```
+
+Un faux positif n'est pas un désagrément : une liste qu'on ne peut pas lire est
+ignorée **en entier**, y compris ses vrais défauts. C'est la perte de l'outil.
+
+### La même erreur, dans le vérificateur de prose
+
+Le corpus de documents a révélé trois façons d'accuser à tort, toutes corrigées :
+
+| Faux positif | Pourquoi c'était grave | Correctif |
+|---|---|---|
+| Un bloc **`bash`** compilé comme du Python | presque tout document technique contient une ligne de commande : chacun était déclaré invalide, **et bloquant** | seuls les blocs annoncés comme Python (`python`, `py`, `python3`) sont jugés |
+| Un calcul **cité** entre `` ` `` | un texte qui explique les erreurs d'arithmétique en cite forcément — c'est-à-dire les documents les plus utiles | une citation est **signalée**, jamais bloquante |
+| Un **diagramme** non marqué | 18 signalements sur le seul README de ce dépôt (tableaux ASCII, sorties de terminal) | un bloc non marqué n'est jugé que s'il est **manifestement du code** (`def `, `class `, `import `…) |
+
+Le README de ce dépôt passe désormais son propre auditeur : **10 affirmations
+vérifiées, 0 refusée**, 3 signalements — un chemin d'un autre paquet cité en exemple,
+un calcul faux cité volontairement, et un chemin d'illustration. Tous les trois sont
+légitimes, et c'est écrit dans le rapport.
+
+---
+
 ## Le bug de mesure qui rendait le banc menteur
 
 En ajoutant le banc de documents, un chiffre impossible est apparu : **100 % de
