@@ -1,11 +1,14 @@
 # EXEMPLE a installer en `.github/workflows/ci.yml`
 # --------------------------------------------------------------------------- #
-# Pourquoi ce fichier porte l'extension `.example` : le jeton GitHub utilise pour
-# pousser depuis l'agent n'a PAS la permission `workflows`. La creation du fichier
-# de workflow est donc refusee a la source ("refusing to allow a GitHub App to
-# create or update workflow .github/workflows/ci.yml without `workflows`
-# permission"). Plutot que de perdre le travail ou de contourner la securite du
-# depot, le fichier est fourni ici, pret a l'emploi.
+# Pourquoi ce fichier porte encore l'extension `.example` : mesure faite, le jeton
+# utilise pour pousser n'a PAS la permission `workflows`. La creation du fichier est
+# refusee a la source :
+#
+#   refusing to allow a GitHub App to create or update workflow
+#   `.github/workflows/ci.yml` without `workflows` permission
+#
+# Plutot que de perdre le travail ou de contourner la securite du depot, le fichier
+# est fourni ici, pret a l'emploi et a jour.
 #
 # Installation (toi seul as les droits) :
 #     mkdir -p .github/workflows
@@ -14,6 +17,14 @@
 #
 # Ou plus simple : GitHub -> Actions -> New workflow -> « set up a workflow
 # yourself », puis coller ce contenu.
+
+# CI : la meme porte que celle passee en local, pour que personne ne puisse
+# merger sans elle.
+#
+# Deux verifications, et pas une : que les tests passent, ET que le projet
+# s'audite lui-meme proprement. Un projet qui se contente de ses propres tests ne
+# verifie que ce qu'il a pense a tester ; `jio scan` regarde ce qu'on n'a pas pense
+# a tester. Les documents sont verifies aussi : leurs affirmations sont refutables.
 
 name: CI
 
@@ -52,6 +63,18 @@ jobs:
         # declarees sont affichees sans faire echouer — c'est la difference entre
         # auditer et pretendre auditer.
         run: python -m jio scan jio --exclude-tests --no-learn
+
+      - name: Les documents ne mentent pas sur leurs commandes
+        # L'oracle est le parseur de la CLI : verifier ce qu'un document affirme ne
+        # coute aucun modele. 0 refutation attendue sur tous les documents du depot.
+        run: |
+          python -m jio claims --hook $(git ls-files '*.md' '*.rst' '*.txt' | grep -v '^evidence/')
+
+      - name: Le depot passe sa propre porte
+        # `jio scan .` (depot entier) sort en 1 : les tests contiennent du code fautif,
+        # c'est leur sujet. Le paquet `jio/` doit etre propre sans reserve, et c'est ce
+        # que ce controle exige.
+        run: python -m jio scan jio --no-learn
 
       - name: La mesure du banc
         # Le chiffre publie doit etre reproduisible par n'importe qui, sinon ce
