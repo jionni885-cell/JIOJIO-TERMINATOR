@@ -76,6 +76,12 @@ class EngineConfig:
     mutation_gate: bool = True
     #: Nombre de mutants executes (cout borne : chaque mutant est une passe entiere).
     mutation_budget: int = 4
+    #: Confronter l'artefact a SA PROPRE documentation (exemples `>>>`, annotations).
+    #: Un artefact qui contredit ce qu'il affirme est suspect, meme quand il satisfait
+    #: la specification de la mission — et c'est un signal qu'on peut renvoyer au
+    #: modele, precis et executable. Cout : une derivation STATIQUE (aucun reseau) et
+    #: une passe de bac a sable par regle trouvee, memorisee par artefact.
+    self_check: bool = True
 
 
 @dataclass(frozen=True)
@@ -113,10 +119,19 @@ class Engine:
     memory: object | None = None
     #: Bras choisi par le routeur pour la mission en cours (interne).
     _arm: object | None = field(default=None, init=False, repr=False)
+    #: Memoire du controle d'auto-coherence (interne, voir `__post_init__`).
+    _self_check_cache: dict = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Tous les temoins sont journalises : une preuve non tracee n'existe pas.
         self.prover.journal = self.journal
+        # Memoire du controle d'auto-coherence, par contenu d'artefact : le
+        # verificateur est appele par CHAQUE critique du panel, et refaire la meme
+        # passe a chaque fois multiplierait le cout sans rien apprendre.
+        object.__setattr__(self, "_self_check_cache", {})
+        # Motif du dernier rejet par auto-coherence, par contenu d'artefact : la
+        # boucle de reprise s'en sert pour que le modele sache QUOI corriger.
+        self._motif_auto: dict[str, str] = {}
 
     # -- point d'entree ----------------------------------------------------- #
 
@@ -294,7 +309,7 @@ class Engine:
                              "detail": infeasible}
                 )
                 if feedback is None:
-                    feedback = self._feedback(top_res, spec, repeated=False)
+                    feedback = self._feedback(top_res, spec, repeated=False, artifact=top_art)
                 break
 
             stop, why = guard.should_stop()
@@ -307,7 +322,7 @@ class Engine:
                         {"stop": False, "reason": why, "action": "continue-echantillonnage",
                          "summary": guard.summary()},
                     )
-                    feedback = self._feedback(top_res, spec, repeated=False)
+                    feedback = self._feedback(top_res, spec, repeated=False, artifact=top_art)
                     continue
             # Mesure au banc (competence 0.15) : s'arreter au premier plateau faisait
             # PERDRE 13.3 points face a un tirage aveugle de meme budget. La raison est
@@ -327,7 +342,7 @@ class Engine:
                     {"stop": False, "reason": why, "action": "continue-plateau-productif",
                      "summary": guard.summary()},
                 )
-                feedback = self._feedback(top_res, spec, repeated=False)
+                feedback = self._feedback(top_res, spec, repeated=False, artifact=top_art)
                 guard = OscillationGuard()  # la fenetre repart : le plateau est consomme
                 continue
 
@@ -339,7 +354,9 @@ class Engine:
                                         message=why))
                 break
 
-            feedback = self._feedback(top_res, spec, repeated=guard.is_plateau())
+            feedback = self._feedback(
+                top_res, spec, repeated=guard.is_plateau(), artifact=top_art
+            )
 
         # --- 4/5. AUDIT SI PAS ENCORE FAIT --------------------------------- #
         if best is not None and not reports:
@@ -379,6 +396,88 @@ class Engine:
         )
         self._learn(mission, report)
         return report
+
+    def _contredit_sa_documentation(self, src: str, work: WorkItem) -> tuple[bool, str]:
+        """L'artefact tient-il ce qu'il AFFIRME de lui-meme ?
+
+        Idee, et sa justification mesuree : quand la specification de la mission est
+        incomplete — le cas normal dans la vraie vie — il reste une source de verite
+        qu'on n'exploite pas : ce que l'artefact dit de lui-meme. Ses exemples `>>>`
+        et ses annotations sont des affirmations EXECUTABLES, ecrites par son auteur.
+
+        Mesure sur un corpus d'artefacts documentes (`evidence/selfspec/`), regime de
+        specification faible : 2 defauts sur 4 rattrapes, et ZERO faux rejet. Les deux
+        defauts non rattrapes sont ceux dont la documentation decrit fidelement le
+        mauvais comportement — aucune methode locale ne peut les voir.
+
+        Cout : une derivation STATIQUE (aucun modele, aucun reseau) et une passe de bac
+        a sable par regle trouvee. Le resultat est memorise par contenu, car le
+        verificateur est appele par chaque critique du panel.
+        """
+        cle = (src, work.entrypoint)
+        memo = self._self_check_cache
+        if cle in memo:
+            return memo[cle]
+
+        try:
+            from ..verify.autocheck import derive
+            from ..verify.properties import docstring_examples
+
+            derived = derive(src, entrypoint=work.entrypoint or "")
+        except Exception:
+            memo[cle] = (True, "")
+            return memo[cle]
+
+        doc = ""
+        try:
+            import ast
+
+            for node in ast.walk(ast.parse(src)):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    doc = ast.get_docstring(node) or ""
+                    break
+        except Exception:
+            doc = ""
+
+        checks = {
+            k: v for k, v in derived.checks.items()
+            if k == f"A-001:{work.entrypoint}" or k == "A-001" or k == "A-003"
+            or k.startswith("A-003:")
+        }
+        if not checks:
+            memo[cle] = (True, "")
+            return memo[cle]
+
+        try:
+            res = self.prover.prove(
+                src, derived.spec, hidden_checks=checks,
+                entrypoint=derived.entrypoint, preamble=derived.preamble,
+                stage=Stage.PROVE,
+            )
+        except Exception:
+            memo[cle] = (True, "")
+            return memo[cle]
+
+        if not res.failures:
+            memo[cle] = (True, "")
+            return memo[cle]
+
+        premier = res.failures[0]
+        detail = (premier.stderr or premier.summary()).strip().splitlines()
+        message = detail[-1] if detail else "contradiction avec sa propre documentation"
+        if docstring_examples(doc):
+            motif = (
+                "l'artefact CONTREDIT SES PROPRES EXEMPLES de docstring : "
+                f"[{premier.rule_id}] {message[:220]}. Corriger le code, ou corriger "
+                "l'exemple s'il est faux — les deux ne peuvent pas etre vrais."
+            )
+        else:
+            motif = (
+                "l'artefact ne tient pas ce que sa signature annonce : "
+                f"[{premier.rule_id}] {message[:220]}"
+            )
+        memo[cle] = (False, motif)
+        return memo[cle]
 
     def _mutation_gate(self, artifact: Artifact, spec: Spec, work: WorkItem) -> object | None:
         """Mute l'artefact et verifie que la specification tue chaque mutant.
@@ -601,6 +700,15 @@ class Engine:
             )
             if res.failures:
                 return False, res.failures[0].stderr[:300] or res.failures[0].summary()
+            if self.config.self_check:
+                conforme, motif = self._contredit_sa_documentation(src, work)
+                if not conforme:
+                    # Le message nomme la promesse contredite : c'est ce qui rend la
+                    # reprise possible, et c'est aussi la raison d'etre de l'axe. On le
+                    # CONSERVE, car la boucle de reprise ne regarde que les echecs de la
+                    # specification de mission — qui, ici, sont vides.
+                    self._motif_auto[src] = motif
+                    return False, motif
             return True, ""
 
         reports = self.panel.run(artifact.content, spec, verifier=verifier, seed=rnd)
@@ -880,9 +988,32 @@ class Engine:
             return f"{artifact.agent}: {res.failures[0].rule_id} non satisfaite"
         return f"{artifact.agent}: {len(res.witnesses)} regles prouvees"
 
-    def _feedback(self, res: ProverResult, spec: Spec, *, repeated: bool) -> FailureFeedback:
-        """Retour d'echec STRUCTURE — Levier 5 du harness (+5 a 10 pts)."""
+    def _feedback(
+        self,
+        res: ProverResult,
+        spec: Spec,
+        *,
+        repeated: bool,
+        artifact: Artifact | None = None,
+    ) -> FailureFeedback:
+        """Retour d'echec STRUCTURE — Levier 5 du harness (+5 a 10 pts).
+
+        Le cas `res.failures` vide n'est pas forcement « aucun echec » : l'artefact
+        peut satisfaire la specification de MISSION tout en contredisant sa propre
+        documentation (exemples `>>>`, annotations). Sans ce transfert, le modele
+        recevait « aucun echec » et devait deviner quoi corriger — mesure faite : le
+        rejet etait bien prononce, mais aucune reparation guidee n'avait lieu.
+        """
         if not res.failures:
+            if artifact is not None and artifact.content in self._motif_auto:
+                motif = self._motif_auto[artifact.content]
+                return FailureFeedback(
+                    stage=Stage.PROVE,
+                    rule_id="AUTO",
+                    assertion=motif[:300],
+                    message=motif[:300],
+                    repeated=repeated,
+                )
             return FailureFeedback(stage=Stage.PROVE, message="aucun echec")
         w = res.failures[0]
         assertion = _extract_assertion(w.stderr) or w.stderr.strip().splitlines()[-1:][0] if w.stderr.strip() else ""

@@ -92,6 +92,7 @@ def _engine_config(max_rounds: int) -> EngineConfig:
         time_budget_s=float_env("JIO_TIME_BUDGET", 600.0),
         candidates_per_round=int_env("JIO_CANDIDATES", 3),
         mutation_gate=bool_env("JIO_MUTATION_GATE", True),
+        self_check=bool_env("JIO_SELF_CHECK", True),
     )
 
 
