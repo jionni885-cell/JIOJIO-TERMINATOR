@@ -204,14 +204,22 @@ def _traducteur_simule(actif: bool):
 
 def _real_engine(
     *, journal_path: Path | None = None, max_rounds: int = 5, min_panel: int = 3,
-    famille: str = "code", racine: Path | None = None,
+    famille: str = "code", racine: Path | None = None, fournisseur: object | None = None,
 ) -> Engine:
-    """Assemble un moteur adosse aux CLI/API reellement disponibles."""
+    """Assemble un moteur adosse aux CLI/API reellement disponibles.
+
+    `fournisseur` : quand l'utilisateur a NOMME son modele (`--provider cli:opencode`),
+    on l'utilise lui, et pas « tout ce qui a ete detecte ». La difference compte : un
+    poste peut avoir plusieurs CLI installes, et le panel mesurait alors un melange dont
+    personne ne peut dire ce qu'il vaut. Nommer son modele, c'est mesurer LE SIEN.
+    """
     from .audit.panel import DEFAULT_PERSONAS, AuditPanel
     from .providers.registry import from_env
 
-    registry = from_env()
-    providers = list(registry)
+    nomme = getattr(fournisseur, "provider", None)
+    providers = [nomme] * max(1, int(getattr(fournisseur, "instances", 1))) if nomme else list(
+        from_env()
+    )
     if not providers:
         raise SystemExit(
             "Aucun fournisseur detecte.\n"
@@ -1239,6 +1247,27 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
         return 2
 
+    # Meme syntaxe que le banc : `--provider cli:opencode`, `openai:<modele>`, `simule`.
+    # Un modele nomme et indisponible ARRETE la mission, ici comme ailleurs.
+    modele = None
+    if getattr(args, "provider", ""):
+        from .bench.provider_spec import resoudre as resoudre_modele
+        from .core.errors import ProviderError
+
+        try:
+            modele = resoudre_modele(args.provider)
+        except ProviderError as exc:
+            print(f"  {exc}", file=sys.stderr)
+            return 2
+        if modele.genre == "simule":
+            # `--provider simule` sans `--simulate` n'aurait aucun sens : la simulation
+            # a besoin d'une tache du banc pour generer quelque chose, et c'est
+            # `--simulate` qui le dit. On refuse au lieu d'inventer.
+            print("  `--provider simule` a besoin de `--simulate` (et d'une `--task`).",
+                  file=sys.stderr)
+            return 2
+        args.simulate = False
+
     if prose and args.simulate:
         from .bench.prose import prose_bank
 
@@ -1251,6 +1280,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         engine = _real_engine(
             journal_path=journal_path, max_rounds=args.rounds,
             min_panel=args.min_panel, famille="prose", racine=Path.cwd(),
+            fournisseur=modele,
         )
     elif args.simulate:
         engine = _simulated_engine(
@@ -1263,7 +1293,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
     else:
         engine = _real_engine(
-            journal_path=journal_path, max_rounds=args.rounds, min_panel=args.min_panel
+            journal_path=journal_path, max_rounds=args.rounds, min_panel=args.min_panel,
+            fournisseur=modele,
         )
     _attach_learning(engine, Path(args.state), disable=args.no_learn)
 
@@ -2448,6 +2479,14 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--simulate", action="store_true",
                    help="modele simule deterministe : aucune cle API requise")
     r.add_argument("--task", default="", help="id de tache du banc (oracles + specification)")
+    r.add_argument(
+        "--provider", default="",
+        help=(
+            "QUEL modele travaille : `cli:opencode`, `cli:hermes`, `cli:<autre>` (avec "
+            "JIO_CLI_<AUTRE>_ARGV) ou `openai:<modele>`. Par defaut, tous ceux qui sont "
+            "detectes. Un modele nomme et indisponible ARRETE la mission."
+        ),
+    )
     r.add_argument("--state", default=str_env("JIO_STATE", ".jio"),
                    help="dossier d'etat (memoire + routeur)")
     r.add_argument("--min-panel", dest="min_panel", type=int,

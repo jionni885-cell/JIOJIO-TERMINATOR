@@ -224,3 +224,63 @@ def test_le_fournisseur_reel_ne_touche_pas_aux_personas_du_panel() -> None:
     moteur = _simulated_engine(T_SUM_EVEN, seed=0, fournisseur=fournisseur)
     # Sans provider reel, on reste sur la simulation : le panel garde ses 5 personas.
     assert len(moteur.panel.critics) >= 3
+
+
+# --------------------------------------------------------------------------- #
+# 3. Le meme choix pour une MISSION (`jio run --provider`)
+# --------------------------------------------------------------------------- #
+
+
+def test_run_refuse_un_modele_nomme_mais_indisponible(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Une mission qui n'a pas fait tourner le modele demande doit s'arreter, pas mentir."""
+    from jio.cli import main
+
+    monkeypatch.setenv("JIO_BIN_OPencode", "/nonexistant")
+    monkeypatch.setenv("JIO_BIN_OPENCODE", "/aucun/chemin/opencode")
+
+    code = main(["run", "objectif quelconque", "--provider", "cli:opencode"])
+
+    assert code == 2
+    capture = capsys.readouterr()
+    assert "introuvable" in capture.err
+
+
+def test_run_refuse_la_simulation_sans_simulate(capsys) -> None:
+    """`--provider simule` sans `--simulate` : il n'y a rien a generer, et on le dit.
+
+    Accepter en silence aurait lance une mission reelle avec un modele qui n'existe pas.
+    """
+    from jio.cli import main
+
+    code = main(["run", "objectif", "--provider", "simule"])
+
+    assert code == 2
+    assert "--simulate" in capsys.readouterr().err
+
+
+def test_run_avec_un_cli_reel_livre_les_preuves_et_NOMME_la_reserve(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Un seul modele derriere cinq critiques n'est pas un panel : le dire est le sujet.
+
+    Le harness detecte que tous les agents partagent modele et verdict, refuse d'appeler
+    cela un consensus (« ce n'est pas un consensus, c'est un echo ») et livre AVEC
+    RESERVE. C'est la bonne conduite : le travail est utile, et l'illusion de pluralite
+    est denoncee.
+    """
+    from jio.bench.tasks import T_SUM_EVEN
+    from jio.cli import main
+
+    binaire = _faux_binaire(tmp_path, "faux-run")
+    monkeypatch.setenv("JIO_BIN_FAUX_RUN", str(binaire))
+    monkeypatch.setenv("JIO_CLI_FAUX_RUN_ARGV", "{binary}")
+
+    code = main([
+        "run", T_SUM_EVEN.objective, "--task", T_SUM_EVEN.id,
+        "--provider", "cli:faux-run", "--state", str(tmp_path / "etat"),
+    ])
+
+    sortie = capsys.readouterr().out
+    assert code in (0, 1), sortie[-400:]
+    assert "3/3" in sortie, sortie[-400:]
+    assert "non decorrele" in sortie or "echo" in sortie, sortie[-400:]

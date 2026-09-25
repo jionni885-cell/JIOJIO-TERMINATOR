@@ -727,6 +727,22 @@ jio bench --provider openai:mon-modele  # JIO_BASE_URL + JIO_API_KEY
 jio bench                             # simulation (défaut), aucune clé
 ```
 
+La même syntaxe vaut pour une mission réelle : `jio run "<objectif>" --provider cli:hermes`.
+Nommer son modèle, c'est mesurer **le sien** — sinon le panel travaille sur un mélange de
+tout ce qui est détecté sur la machine, dont personne ne peut dire ce qu'il vaut.
+
+Et le harness dit ce qu'il en pense : un seul modèle derrière cinq critiques n'est **pas un
+panel**, et il le déclare au lieu de l'appeler un consensus :
+
+```
+  [!!] DELIVERED_WITH_RESERVATION
+  preuves     3/3 regles satisfaites  |  2 tour(s)  |  0.8s
+  consensus   5 vote(s)  |  integrite propre  |  journal d842a6e1678a
+  MOTIF : preuve complete mais consensus non atteint : panel non decorrele :
+          tous les agents partagent modele et verdict — ce n'est pas un consensus,
+          c'est un echo
+```
+
 Un outil inconnu reste utilisable, il suffit de donner sa ligne de commande :
 `JIO_CLI_MON_OUTIL_ARGV='mon-outil run {prompt}'` — ou sans `{prompt}`, l'invite part sur
 l'entrée standard (plus sûr pour les invites longues).
