@@ -368,6 +368,41 @@ if [ "$FAIRE_TIERS" -eq 1 ]; then
     fi
 fi
 
+titre "3 quater bis. Le serveur MCP : ecrit ne veut pas dire BRANCHE"
+
+# Deux faits, tous deux verifiables sans cle API :
+#   1. les fragments de configuration respectent le format de chaque outil ;
+#   2. la commande qu'ils nomment sert REELLEMENT des outils sur cette machine.
+# Le second est celui qui attrape le piege : une configuration correcte qui ne branche
+# rien (`python3` existe, `jio` n'y est pas installe) ne se voit qu'en parlant au serveur.
+TMP_MCP=$(mktemp -d)
+for dialecte in opencode hermes codex; do
+    printf '    %-12s ' "$dialecte"
+    "$PYTHON" -m jio artifacts --mcp "$dialecte" --root "$TMP_MCP" 2>&1 \
+        | grep -q "mcp_servers\|opencode.json\|jio.mcp_server" \
+        && echo "fragment conforme" || echo "PROBLEME : fragment absent"
+done
+rm -rf "$TMP_MCP"
+
+# Le cablage ne doit JAMAIS toucher une configuration existante.
+TMP_USER=$(mktemp -d)
+printf '{\n  "mcp": { "autre": { "type": "local", "command": ["x"] } }\n}\n' \
+    > "$TMP_USER/opencode.json"
+$PYTHON -m jio artifacts --mcp opencode --root "$TMP_USER" >/dev/null 2>&1 || true
+if grep -q "jio" "$TMP_USER/opencode.json"; then
+    echo "    ATTENTION : une configuration existante a ete MODIFIEE."
+else
+    echo "    configuration existante : intacte, fragment affiche (jamais fusionne en silence)."
+fi
+rm -rf "$TMP_USER"
+
+printf '    %-12s ' "sonde"
+if "$PYTHON" -m jio mcp --prove 2>&1 | grep -q "sert 5 outil"; then
+    echo "5 outil(s) servis — le cablage est PROUVE, pas suppose."
+else
+    echo "PROBLEME : le serveur ne sert pas ses outils."
+fi
+
 titre "3 quinquies. La PROSE : un document a des affirmations vraies ou fausses"
 # Tout le harness prouvait du CODE. Sur une mission generaliste (rapport, analyse,
 # note) il n'y avait rien a executer, donc JIO s'abstenait. Ce temoin verifie ce qui,

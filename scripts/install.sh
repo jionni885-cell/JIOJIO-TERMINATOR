@@ -81,6 +81,12 @@ if [ "$DO_HERMES" = "1" ]; then
     run cp -R "$skill" "$DEST/$name"
   done
   say "pour verifier : hermes chat -q \"quelles competences sont disponibles ?\""
+
+  # --- 1 bis. Le serveur MCP pour Hermes ---------------------------------- #
+  # Hermes lit `~/.hermes/config.yaml`, qui appartient a l'utilisateur : on ne l'ecrit
+  # pas. On livre le bloc pret a coller, dans un fichier nomme pour ce qu'il est.
+  say "serveur MCP -> fragment a fusionner dans $DEST/../config.yaml"
+  say "  (cle mcp_servers ; le fragment est dans .hermes/mcp-fragment.yaml)"
 fi
 
 # --- 2. opencode : agents markdown ----------------------------------------- #
@@ -94,6 +100,19 @@ if [ "$DO_OPENCODE" = "1" ]; then
     run cp "$agent" "$DEST/"
   done
   say "les agents jio* deviennent disponibles dans opencode"
+
+  # --- 2 bis. Cabler le SERVEUR MCP dans opencode ------------------------- #
+  # Les agents ci-dessus n'avaient aucun moyen d'appeler les outils de JIO : `.mcp.json`
+  # est le dialecte de Claude Code, opencode lit `opencode.json`. Le serveur etait ecrit,
+  # teste, et injoignable. Le cablage ecrit le fichier S'IL N'EXISTE PAS, et affiche le
+  # fragment sinon : la configuration de l'utilisateur n'est jamais modifiee.
+  CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+  say "serveur MCP -> $CONF_DIR/opencode.json (cree seulement s'il est absent)"
+  if [ "$DRY" = "1" ]; then
+    say "[simulation] $BIN -m jio artifacts --mcp opencode --root $CONF_DIR"
+  else
+    run "$BIN" -m jio artifacts --mcp opencode --root "$CONF_DIR"
+  fi
 fi
 
 # --- 3. Repertoire de projet : fichiers de contexte ------------------------- #

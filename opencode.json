@@ -1,0 +1,16 @@
+{
+  "mcp": {
+    "jio": {
+      "type": "local",
+      "command": [
+        "python3",
+        "-m",
+        "jio.mcp_server"
+      ],
+      "enabled": true,
+      "environment": {
+        "JIO_ROOT": "."
+      }
+    }
+  }
+}

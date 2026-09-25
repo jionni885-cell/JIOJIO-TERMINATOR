@@ -971,6 +971,48 @@ vers les artefacts natifs de chaque outil :
 | **GitHub Copilot** | `.github/copilot-instructions.md` |
 | **Tout client MCP** | serveur `jio mcp` — stdio, JSON-RPC 2.0, zéro dépendance |
 
+### Le serveur existait, et était injoignable
+
+Écrire un serveur MCP ne le branche pas. Le dépôt émettait `.mcp.json` — le dialecte de
+**Claude Code** — et rien pour les deux outils qui comptent ici : **opencode** lit
+`opencode.json` sous la clé `mcp` (avec `type: "local"` et un *tableau* `command`),
+**Hermes** lit `~/.hermes/config.yaml` sous la clé `mcp_servers`. Cinq outils testés,
+documentés, et inaccessibles depuis ces deux clients.
+
+`jio artifacts --mcp <dialecte>` les câble, avec une règle qui ne se négocie pas :
+
+| Situation | Ce que fait JIO |
+|---|---|
+| Le fichier n'existe pas | il l'écrit |
+| Le fichier existe **et** contient déjà `jio` | il ne touche à rien |
+| Le fichier existe **sans** `jio` | il **n'écrit pas** : il affiche le fragment à coller |
+
+Le troisième cas est le seul intéressant. Réécrire la configuration de quelqu'un d'autre
+pour lui rendre service est exactement le comportement que ce projet reproche aux agents —
+et une config utilisateur n'est pas un artefact généré par ce dépôt. C'est aussi la règle
+que `scripts/install.sh` applique depuis le début.
+
+Et parce qu'une configuration **correcte** peut ne rien brancher : `jio mcp --prove`
+démarre réellement le serveur et compte les outils qu'il sert.
+
+```
+  PREUVE DU BRANCHEMENT MCP  ·  le serveur est demarre et interroge
+
+  `python3 -m jio.mcp_server` sert 5 outil(s) [version 0.1.0] :
+    - jio_prove
+    - jio_audit
+    - jio_contract
+    - jio_claims
+    - jio_skills
+  (interpreteur de cette sonde : /home/user/JIOJIO-TERMINATOR/.venv/bin/python)
+```
+
+Le piège est réel : les fragments nomment `python3 -m jio.mcp_server`, or si `jio` a été
+installé dans un environnement virtuel non activé, **cette commande existe et ne trouve
+rien**. La configuration est juste, la branche ne l'est pas, et rien ne le dit avant la
+première mission. La sonde nomme l'interpréteur qu'elle a utilisé, parce que c'est
+l'information qui résout le problème.
+
 Le serveur MCP expose cinq outils : `jio_prove` (prouver une source contre des règles
 exécutables), `jio_audit` (auditer un fichier), `jio_contract` (les trois états de
 livraison), `jio_skills`, et `jio_claims` — qui prend le **texte** d'un document, pas un

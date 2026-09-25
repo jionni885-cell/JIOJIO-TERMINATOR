@@ -1191,7 +1191,48 @@ def cmd_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _brancher_mcp(args: argparse.Namespace) -> int:
+    """`jio artifacts --mcp <dialecte>` : brancher le serveur MCP, sans rien ecraser."""
+    from .artifacts.wiring import DIALECTES, brancher
+
+    print(BANNER)
+    if args.mcp == "liste":
+        print("  DIALECTES MCP  ·  brancher le serveur JIO dans votre outil")
+        print()
+        for nom, fichier, description in DIALECTES:
+            cible = fichier or "(fragment a coller)"
+            print(f"    {nom:<12} {description:<44} {cible}")
+        print()
+        print("    `jio artifacts --mcp <dialecte>` ecrit le fichier s'il n'existe PAS, et")
+        print("    affiche le fragment sinon. Ce depot ne modifie jamais votre configuration.")
+        print()
+        if args.dry_run:
+            from .artifacts.wiring import fragments
+
+            for nom, texte in fragments().items():
+                print(f"  --- {nom} ---")
+                print(texte)
+        return 0
+
+    # `--root` permet de viser une configuration GLOBALE (~/.config/opencode,
+    # ~/.cursor) et pas seulement la racine du projet.
+    destination = Path(getattr(args, "root", ".") or ".").expanduser()
+    ecrit, message = brancher(destination, args.mcp)
+    print(f"  BRANCHEMENT MCP  ·  {args.mcp}  ·  {destination}")
+    print()
+    for ligne in message.splitlines():
+        print(f"    {ligne}")
+    print()
+    if ecrit:
+        print("    Le serveur expose jio_prove, jio_audit, jio_contract, jio_claims et")
+        print("    jio_skills. Verifier avec `jio mcp --list`.")
+    return 0
+
+
 def cmd_artifacts(args: argparse.Namespace) -> int:
+    """Emet les artefacts natifs. `--mcp` route vers le branchement du serveur MCP."""
+    if getattr(args, "mcp", None):
+        return _brancher_mcp(args)
     from .artifacts import TARGETS, manifest, write_manifest
 
     targets = tuple(args.target) if args.target else TARGETS
@@ -1776,6 +1817,22 @@ def cmd_scan(args: argparse.Namespace) -> int:
 def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp_server import TOOLS, main as mcp_main
 
+    if getattr(args, "prove", None) is not None:
+        from .artifacts.wiring import _COMMANDE, prouver_branchement
+
+        print(BANNER)
+        print("  PREUVE DU BRANCHEMENT MCP  ·  le serveur est demarre et interroge")
+        print()
+        # Une commande passee en argument est decoupee naivement : c'est un diagnostic
+        # local, pas une execution de contenu non fiable.
+        commande = tuple(args.prove.split()) if args.prove else _COMMANDE
+        print(prouver_branchement(commande))
+        print()
+        print("  Une configuration correcte qui ne branche RIEN est le defaut que cette")
+        print("  sonde existe pour attraper : `python3` peut exister sans `jio`.")
+        print()
+        return 0
+
     if args.list:
         print()
         print("  SERVEUR MCP JIO  ·  transport stdio, JSON-RPC 2.0, zero dependance")
@@ -1783,8 +1840,10 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         for tool in TOOLS:
             print(f"    {tool['name']:<14} {tool['description'][:80]}")
         print()
-        print("  Configuration : .mcp.json (genere par `jio artifacts --target mcp --write`)")
-        print("  Securite : tout chemin est confine a JIO_ROOT.")
+        print("  Configuration : `jio artifacts --mcp <dialecte>` pour opencode, Hermes,")
+        print("  Codex, Claude Code ou Cursor ; `jio artifacts --target mcp --write` pour")
+        print("  `.mcp.json` (dialecte de Claude Code, lu aussi par Cursor).")
+        print("  Preuve du cablage : `jio mcp --prove`. Securite : chemins confines a JIO_ROOT.")
         print()
         return 0
     return mcp_main()
@@ -2015,13 +2074,42 @@ def build_parser() -> argparse.ArgumentParser:
         "--target",
         action="append",
         default=[],
-        help="cible : opencode, hermes, claude, agents, gemini, cursor, copilot, mcp",
+        help=(
+            "cible : opencode, hermes, claude, agents, gemini, cursor, copilot, mcp, "
+            "opencode-mcp, hermes-mcp"
+        ),
     )
     ar.add_argument("--write", action="store_true", help="ecrit reellement les fichiers")
+    # Le CABLAGE du serveur MCP, distinct de son emission : `.mcp.json` est le dialecte de
+    # Claude Code, opencode lit `opencode.json`, Hermes lit `~/.hermes/config.yaml`. Sans
+    # cette option, les outils JIO existaient et restaient injoignables depuis deux des
+    # trois outils nommes par l'utilisateur.
+    ar.add_argument(
+        "--mcp",
+        metavar="DIALECTE",
+        help=(
+            "branche le serveur MCP : opencode, hermes, codex, claude-code, cursor, "
+            "ou `liste` pour tout afficher"
+        ),
+    )
+    ar.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="avec --mcp liste : affiche aussi le contenu des fragments",
+    )
     ar.set_defaults(func=cmd_artifacts)
 
     mc = sub.add_parser("mcp", help="serveur MCP (stdio) ou liste des outils")
     mc.add_argument("--list", action="store_true", help="affiche les outils exposes")
+    # Prouver le BRANCHEMENT, pas le serveur : la commande ecrite dans une configuration
+    # peut exister et ne rien trouver (interpreteur sans `jio`). On lui parle vraiment.
+    mc.add_argument(
+        "--prove",
+        nargs="?",
+        const="",
+        metavar="COMMANDE",
+        help="demarre le serveur MCP et compte les outils qu'il sert (preuve du cablage)",
+    )
     mc.set_defaults(func=cmd_mcp)
 
     tr = sub.add_parser("trust", help="routeur de confiance : combien de verification depenser")

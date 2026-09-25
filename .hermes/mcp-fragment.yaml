@@ -1,0 +1,12 @@
+# Fragment a fusionner dans ~/.hermes/config.yaml (cle `mcp_servers`),
+# puis `/reload-mcp` dans une session Hermes. NON ecrit dans votre config :
+# ce depot ne modifie pas les fichiers de configuration de l'utilisateur.
+
+# Ajouter sous la cle de premier niveau `mcp_servers` de
+# ~/.hermes/config.yaml, puis `/reload-mcp` dans une session :
+mcp_servers:
+  jio:
+    command: "python3"
+    args: ["-m", "jio.mcp_server"]
+    env:
+      JIO_ROOT: "${JIO_ROOT}"

@@ -25,7 +25,13 @@ from .doctrine import COMPACT
 
 __all__ = ["manifest", "write_manifest", "TARGETS"]
 
-TARGETS = ("opencode", "hermes", "claude", "agents", "gemini", "cursor", "copilot", "mcp")
+TARGETS = (
+    "opencode", "hermes", "claude", "agents", "gemini", "cursor", "copilot", "mcp",
+    # Le CABLAGE du serveur MCP dans les outils qui ne lisent pas `.mcp.json`. Sans ces
+    # deux cibles, les outils JIO existaient et etaient injoignables depuis opencode et
+    # Hermes : la difference entre « ecrit » et « branche ».
+    "opencode-mcp", "hermes-mcp",
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -209,6 +215,37 @@ def _target_copilot() -> dict[str, str]:
     }
 
 
+def _target_opencode_mcp() -> dict[str, str]:
+    """`opencode.json` : le cablage du serveur MCP pour opencode.
+
+    Les agents `jio-*` de `.opencode/agents/` n'avaient AUCUN moyen d'appeler les outils
+    MCP de JIO : `.mcp.json` est le dialecte de Claude Code, et opencode lit
+    `opencode.json`. Le serveur etait ecrit, teste, et injoignable.
+    """
+    from .wiring import fragment_opencode
+
+    return {"opencode.json": json.dumps(fragment_opencode(), indent=2, ensure_ascii=False) + "\n"}
+
+
+def _target_hermes_mcp() -> dict[str, str]:
+    """Le fragment Hermes, livre comme FICHIER plutot que comme texte d'aide.
+
+    Hermes lit `~/.hermes/config.yaml`, qui appartient a l'utilisateur : ce depot ne
+    l'ecrit donc pas. Il livre le bloc pret a coller, dans un fichier nomme pour ce qu'il
+    est — un extrait a fusionner, pas une configuration.
+    """
+    from .wiring import fragment_hermes
+
+    return {
+        ".hermes/mcp-fragment.yaml": (
+            "# Fragment a fusionner dans ~/.hermes/config.yaml (cle `mcp_servers`),\n"
+            "# puis `/reload-mcp` dans une session Hermes. NON ecrit dans votre config :\n"
+            "# ce depot ne modifie pas les fichiers de configuration de l'utilisateur.\n"
+            "\n" + fragment_hermes()
+        )
+    }
+
+
 def _target_mcp() -> dict[str, str]:
     config = {
         "mcpServers": {
@@ -243,6 +280,8 @@ _EMITTERS = {
     "cursor": _target_cursor,
     "copilot": _target_copilot,
     "mcp": _target_mcp,
+    "opencode-mcp": _target_opencode_mcp,
+    "hermes-mcp": _target_hermes_mcp,
 }
 
 
