@@ -713,6 +713,62 @@ est nommé et consultable. C'est un choix, et il est écrit dans le code.
 
 ---
 
+## Mesurer sur TON modèle, pas sur une simulation
+
+Le banc mesurait ses quatre bras sur une simulation déterministe : honnête, reproductible,
+sans clé — mais cela ne répond pas à la seule question qui compte pour toi : **mon modèle,
+avec le harness, vaut-il mieux que mon modèle seul ?**
+
+```bash
+jio bench --provider cli:opencode     # ton CLI, déjà authentifié
+jio bench --provider cli:hermes
+jio bench --provider cli:claude       # claude, codex, gemini, aider...
+jio bench --provider openai:mon-modele  # JIO_BASE_URL + JIO_API_KEY
+jio bench                             # simulation (défaut), aucune clé
+```
+
+Un outil inconnu reste utilisable, il suffit de donner sa ligne de commande :
+`JIO_CLI_MON_OUTIL_ARGV='mon-outil run {prompt}'` — ou sans `{prompt}`, l'invite part sur
+l'entrée standard (plus sûr pour les invites longues).
+
+**La règle qui ne se négocie pas : un modèle demandé et indisponible ARRÊTE la mesure.**
+Un repli silencieux sur la simulation produirait un rapport crédible, détaillé, avec un
+modèle qui n'a jamais tourné — exactement le mensonge que ce projet existe pour empêcher.
+Le message donne le chemin à installer, et rien d'autre.
+
+Ce qui change quand tu branches ton modèle : les **générateurs** et le **panel** (le même
+CLI est appelé plusieurs fois, avec des personas différentes — un panel d'une seule voix
+n'est pas un panel). Ce qui ne change pas : la **vérification**, qui reste réelle et
+exécutée. C'est ce qui rend la comparaison valable.
+
+Les bras sans oracle (S4/S4b/S4c) reposent sur un *traducteur simulé* à fidélité fixée :
+avec un vrai modèle, ce serait lui qui traduirait et le chiffre ne voudrait plus rien dire.
+Ils ne sont donc **pas affichés** (`non mesure`), et la sortie dit pourquoi. Un chiffre
+inventé vaut moins qu'une case vide.
+
+### La preuve du câblage, sur un vrai binaire
+
+Un faux modèle en ligne de commande (`faux-modele`) se trompe toujours sans retour d'échec
+et se corrige quand on lui dit ce qui casse — le comportement d'un modèle de base. Mesure
+réelle, 5 tâches, 1 tirage, CLI externe appelé par `subprocess` :
+
+```
+    config                                    reussite            IC95  appels   vs S0
+    modele brut (1 appel)                        0.0%      [0% ; 43%]     1.0    n/a
+    echantillonnage seul (best-of-3)             0.0%      [0% ; 43%]     3.0    n/a
+    CONTROLE : autant d'appels, 0 verification     0.0%      [0% ; 43%]     6.0    n/a
+    verification executable + reprise          100.0%    [57% ; 100%]     6.0    n/a
+    JIO complet (livraison auditee)            100.0%    [57% ; 100%]     6.0    n/a
+
+      sans verification    0.0%   avec verification  100.0%   ecart +100.0 points  IC95 [+100.0 ; +100.0]
+      -> l'intervalle EXCLUT zero : le gain vient de la VERIFICATION, pas du nombre d'essais.
+```
+
+Même modèle, même budget d'appels : la colonne « contrôle » fait exactement autant d'appels
+que le harness, sans vérifier, et ne trouve rien. Le `n/a` de la dernière colonne est
+volontaire : un ratio sur une base **nulle** n'existe pas, et la première version affichait
+`1000000000.00x`.
+
 ## Ce que la configuration coûte en contexte, mesuré
 
 Un fichier de contexte trop long est **survolé, pas lu** : il occupe la fenêtre et

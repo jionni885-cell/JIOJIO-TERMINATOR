@@ -29,6 +29,20 @@ CODE_DIRS = (ROOT / "jio", ROOT / "scripts")
 #: depuis l'environnement de l'utilisateur : ce n'est pas un reglage.
 _EXPORTED_BY_JIO = {"JIO_SANDBOX"}
 
+#: FAMILLES de variables : un motif, documente une fois, couvre toutes ses instances.
+#: `JIO_BIN_<NOM>` et `JIO_CLI_<NOM>_ARGV` nomment un binaire QUELCONQUE — les enumerer
+#: est impossible, et c'est tout leur interet : n'importe quelle CLI de l'ecosysteme peut
+#: etre branchee. Une instance (`JIO_BIN_CLAUDE`, `JIO_CLI_MON_OUTIL_ARGV`) n'a donc pas
+#: a etre documentee une par une : c'est le MOTIF qui l'est.
+_FAMILLES = (
+    re.compile(r"^JIO_BIN_[A-Z0-9_]+$"),
+    re.compile(r"^JIO_CLI_[A-Z0-9_]+_ARGV$"),
+)
+
+
+def _dans_une_famille(nom: str) -> bool:
+    return any(motif.match(nom) for motif in _FAMILLES)
+
 _FOREIGN = {
     "OPENROUTER_API_KEY",
     "OPENAI_API_KEY",
@@ -111,6 +125,7 @@ def test_aucune_variable_lue_nest_indocumentee() -> None:
         name
         for name in read - documented
         if not name.endswith("_")
+        and not _dans_une_famille(name)
         and name not in _FOREIGN
         and name not in _EXPORTED_BY_JIO
     )

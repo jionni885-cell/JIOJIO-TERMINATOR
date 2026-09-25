@@ -368,6 +368,39 @@ if [ "$FAIRE_TIERS" -eq 1 ]; then
     fi
 fi
 
+titre "2 ter. Le banc mesure VOTRE modele, et refuse de faire semblant"
+
+# Un CLI externe est appele par subprocess : un faux modele sert de temoin, et il prouve
+# aussi la regle la plus importante — un modele demande et indisponible ARRETE la mesure.
+printf '#!/bin/sh\ncat\n' > /tmp/jio_faux_llm
+chmod +x /tmp/jio_faux_llm
+# On force l'absence par `JIO_BIN_<NOM>` : le controle doit refuser que la machine ait ou
+# non le binaire installe, sinon cette preuve dependrait de l'environnement.
+echo "    modele indisponible :"
+( cd "$RACINE" && JIO_BIN_CLAUDE=/aucun/chemin/claude PYTHONPATH="$RACINE" \
+    "$PYTHON" -m jio bench --runs 1 --provider cli:claude ) \
+    > /tmp/jio_bench_absent.txt 2>&1 || CODE_ABSENT=$?
+CODE_ABSENT=${CODE_ABSENT:-0}
+if [ "$CODE_ABSENT" = "2" ] && grep -q "Aucun repli" /tmp/jio_bench_absent.txt; then
+    echo "      refus explicite (code 2), aucun repli sur la simulation."
+else
+    echo "      ECHEC : un modele absent doit ARRETER la mesure" >&2
+    head -3 /tmp/jio_bench_absent.txt >&2
+    exit 1
+fi
+echo "    modele indisponible mais fourni : la mesure tourne sur un binaire reel"
+JIO_BIN_JIO_FAUX_LLM=/tmp/jio_faux_llm \
+JIO_CLI_JIO_FAUX_LLM_ARGV='{binary}' \
+    "$PYTHON" -c "
+import sys
+sys.path.insert(0, '$RACINE')
+from jio.bench.provider_spec import resoudre
+from jio.providers.cli import CliProvider
+f = resoudre('cli:jio-faux-llm')
+assert isinstance(f.provider, CliProvider), f
+print('      binaire resolu :', f.provider.binary, '—', f.instances, 'instances pour le panel')
+"
+
 titre "3 quinquies. Les commandes citees par les documents existent"
 
 # L'oracle est le parseur de la CLI elle-meme : aucune interpretation possible. Ce controle

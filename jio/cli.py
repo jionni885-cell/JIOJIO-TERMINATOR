@@ -125,8 +125,16 @@ def _simulated_engine(
     famille: str = "code",
     banque: object | None = None,
     racine: Path | None = None,
+    fournisseur: object | None = None,
 ) -> Engine:
-    """Assemble un moteur utilisant la simulation deterministe (aucune cle requise)."""
+    """Assemble un moteur utilisant la simulation deterministe (aucune cle requise).
+
+    `fournisseur` : la vraie source des reponses, quand l'utilisateur a demande son
+    propre modele (`jio bench --provider cli:opencode`). Seuls les GENERATEURS et le
+    PANEL changent : la verification reste la meme, reelle, et c'est la seule facon
+    de repondre a la question posee — « mon modele, avec le harness, vaut-il mieux
+    que mon modele seul ? ».
+    """
     from .audit.panel import DEFAULT_PERSONAS, AuditPanel
 
     # `banque` : une banque de DOCUMENTS (famille prose). Le simulateur est deja
@@ -140,8 +148,19 @@ def _simulated_engine(
     else:
         prover = ExecutableProver(sandbox=Sandbox(timeout=20))
     personas = list(DEFAULT_PERSONAS)[:panel_size]
-    providers = make_panel([p.name for p in personas], skill, bank, correlated=correlated)
-    generators = [
+    reel = getattr(fournisseur, "provider", None)
+    if reel is not None:
+        # Le panel doit garder plusieurs critiques pour rester decorrele : le meme CLI est
+        # appele plusieurs fois, avec des personas differentes. Un panel d'une seule voix
+        # ne serait pas un panel — et c'est la decorrelation qui fait sa valeur.
+        fournisseurs = [reel]
+        panel = AuditPanel.llm([reel] * len(personas), personas)
+    else:
+        fournisseurs = make_panel(
+            [p.name for p in personas], skill, bank, correlated=correlated
+        )
+        panel = AuditPanel.simulated(personas, seed=seed)
+    generateurs = fournisseurs or [
         SimulatedProvider(
             name=f"gen::{p.name}", model="sim-1",
             persona=Persona(name=f"gen-{p.name}", skill=skill), bank=bank,
@@ -149,13 +168,15 @@ def _simulated_engine(
         for p in personas[:3]
     ]
     return Engine(
-        generators=providers or generators,
+        generators=generateurs,
         journal=Journal(path=journal_path),
-        panel=AuditPanel.simulated(personas, seed=seed),
+        panel=panel,
         prover=prover,
         gate=ConformalGate(alpha=alpha),
         monitor=IntegrityMonitor(),
-        spec_compiler=SpecCompiler(provider=traducteur or _traducteur_simule(traduire_les_regles)),
+        spec_compiler=SpecCompiler(
+            provider=traducteur or reel or _traducteur_simule(traduire_les_regles)
+        ),
         consensus=_consensus(min_panel),
         config=_replace(
             _engine_config(max_rounds, famille, seed),
@@ -567,14 +588,30 @@ def cmd_bench(args: argparse.Namespace) -> int:
     if getattr(args, "prose", False):
         return _bench_prose(args)
 
+    from .bench.provider_spec import resoudre as resoudre_modele
+    from .core.errors import ProviderError
+
+    try:
+        modele = resoudre_modele(getattr(args, "provider", "simule") or "simule")
+    except ProviderError as exc:
+        # On s'arrete. Mesurer un modele simulé en annoncant le modele de l'utilisateur
+        # serait le pire resultat possible : un rapport credible et faux.
+        print(f"  {exc}", file=sys.stderr)
+        return 2
+
     skill = args.skill
     runs = args.runs
     seeds = list(range(runs))
 
     print(BANNER)
-    print(f"  Mesure du harness  ·  competence simulee {skill:.2f}  ·  {runs} tirage(s)  ·"
-          f"  {len(TASKS)} taches")
-    print("  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.")
+    if modele.genre == "simule":
+        print(f"  Mesure du harness  ·  competence simulee {skill:.2f}  ·  {runs} tirage(s)  ·"
+              f"  {len(TASKS)} taches")
+        print("  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.")
+    else:
+        print(f"  Mesure du harness  ·  modele : {modele.spec}  ·  {runs} tirage(s)  ·"
+              f"  {len(TASKS)} taches")
+        print(f"  {modele.note}")
     print()
 
     results: dict[str, list[float]] = {
@@ -593,9 +630,16 @@ def cmd_bench(args: argparse.Namespace) -> int:
     # fois au lieu de `len(seeds) * len(TASKS)` fois ne change aucun resultat et evite
     # de refaire le meme travail a chaque tirage du banc.
     bank = build_bank()
+    # Les trois generateurs du banc etaient TOUJOURS simules, meme quand l'utilisateur
+    # branche son propre modele : les bras S0/S1/S1b mesuraient alors la simulation, et
+    # le rapport avait l'air de parler de son modele. Corrige ici.
+    generateurs_reels = (
+        [] if modele.provider is None
+        else [modele.provider] * max(3, modele.instances)
+    )
     for seed in seeds:
         for task in TASKS:
-            generators = [
+            generators = generateurs_reels or [
                 SimulatedProvider(
                     name=f"gen{i}", model="sim-1",
                     persona=Persona(name=f"gen{i}", skill=skill), bank=bank,
@@ -619,7 +663,9 @@ def cmd_bench(args: argparse.Namespace) -> int:
             calls["S1"].append(3)
 
             # --- S2/S3 : moteur complet ------------------------------------
-            engine = _simulated_engine(task, skill=skill, seed=seed, max_rounds=args.rounds)
+            engine = _simulated_engine(
+                task, skill=skill, seed=seed, max_rounds=args.rounds, fournisseur=modele
+            )
             report = engine.run(
                 Mission(objective=task.objective, id=f"{task.id}-{seed}", max_rounds=args.rounds),
                 WorkItem(objective=task.objective, entrypoint=task.entrypoint,
@@ -665,7 +711,8 @@ def cmd_bench(args: argparse.Namespace) -> int:
             # basse (il les lit a l'envers), et le milieu. Le simulateur DECLARE ce
             # qu'il simule : voir jio/bench/temoins.py.
             for cle, fidelite in (
-                ("S4", 1.0), ("S4c", 0.5), ("S4b", 0.0),
+                (("S4", 1.0), ("S4c", 0.5), ("S4b", 0.0))
+                if modele.genre == "simule" else ()
             ):
                 traducteur = TraducteurSimule(taches=TASKS, fidelite=fidelite)
                 moteur = _simulated_engine(
@@ -719,15 +766,24 @@ def cmd_bench(args: argparse.Namespace) -> int:
         "S4c": "AUCUN ORACLE : traducteur a 50 % de fidelite",
         "S4b": "AUCUN ORACLE : traducteur FAUX (lue a l'envers)",
     }
-    base = _mean(results["S0"]) or 1e-9
+    base = _mean(results["S0"])
     print(f"    {'config':<40} {'reussite':>9} {'IC95':>15} {'appels':>7} {'vs S0':>7}")
     print(f"    {'-' * 40} {'-' * 9} {'-' * 15} {'-' * 7} {'-' * 7}")
     for key in ("S0", "S1", "S1b", "S2", "S3", "S4", "S4c", "S4b"):
+        if not results[key]:
+            # Un bras sans donnee s'afficherait « 0,0 % [0 % ; 0 %] » : un chiffre
+            # invente. On l'annonce, et on continue.
+            print(f"    {labels[key]:<40} {'non mesure':>9}")
+            continue
         rate = _mean(results[key])
         budget = _mean(calls[key])
         bas, haut = _wilson(results[key])
+        # Un rapport de ratio sur une base NULLE n'a pas de sens : « 1000000000.00x »
+        # etait affiche quand le modele brut ne reussissait rien. On ecrit `n/a`, qui est
+        # la verite, au lieu d'un nombre a douze chiffres qui n'en est pas une.
+        ratio = f"{rate / base:>5.2f}x" if base > 1e-9 else "   n/a"
         print(f"    {labels[key]:<40} {rate:>8.1%} "
-              f"{f'[{bas:.0%} ; {haut:.0%}]':>15} {budget:>7.1f} {rate / base:>6.2f}x")
+              f"{f'[{bas:.0%} ; {haut:.0%}]':>15} {budget:>7.1f} {ratio}")
     print()
     print("    Lire l'IC95 avant de conclure : un ecart dont l'intervalle contient zero")
     print("    est INDETERMINE a ce nombre d'essais, pas demontre. `--runs` elargit n.")
@@ -768,6 +824,19 @@ def cmd_bench(args: argparse.Namespace) -> int:
     print(f"    {'significatif' if tranche_g else 'INDETERMINE a cet echantillon'}"
           f" — {len(results['S0'])} essai(s) par bras.")
     print()
+    if modele.genre != "simule":
+        print("  LES BRAS SANS ORACLE NE SONT PAS MESURES AVEC UN VRAI MODELE")
+        print("    S4/S4b/S4c reposent sur un TRADUCTEUR simule (fidelite fixee a 100, 50")
+        print("    ou 0 %) : avec votre modele, ce serait votre modele qui traduirait, et")
+        print("    le chiffre annonce ne correspondrait plus a rien. Il n'est donc pas")
+        print("    affiche. `jio bench` sans `--provider` mesure cet axe.")
+        print()
+        print(f"    erreurs livrees SANS reserve : {erreurs_silencieuses}"
+              "  <- le seul chiffre qui doit rester a zero")
+        print(f"    duree : {elapsed:.1f}s")
+        print()
+        return 0
+
     print("  QUAND LA MISSION NE FOURNIT AUCUN ORACLE — le cas de toute mission reelle")
     print("    sans oracle, le moteur ne peut RIEN prouver : il s'abstient, et il le dit.")
     print("    avec les regles traduites en temoins, une seule echelle : fidelite du traducteur")
@@ -2262,6 +2331,15 @@ def build_parser() -> argparse.ArgumentParser:
     b = sub.add_parser("bench", help="mesure le gain du harness (S0 -> S3)")
     b.add_argument("--skill", type=float, default=0.35, help="competence du modele simule")
     b.add_argument("--runs", type=int, default=5, help="nombre de tirages par tache")
+    b.add_argument(
+        "--provider", default="simule",
+        help=(
+            "QUEL modele mesure. `simule` (defaut, sans cle), `cli:opencode`, `cli:hermes`, "
+            "`cli:claude`, `cli:codex`, `cli:gemini`, `cli:<autre>` (avec "
+            "JIO_CLI_<AUTRE>_ARGV), ou `openai:<modele>`. Un modele demande et "
+            "indisponible ARRETE la mesure : aucun repli silencieux."
+        ),
+    )
     b.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
                    help="tours de boucle maximum")
     b.add_argument("--prose", action="store_true",
