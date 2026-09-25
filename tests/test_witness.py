@@ -166,6 +166,49 @@ def test_traduction_complete_et_declaration_des_impossibles() -> None:
     assert temoignage.couverture == pytest.approx(1 / 3)
 
 
+@pytest.mark.parametrize(
+    "reponse",
+    [
+        '{"R-001": "assert mean([1, 2]) == 1.5"}',
+        '[{"id": "R-001", "test": "assert mean([1, 2]) == 1.5"}]',
+        '[{"rule_id": "R-001", "check": "assert mean([1, 2]) == 1.5"}]',
+        '{"rules": {"R-001": "assert mean([1, 2]) == 1.5"}}',
+        'Voici la traduction :\n```json\n{"R-001": "assert mean([1, 2]) == 1.5"}\n```',
+        'Bien sur !\n[{"rule": "R-001", "check": "assert mean([1, 2]) == 1.5"}]\nVoila.',
+        '[{"regle": "R-001", "assertion": "assert mean([1, 2]) == 1.5"}]',
+    ],
+)
+def test_toutes_les_formes_de_reponse_plausibles_sont_lues(reponse: str) -> None:
+    """Un modele reel ne rend pas toujours la forme demandee.
+
+    Le format le PLUS probable est le tableau ``[{"id": "R-001", ...}]``, parce que
+    c'est celui que le compilateur de specification demande juste a cote. Refuser
+    cette reponse ne protegerait rien — la porte de securite juge le TEST, pas
+    l'emballage — cela ferait seulement perdre les temoins.
+
+    Ce test a attrape un bug reel : chercher d'abord ``{...}`` dans un tableau
+    trouve l'OBJET IMBRIQUE, donc les reponses en tableau etaient jetees en silence.
+    """
+    temoignage = traduire(SPEC, Fournisseur(reponse), entrypoint="mean")
+    assert list(temoignage.tests) == ["R-001"], (temoignage.tests, temoignage.refuses,
+                                                 temoignage.motif)
+    assert temoignage.tests["R-001"] == "assert mean([1, 2]) == 1.5"
+
+
+def test_un_refus_motive_est_lu_dans_toutes_les_formes() -> None:
+    for reponse in ('[{"id": "R-001", "impossible": "pas specifie"}]',
+                    '{"rules": [{"rule": "R-001", "reason": "pas specifie"}]}'):
+        temoignage = traduire(SPEC, Fournisseur(reponse), entrypoint="mean")
+        assert temoignage.aveux.get("R-001") == "pas specifie", temoignage
+
+
+def test_une_reponse_qui_nest_pas_du_json_est_un_aveu_motive() -> None:
+    temoignage = traduire(SPEC, Fournisseur("```python\ndef mean(x): return 1\n```"),
+                          entrypoint="mean")
+    assert not temoignage.utilisable
+    assert "JSON" in temoignage.motif
+
+
 def test_une_regle_sans_reponse_est_un_aveu_jamais_un_silence() -> None:
     temoignage = traduire(SPEC, Fournisseur('{"R-001": "assert mean([1, 2]) == 1.5"}'),
                           entrypoint="mean")

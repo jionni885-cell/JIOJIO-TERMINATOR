@@ -142,7 +142,32 @@ si d inconnu  → échelle progressive : on commence bas et on monte tant que ç
                 (arrêt dès que le gain marginal < coût, garde anti-oscillation)
 ```
 
-### 3.5 Le contrat de sortie
+### 3.5 Les règles deviennent des témoins exécutables
+
+Un harness qui énumère des règles sans les traduire en tests n'a rien vérifié : il a rédigé des
+slogans. Jusqu'ici, hors banc d'essai — donc dans **toute mission réelle** — la seule preuve
+exécutable était la cohérence de l'artefact avec sa propre documentation, et le moteur ne pouvait
+que s'abstenir.
+
+Désormais, chaque règle est traduite en **assertion exécutable** par un appel de modèle, avec trois
+issues déclarées : témoin accepté, **aveu** (la règle n'est pas traduisible, avec sa raison), ou
+**refus par les garde-fous** (contenu non fiable : aucun `import`, aucun accès fichier/réseau/
+processus, syntaxe valide, appel réel à l'entrée publique). Mesuré au banc, **sans oracle**, à budget
+égal (3 candidats + 1 traduction = 4 appels) :
+
+| fidélité du traducteur | livré juste | abstention | faux + réserve | **sans réserve** |
+|---|---|---|---|---|
+| 100 % | 5/5 | 0 | 0 | **0** |
+| 50 % | 2/5 | 3 | 0 | **0** |
+| 0 % | 0/5 | 5 | 0 | **0** |
+
+Un traducteur faux ne fait donc **pas** livrer faux : il fait renoncer. Le garde-fou : un témoin que
+**tous** les candidats échouent ne prouve rien sur eux (soit il est faux, soit tous les candidats
+sont faux — rien ne permet de trancher). La règle est déclarée **non prouvée** ; le témoin ne peut
+ni accuser ni innocenter, et son échec n'est pas effacé du verdict. Le rapport déclare toujours la
+**provenance** de la preuve : oracle fourni par la mission, ou traduction par le modèle.
+
+### 3.6 Le contrat de sortie
 
 Aucune mission ne se termine sans :
 - un **témoin exécutable par règle** (commande + code de sortie + hash de sortie),

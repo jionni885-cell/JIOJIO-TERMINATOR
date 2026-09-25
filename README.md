@@ -406,6 +406,13 @@ Trois choses à lire dans ce tableau, et la troisième est la seule qui compte v
    « livré sans réserve », le rapport la nomme, et `jio trace` montre le texte exact du témoin — ce
    que le modèle a eu le droit d'affirmer.
 
+La traduction est **robuste à l'emballage** : objet JSON, tableau d'objets (le format que le
+compilateur de spécification demande juste à côté — donc la déviation la plus probable d'un vrai
+modèle), objet enveloppé, bloc de code, NDJSON, clés anglaises ou françaises. Un mode de réponse
+qu'on refuserait pour sa forme ferait perdre les témoins sans rien protéger : **la porte de sûreté
+juge le test, pas l'emballage**. Et tout est prouvé sur le **chemin réel** — une CLI lancée en
+sous-processus qui traduit les règles, et une CLI qui n'y arrive pas (aveu, abstention).
+
 Quand la mission **fournit** ses oracles (le banc), la traduction n'est même pas demandée : un
 oracle réel est la référence, le modèle ne prend pas sa place. Et quand la preuve repose sur des
 témoins traduits, le rapport **le dit** : un artefact prouvé par une traduction n'est pas prouvé de

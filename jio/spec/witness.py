@@ -141,21 +141,96 @@ def _prompt_utilisateur(spec: Spec, entrypoint: str, objectif: str, regles: Sequ
     )
 
 
-def _extraire_json(texte: str) -> dict[str, object] | None:
-    """Extrait le premier objet JSON utile, meme entoure de texte ou de balises."""
+def _candidats_json(texte: str) -> list[object]:
+    """Toutes les lectures plausibles d'une reponse de modele, dans l'ordre d'essai.
+
+    Un modele reel ne rend pas toujours la forme demandee, et le format le plus
+    probable n'est pas un objet mais un TABLEAU — c'est celui que le compilateur de
+    specification demande juste a cote, donc un modele qui a vu
+    ``[{"id": "R-001", ...}]`` repond volontiers la meme chose. On rend donc TOUS
+    les candidats, et c'est l'appelant qui choisit celui qui parle des regles de la
+    specification : la porte de securite juge le TEST, pas l'emballage.
+
+    Ecrire cette fonction a d'ailleurs corrige un bug reel : chercher d'abord
+    ``{...}`` dans un tableau trouve l'OBJET IMBRIQUE, pas le tableau, donc toutes
+    les reponses en tableau etaient jetees en silence.
+    """
     t = (texte or "").strip()
     if "```" in t:
         blocs = re.findall(r"```(?:json)?\s*(.*?)```", t, re.DOTALL)
         if blocs:
             t = blocs[0].strip()
-    debut, fin = t.find("{"), t.rfind("}")
-    if debut < 0 or fin <= debut:
-        return None
-    try:
-        data = json.loads(t[debut : fin + 1])
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
+    out: list[object] = []
+    premier = t[:1]
+    spans = [(t.find("{"), t.rfind("}")), (t.find("["), t.rfind("]"))]
+    if premier == "[":
+        spans.reverse()
+    for debut, fin in spans:
+        if debut < 0 or fin <= debut:
+            continue
+        try:
+            data = json.loads(t[debut : fin + 1])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, (dict, list)) and data:
+            out.append(data)
+    # Dernier recours : un objet JSON par ligne (une CLI qui diffuse ses evenements).
+    fusion: dict[str, object] = {}
+    for ligne in t.splitlines():
+        ligne = ligne.strip().rstrip(",")
+        if not ligne.startswith("{") or not ligne.endswith("}"):
+            continue
+        try:
+            objet = json.loads(ligne)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(objet, dict):
+            fusion.update(objet)
+    if fusion and fusion not in out:
+        out.append(fusion)
+    return out
+
+
+def _extraire_json(texte: str) -> object | None:
+    """Premier candidat exploitable — conserve pour les appelants simples."""
+    candidats = _candidats_json(texte)
+    return candidats[0] if candidats else None
+
+
+#: Cles sous lesquelles un modele peut bien nommer l'identifiant d'une regle.
+_CLES_ID = ("id", "rule", "rule_id", "rule-id", "regle", "regle_id")
+#: ... et le test lui-meme.
+_CLES_TEST = ("test", "check", "assert", "assertion", "code", "source", "body")
+#: ... et un refus motive.
+_CLES_REFUS = ("impossible", "impossible_reason", "reason", "raison", "why", "motif")
+
+
+def _normaliser(data: object) -> dict[str, object] | None:
+    """Ramene la reponse d'un modele a ``{rule_id: test ou refus}``, ou rend None."""
+    if isinstance(data, list):
+        out: dict[str, object] = {}
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            rid = next((str(item[c]).strip() for c in _CLES_ID if item.get(c)), "")
+            if not rid:
+                continue
+            refus = next((item[c] for c in _CLES_REFUS
+                          if isinstance(item.get(c), str) and item.get(c).strip()), None)
+            if refus is not None:
+                out[rid] = {"impossible": str(refus)}
+                continue
+            test = next((item[c] for c in _CLES_TEST
+                         if isinstance(item.get(c), str) and item.get(c).strip()), None)
+            out[rid] = test if test is not None else {"impossible": "aucun test fourni"}
+        return out or None
+    if isinstance(data, dict):
+        # Forme enveloppee : {"rules": {...}} ou {"tests": [...]}
+        for cle in ("rules", "tests", "checks", "resultat", "result"):
+            if len(data) == 1 and isinstance(data.get(cle), (dict, list)):
+                return _normaliser(data[cle])
+        return data
+    return None
 
 
 def _valeur_brute(valeur: object) -> tuple[str, str]:
@@ -234,10 +309,20 @@ def traduire(
     except Exception as exc:  # noqa: BLE001 — une traduction qui echoue est un aveu, pas un plantage
         return Temoignage(motif=f"appel de traduction en echec : {exc}")
 
-    data = _extraire_json(getattr(completion, "text", "") or "")
+    connues_vrac = {r.id for r in regles}
+    candidats = _candidats_json(getattr(completion, "text", "") or "")
+    data: dict[str, object] | None = None
+    for candidat in candidats:
+        normalise = _normaliser(candidat)
+        if normalise and set(normalise) & connues_vrac:
+            # Celui-ci PARLE des regles de la specification : c'est le bon.
+            data = normalise
+            break
+    if data is None:
+        data = next((n for n in (_normaliser(c) for c in candidats) if n), None)
     if data is None:
         return Temoignage(
-            motif="le modele n'a pas rendu d'objet JSON exploitable",
+            motif="le modele n'a pas rendu de reponse JSON exploitable",
             appels=1,
             modele=str(getattr(completion, "model", "") or ""),
         )
