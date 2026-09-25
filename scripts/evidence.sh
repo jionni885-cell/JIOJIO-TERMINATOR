@@ -368,6 +368,36 @@ if [ "$FAIRE_TIERS" -eq 1 ]; then
     fi
 fi
 
+titre "3 bis ter. Le budget de contexte : ce que la configuration coute"
+
+# Un fichier de contexte trop long est SURVOLE : il occupe la fenetre et n'apporte rien.
+# On mesure donc ce qui est livre, et pas seulement ce qu'un test interne suppose.
+PYTHONPATH="$RACINE" "$PYTHON" - <<'FIN'
+from pathlib import Path
+
+from jio.artifacts.budget import SEUILS, mesurer
+from jio.artifacts.emit import manifest
+
+contexte = {
+    c: x for c, x in manifest().items()
+    if c in {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursor/rules/jio.mdc",
+             ".github/copilot-instructions.md"}
+}
+skills = {c: x for c, x in manifest().items() if "/skills/" in c and c.endswith("SKILL.md")}
+
+pire = max((mesurer(c, x) for c, x in contexte.items()), key=lambda m: m.lignes)
+etat = "dans le budget" if pire.lignes <= SEUILS["contexte_lignes"] else "TROP LONG"
+print(f"    contexte le plus long : {pire.chemin} {pire.lignes} ligne(s) "
+      f"{pire.intervalle()} jetons — {etat} (seuil {SEUILS['contexte_lignes']} lignes)")
+
+mesures = [mesurer(c, x) for c, x in skills.items()]
+total = sum(m.jetons for m in mesures)
+lourde = max(mesures, key=lambda m: m.jetons)
+print(f"    competences : {len(mesures)} fichier(s), ~{total} jetons au total "
+      f"(seuil {SEUILS['bibliotheque_jetons']}), la plus lourde ~{lourde.jetons}")
+print("    cote d'une session reelle : un seul fichier de contexte, pas la somme.")
+FIN
+
 titre "3 ter bis. Les hooks pre-commit : une promesse ecrite doit avoir une implementation"
 
 # Le defaut trouve dans ce depot : `jio-scan-strict` annoncait « echoue aussi si le projet

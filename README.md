@@ -676,6 +676,46 @@ est nommé et consultable. C'est un choix, et il est écrit dans le code.
 
 ---
 
+## Ce que la configuration coûte en contexte, mesuré
+
+Un fichier de contexte trop long est **survolé, pas lu** : il occupe la fenêtre et
+n'apporte rien — c'est pire que de ne pas l'avoir. Le budget n'existait ici que sous la
+forme d'un test vert, ce qui ne dit rien à l'utilisateur. `jio artifacts --budget` le rend
+visible :
+
+```
+  CHARGE AU DEMARRAGE — un outil n'en lit qu'UN (celui de son dialecte)
+
+    CLAUDE.md                          136 ligne(s)    1653-2273   jetons
+    AGENTS.md                          133 ligne(s)    1609-2212   jetons
+    .cursor/rules/jio.mdc              134 ligne(s)    1595-2193   jetons
+
+    Cote d'une session REELLE : ~1830 a 1914 jetons selon l'outil, pas la somme.
+
+  DISPONIBLE A LA DEMANDE — competences
+    TOTAL : 11 fichier(s), ~5715 jetons (estimation)
+```
+
+Trois choix de méthode, tous dictés par la même règle :
+
+- **Un intervalle, pas un chiffre.** La borne basse compte 3,2 caractères par jeton
+  (français, code — les accents et les indentations tokenisent mal), la haute 4,4 (prose
+  anglaise). Un tokenizer réel serait une dépendance, et la mesure varie d'un modèle à
+  l'autre. En dessous du seuil avec la borne **haute**, c'est bon ; au-dessus avec la
+  **basse**, c'est dépassé ; entre les deux, c'est « à vérifier » — et c'est affiché ainsi.
+- **Pas de total qu'aucune session ne paie.** Le premier jet annonçait « contexte injecté
+  au démarrage : ~9 285 jetons » en sommant les cinq dialectes. Aucune session ne paie ce
+  total : Claude lit `CLAUDE.md`, Cursor lit `.cursor/rules/jio.mdc`. Le rapport dit
+  maintenant ce qu'une **session réelle** paie, et le `doctor` mesure le fichier que l'outil
+  lit — pas la source qui le produit, qui contient des commentaires de maintenance jamais
+  émis (cette erreur affichait « TROP LONG » pour des fichiers de 133 lignes).
+- **Charger ≠ disponible.** Les 11 compétences et les 7 agents se chargent à la demande
+  (révélation progressive) : les compter au démarrage ferait croire à un coût qui n'existe
+  pas.
+
+Une compétence doit aussi rester petite : au-delà d'environ 5 000 jetons, elle n'est plus
+chargeable en une fois. La plus longue fait 768 jetons.
+
 ## Le hook pre-commit qui vérifie les **documents**
 
 Le dépôt déclarait `jio-scan-strict` comme « échoue aussi si le projet est incohérent à

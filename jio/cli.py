@@ -340,6 +340,32 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print("    - mode reel                -> `jio run \"<objectif>\"`")
     print()
     print(f"  Banc d'essai : {len(TASKS)} taches verifiables avec oracles caches")
+    # Ce que la configuration coute AVANT la premiere question. Un fichier de contexte
+    # trop long est survole : il occupe la fenetre sans rien apporter.
+    try:
+        from .artifacts.budget import SEUILS, mesurer
+        from .artifacts.emit import manifest
+
+        # On mesure ce que l'OUTIL LIT, pas la source qui le produit : la doctrine
+        # inclut des commentaires de maintenance qui ne sont pas emis. Mesurer la source
+        # annoncait « TROP LONG » pour des fichiers de 133 lignes (mesure faite).
+        contexte = {
+            chemin: texte for chemin, texte in manifest().items()
+            if chemin in {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursor/rules/jio.mdc",
+                          ".github/copilot-instructions.md"}
+        }
+        mesures = sorted((mesurer(c, x) for c, x in contexte.items()),
+                         key=lambda m: -m.lignes)
+        if mesures:
+            pire = mesures[0]
+            etat = ("dans le budget" if pire.lignes <= SEUILS["contexte_lignes"]
+                    else "TROP LONG ; a raccourcir")
+            print(f"  Fichier de contexte le plus long : {pire.chemin} — "
+                  f"{pire.lignes} ligne(s), {pire.intervalle()} jetons — {etat}")
+            print(f"    (seuil {SEUILS['contexte_lignes']} lignes ; detail : "
+                  "`jio artifacts --budget`)")
+    except Exception:  # un diagnostic qui plante ne diagnostique rien
+        pass
     print()
 
     # ---------------------------------------------------------------- #
@@ -1297,8 +1323,84 @@ def _brancher_mcp(args: argparse.Namespace) -> int:
     return 0
 
 
+def _budget_contexte(args: argparse.Namespace) -> int:
+    """`jio artifacts --budget` : ce que la configuration coute en contexte, mesure.
+
+    Un fichier de contexte trop long est SURVOLE, pas lu — il coute du contexte sans rien
+    apporter. Un test vert ne le dit pas a l'utilisateur ; ce rapport, si.
+    """
+    from .artifacts.budget import SEUILS, mesurer_depuis, resume, verdict
+    from .artifacts.emit import manifest
+
+    print(BANNER)
+    print("  BUDGET DE CONTEXTE  ·  ce que vos outils chargent, et ce qu'ils ignorent")
+    print()
+
+    tous = manifest()
+    # Ce qui est charge au DEMARRAGE : fichiers de contexte et fragments de cablage.
+    # Les agents et les competences se chargent a la demande (revelation progressive) :
+    # les confondre ferait croire a un cout qui n'existe pas.
+    demarrage = {
+        chemin: texte for chemin, texte in tous.items()
+        if chemin in {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursor/rules/jio.mdc",
+                      ".github/copilot-instructions.md"}
+    }
+    skills = {c: x for c, x in tous.items() if "/skills/" in c and c.endswith("SKILL.md")}
+    agents = {c: x for c, x in tous.items() if c.startswith(".opencode/agents/")
+              and c.endswith(".md") and not c.endswith("README.md")}
+
+    # Un outil donne ne charge QU'UN fichier de contexte : Claude lit CLAUDE.md, Cursor
+    # lit .cursor/rules/jio.mdc, Copilot lit .github/copilot-instructions.md, etc. Les
+    # additionner produirait un total qu'AUCUNE session ne paie — c'est exactement le genre
+    # de chiffre faux qu'un rapport sur le contexte ne peut pas se permettre. On mesure le
+    # fichier le plus lourd et le plus leger, et on dit ce que paie une session reelle.
+    demarrage_mesures = mesurer_depuis(Path.cwd(), demarrage)
+    for lignes in resume(
+        demarrage_mesures,
+        "CHARGE AU DEMARRAGE — un outil n'en lit qu'UN (celui de son dialecte)",
+        total=False,
+    ):
+        print(lignes)
+    if demarrage_mesures:
+        plus_leger = min(m.jetons for m in demarrage_mesures)
+        plus_lourd = max(m.jetons for m in demarrage_mesures)
+        print()
+        print(f"    Cote d'une session REELLE : ~{plus_leger} a {plus_lourd} jetons selon "
+              "l'outil, pas la somme.")
+    print()
+    for lignes in resume(mesurer_depuis(Path.cwd(), skills), "DISPONIBLE A LA DEMANDE — competences"):
+        print(lignes)
+    print()
+    for lignes in resume(mesurer_depuis(Path.cwd(), agents), "DISPONIBLE A LA DEMANDE — agents"):
+        print(lignes)
+    print()
+
+    tous_mesures = mesurer_depuis(Path.cwd(), tous)
+    for ligne in verdict(
+        tous_mesures,
+        est_competence=lambda chemin: "/skills/" in chemin and chemin.endswith("SKILL.md"),
+    ):
+        print(ligne)
+    print()
+
+    total_skills = sum(m.jetons for m in mesurer_depuis(Path.cwd(), skills))
+    print(f"    Bibliotheque de competences : ~{total_skills} jetons "
+          f"(seuil {SEUILS['bibliotheque_jetons']})")
+    print("    Contexte injecte au demarrage : un seul fichier par outil (voir ci-dessus)")
+    print()
+    print("    Lecture : les jetons sont un INTERVALLE (3,2 a 4,4 caracteres par jeton "
+          "selon")
+    print("    la langue et le code) — un tokenizer reel est une dependance, et la mesure")
+    print("    varie d'un modele a l'autre. Ce qu'on peut dire, on le dit ; le reste est")
+    print("    declare comme incertain.")
+    print()
+    return 0
+
+
 def cmd_artifacts(args: argparse.Namespace) -> int:
     """Emet les artefacts natifs. `--mcp` route vers le branchement du serveur MCP."""
+    if getattr(args, "budget", False):
+        return _budget_contexte(args)
     if getattr(args, "mcp", None):
         return _brancher_mcp(args)
     from .artifacts import TARGETS, manifest, write_manifest
@@ -2185,6 +2287,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     ar.add_argument("--write", action="store_true", help="ecrit reellement les fichiers")
+    # Ce que la configuration COUTE, en jetons de contexte. Un fichier trop long est
+    # survole par le modele : il occupe la fenetre sans rien apporter.
+    ar.add_argument(
+        "--budget",
+        action="store_true",
+        help="mesure le cout en contexte des artefacts (demarrage vs a la demande)",
+    )
     # Le CABLAGE du serveur MCP, distinct de son emission : `.mcp.json` est le dialecte de
     # Claude Code, opencode lit `opencode.json`, Hermes lit `~/.hermes/config.yaml`. Sans
     # cette option, les outils JIO existaient et restaient injoignables depuis deux des
