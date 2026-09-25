@@ -298,11 +298,15 @@ def manifest(targets: tuple[str, ...] | None = None) -> dict[str, str]:
 
 
 def write_manifest(root: Path, targets: tuple[str, ...] | None = None) -> list[Path]:
-    """Ecrit les artefacts sous `root` et renvoie la liste des fichiers ecrits."""
-    written: list[Path] = []
-    for rel, content in sorted(manifest(targets).items()):
-        path = root / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-        written.append(path)
-    return written
+    """Ecrit les artefacts sous `root` et renvoie la liste des fichiers ecrits.
+
+    Cette fonction n'ecrit plus elle-meme : elle DELEGUE a `write_guard.ecrire_manifest`.
+    Il y avait ici une seconde implementation de l'ecriture, qui ecrasait tout ce qu'elle
+    trouvait. Deux implementations pour un meme risque, c'est une regle qui tombe : celle
+    du garde-fou, qui PRESERVE un fichier ne portant pas la marque de jio, n'etait pas
+    appliquee a ceux qui passaient par ce chemin. Un seul ecrivain, une seule doctrine.
+    """
+    from .write_guard import ecrire_manifest
+
+    decisions = ecrire_manifest(root, manifest(targets))
+    return [root / d.chemin for d in decisions]

@@ -124,7 +124,7 @@ def test_une_commande_correcte_est_verifiee() -> None:
 
 
 def test_une_commande_inline_est_une_INSTRUCTION_pas_une_citation() -> None:
-    """`\`jio scan --stricte\`` en pleine phrase dit a l'utilisateur de la taper.
+    r"""\`jio scan --stricte\` en pleine phrase dit a l'utilisateur de la taper.
 
     La distinction est la meme que pour les calculs : une phrase qui ORDONNE quelque chose
     l'affirme. Un document ne peut donc pas recommander une commande inexistante.

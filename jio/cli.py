@@ -1441,7 +1441,10 @@ def cmd_sync(args: argparse.Namespace) -> int:
         for rel in sorted(manifest()):
             print(f"    [simulation] {rel}")
         print()
-        print("    mode simulation : rien n'a ete ecrit. Relancez avec --write.")
+        # `jio sync` n'a pas de `--write` : il ecrit. Lui conseiller un drapeau inexistant
+        # envoyait l'utilisateur dans un `unrecognized arguments` — le meme defaut que
+        # `jio claims` traque maintenant dans les documents.
+        print("    mode simulation : rien n'a ete ecrit. Relancez SANS --dry-run.")
         print()
         return 0
 
