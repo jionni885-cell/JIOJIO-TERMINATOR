@@ -82,7 +82,7 @@ def _consensus(min_panel: int) -> ConsensusEngine:
     return ConsensusEngine(min_panel=int(min_panel))
 
 
-def _engine_config(max_rounds: int) -> EngineConfig:
+def _engine_config(max_rounds: int, famille: str = "code", seed: int = 0) -> EngineConfig:
     """Reglages du moteur : les defauts viennent de l'environnement, les flags priment.
 
     Chaque variable ci-dessous correspond a un parametre REEL de `EngineConfig`.
@@ -98,6 +98,11 @@ def _engine_config(max_rounds: int) -> EngineConfig:
         self_check=bool_env("JIO_SELF_CHECK", True),
         differential=bool_env("JIO_DIFFERENTIAL", True),
         temoins=bool_env("JIO_WITNESS", True),
+        famille=famille,
+        # La graine de la mission entre dans celle de chaque generation : sans
+        # elle, des graines differentes produisaient les MEMES candidats, et les
+        # `runs` du banc repetaient un seul tirage (voir EngineConfig.seed).
+        seed=seed,
     )
 
 
@@ -115,11 +120,23 @@ def _simulated_engine(
     temoins: bool = True,
     traducteur: object | None = None,
     traduire_les_regles: bool = False,
+    famille: str = "code",
+    banque: object | None = None,
+    racine: Path | None = None,
 ) -> Engine:
     """Assemble un moteur utilisant la simulation deterministe (aucune cle requise)."""
     from .audit.panel import DEFAULT_PERSONAS, AuditPanel
 
-    bank = build_bank()
+    # `banque` : une banque de DOCUMENTS (famille prose). Le simulateur est deja
+    # generique — cle de tache vers (reponse, distracteurs) — donc une mission de
+    # prose se mesure avec le meme fournisseur, sans code dedie.
+    bank = banque if banque is not None else build_bank()
+    if famille == "prose":
+        from .verify.prose_prover import ProseProver
+
+        prover: object = ProseProver(racine=racine)
+    else:
+        prover = ExecutableProver(sandbox=Sandbox(timeout=20))
     personas = list(DEFAULT_PERSONAS)[:panel_size]
     providers = make_panel([p.name for p in personas], skill, bank, correlated=correlated)
     generators = [
@@ -133,12 +150,17 @@ def _simulated_engine(
         generators=providers or generators,
         journal=Journal(path=journal_path),
         panel=AuditPanel.simulated(personas, seed=seed),
-        prover=ExecutableProver(sandbox=Sandbox(timeout=20)),
+        prover=prover,
         gate=ConformalGate(alpha=alpha),
         monitor=IntegrityMonitor(),
         spec_compiler=SpecCompiler(provider=traducteur or _traducteur_simule(traduire_les_regles)),
         consensus=_consensus(min_panel),
-        config=_replace(_engine_config(max_rounds), temoins=temoins),
+        config=_replace(
+            _engine_config(max_rounds, famille, seed),
+            # `temoins=False` par defaut en prose : il n'y a pas de regle de code a
+            # traduire en test.
+            temoins=temoins and famille == "code",
+        ),
     )
 
 
@@ -158,7 +180,8 @@ def _traducteur_simule(actif: bool):
 
 
 def _real_engine(
-    *, journal_path: Path | None = None, max_rounds: int = 5, min_panel: int = 3
+    *, journal_path: Path | None = None, max_rounds: int = 5, min_panel: int = 3,
+    famille: str = "code", racine: Path | None = None,
 ) -> Engine:
     """Assemble un moteur adosse aux CLI/API reellement disponibles."""
     from .audit.panel import DEFAULT_PERSONAS, AuditPanel
@@ -174,16 +197,22 @@ def _real_engine(
             "Sans cle, utilises : jio bench"
         )
     gens = providers[:3]
+    if famille == "prose":
+        from .verify.prose_prover import ProseProver
+
+        prover: object = ProseProver(racine=racine or Path.cwd())
+    else:
+        prover = ExecutableProver(sandbox=Sandbox(timeout=30))
     return Engine(
         generators=gens,
         journal=Journal(path=journal_path),
         panel=AuditPanel.llm(providers, list(DEFAULT_PERSONAS)),
-        prover=ExecutableProver(sandbox=Sandbox(timeout=30)),
+        prover=prover,
         gate=ConformalGate(alpha=float_env("JIO_ALPHA", 0.05)),
         monitor=IntegrityMonitor(),
         spec_compiler=SpecCompiler(provider=gens[0]),
         consensus=_consensus(min_panel),
-        config=_engine_config(max_rounds),
+        config=_engine_config(max_rounds, famille),
     )
 
 
@@ -447,6 +476,51 @@ def cmd_tasks(args: argparse.Namespace) -> int:
     return 0
 
 
+def _bench_prose(args: argparse.Namespace) -> int:
+    """Le banc de PROSE : des documents, pas des programmes.
+
+    Meme exigence que le banc de code, et le meme chiffre qui doit rester a zero :
+    les documents FAUX presentes comme prouves. La difference est dans ce qu'on
+    mesure — ici, le harness ne peut pas executer le livrable, il ne peut que
+    verifier ses affirmations.
+    """
+    from .bench.prose import PROSE_TASKS, mesurer_prose
+
+    print(BANNER)
+    print(f"  Mesure du harness sur des DOCUMENTS  ·  competence simulee {args.skill:.2f}"
+          f"  ·  {args.runs} tirage(s)  ·  {len(PROSE_TASKS)} tache(s)")
+    print("  Aucune cle API requise : les documents sont simules, la VERIFICATION est reelle.")
+    print()
+    print("    bras                                   justes   comparaison")
+    print("    -------------------------------------- -------  --------------------------")
+    total = {"essais": 0, "silencieux": 0, "sous_reserve": 0, "abstentions": 0}
+    for skill in sorted({0.0, 0.35, float(args.skill)}):
+        mesure = mesurer_prose(skill=skill, runs=args.runs, max_rounds=args.rounds,
+                               racine=Path.cwd())
+        print(mesure.resume(f"competence {skill:.2f}"))
+        total["essais"] += mesure.essais
+        total["silencieux"] += mesure.erreurs_silencieuses
+        total["sous_reserve"] += mesure.sous_reserve
+        total["abstentions"] += mesure.abstentions
+    print()
+    print(f"  {total['essais']} essai(s) au total")
+    print(f"  ERREURS LIVREES SANS RIEN DIRE : {total['silencieux']}"
+          "  <- le seul chiffre qui doit rester a zero")
+    print(f"  livres avec une reserve NOMMEE (chemin introuvable, "
+          f"confiance sous le seuil) : {total['sous_reserve']}")
+    print(f"  abstentions (rien de verifiable, ou preuve impossible) : {total['abstentions']}")
+    print()
+    print("  LIMITES, en toute honnete :")
+    print("    - un document peut etre FAUX sans qu'aucune de ses affirmations ne le soit :")
+    print("      la verification porte sur ce qui est calculable, pas sur le sens.")
+    print("    - competence 0.00 : tous les tirages sont des distracteurs. Le systeme")
+    print("      livre alors SOUS RESERVE, ou s'abstient — jamais en presentant un faux")
+    print("      calcul comme prouve.")
+    print("    - les documents sont SIMULES : ce chiffre mesure l'architecture.")
+    print()
+    return 0 if total["silencieux"] == 0 else 1
+
+
 def cmd_bench(args: argparse.Namespace) -> int:
     """Mesure le gain reel du harness sur le MEME modele, fige.
 
@@ -457,6 +531,9 @@ def cmd_bench(args: argparse.Namespace) -> int:
 
     C'est la mesure que personne ne publie : le harness, a poids constants.
     """
+    if getattr(args, "prose", False):
+        return _bench_prose(args)
+
     skill = args.skill
     runs = args.runs
     seeds = list(range(runs))
@@ -844,9 +921,37 @@ def cmd_providers(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     journal_path = Path(args.journal) if args.journal else None
-    task = TASKS_BY_ID.get(args.task) if getattr(args, "task", "") else None
+    prose = bool(getattr(args, "prose", False))
+    # En prose, la tache du banc n'est pas une tache de code : `--task` designe un
+    # DOCUMENT de reference (voir `jio/bench/prose.py`).
+    tache_prose = None
+    if prose:
+        from .bench.prose import PROSE_BY_ID, PROSE_TASKS
 
-    if args.simulate and not task:
+        if getattr(args, "task", ""):
+            tache_prose = PROSE_BY_ID.get(args.task)
+            if tache_prose is None:
+                print(f"  tache de prose inconnue : {args.task}", file=sys.stderr)
+                print("  disponibles : " + ", ".join(t.id for t in PROSE_TASKS),
+                      file=sys.stderr)
+                return 2
+        elif args.simulate:
+            tache_prose = PROSE_TASKS[0]
+    task = TASKS_BY_ID.get(args.task) if getattr(args, "task", "") and not prose else None
+
+    if prose and args.simulate and tache_prose is None:  # pragma: no cover - garde
+        print("  mode prose simule : aucune tache de document disponible.", file=sys.stderr)
+        return 2
+    if not getattr(args, "objective", "") and not task and not args.simulate:
+        # Sans tache du banc et sans simulation, il n'y a rien a faire : on le dit
+        # au lieu de partir avec un objectif vide et d'abstenir pour une mauvaise
+        # raison.
+        print("  objectif requis : jio run \"<objectif>\"", file=sys.stderr)
+        print("  en simulation, une tache du banc le fournit : jio run --simulate "
+              "--task sum_even", file=sys.stderr)
+        return 2
+
+    if args.simulate and not task and not prose:
         print(
             "  Mode simulation : aucun CLI ni cle d'API requis. La generation a besoin\n"
             "  d'une tache du banc pour que le modele SIMULE ait du code a rendre :\n"
@@ -858,7 +963,20 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
         return 2
 
-    if args.simulate:
+    if prose and args.simulate:
+        from .bench.prose import prose_bank
+
+        engine = _simulated_engine(
+            None, seed=0, journal_path=journal_path, max_rounds=args.rounds,
+            alpha=args.alpha, min_panel=args.min_panel,
+            famille="prose", banque=prose_bank(tache_prose), racine=Path.cwd(),
+        )
+    elif prose:
+        engine = _real_engine(
+            journal_path=journal_path, max_rounds=args.rounds,
+            min_panel=args.min_panel, famille="prose", racine=Path.cwd(),
+        )
+    elif args.simulate:
         engine = _simulated_engine(
             task, seed=0, journal_path=journal_path, max_rounds=args.rounds,
             alpha=args.alpha, min_panel=args.min_panel,
@@ -873,13 +991,27 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
     _attach_learning(engine, Path(args.state), disable=args.no_learn)
 
-    objective = task.objective if task else args.objective
+    if tache_prose is not None:
+        objective = args.objective or tache_prose.objective
+    else:
+        objective = task.objective if task else args.objective
+
+    # La specification d'une mission de prose n'est PAS derivee d'un modele : la
+    # regle de couverture (au moins une affirmation verifiable, aucune refutee) est
+    # vraie par construction du verificateur. La confier a un modele reviendrait a
+    # lui demander d'autoriser sa propre existence.
+    spec_statique = None
+    if prose:
+        from .verify.prose_prover import spec_prose
+
+        spec_statique = spec_prose(objective)
+
     mission = Mission(objective=objective, max_rounds=args.rounds, alpha=args.alpha)
     work = WorkItem(
         objective=objective,
         entrypoint=(task.entrypoint if task else args.entrypoint or ""),
         checks=(dict(task.checks) if task and not getattr(args, "no_oracle", False) else {}),
-        spec=task.spec() if task else None,
+        spec=(task.spec() if task else spec_statique),
     )
     report = engine.run(mission, work)
     # Les avertissements du journal sont affiches APRES l'execution : c'est
@@ -1563,6 +1695,8 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--runs", type=int, default=5, help="nombre de tirages par tache")
     b.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
                    help="tours de boucle maximum")
+    b.add_argument("--prose", action="store_true",
+                   help="mesure le harness sur des DOCUMENTS (rapports) au lieu de code")
     b.set_defaults(func=cmd_bench)
 
     cl = sub.add_parser(
@@ -1583,7 +1717,14 @@ def build_parser() -> argparse.ArgumentParser:
     prov.set_defaults(func=cmd_providers)
 
     r = sub.add_parser("run", help="execute une mission complete")
-    r.add_argument("objective", help="objectif en langage naturel")
+    # `objective` devient FACULTATIF : en simulation (`--simulate`), une tache du
+    # banc fournit l'objectif, et exiger une repetition inutile faisait echouer des
+    # commandes que la documentation proposait elle-meme. Le refus reste explicite,
+    # plus bas, quand rien ne peut fournir l'objectif.
+    r.add_argument("objective", nargs="?", default="", help="objectif de la mission")
+    r.add_argument("--prose", action="store_true",
+                   help="mission de DOCUMENT : la preuve porte sur les affirmations "
+                        "verifiables du texte (calculs, blocs de code, chemins cites)")
     r.add_argument("--entrypoint", default="", help="nom de la fonction attendue")
     r.add_argument("--simulate", action="store_true",
                    help="modele simule deterministe : aucune cle API requise")

@@ -387,4 +387,30 @@ else
 fi
 rm -rf "$TMP_CLAIMS"
 
+titre "3 sexies. Une MISSION de document : la prose entre dans la boucle"
+# Les temoins de prose (3 quinquies) verifient UN document. Il manquait la mission
+# complete : generer, prouver, panel, consensus, porte. Sans cela, une mission
+# generaliste n'avait aucune preuve executable et JIO s'abstenait.
+#
+# Le chiffre qui compte ici est le meme que partout : les documents non corrects
+# livres SANS RIEN DIRE. Il doit valoir zero, a competence NULLE comme a competence
+# moyenne — et c'est verifie pour les deux.
+if "$PYTHON" -c "import jio.bench.prose" 2>/dev/null; then
+    TMP_PROSE=$(mktemp -d)
+    # Le CODE DE SORTIE est le contrat. Le lire apres un pipe mesurerait le pipe
+    # (c'est `sed` qui sort en dernier) : on teste donc l'invocation elle-meme, en
+    # redirigeant la sortie — la meme erreur a deja ete corrigee une fois plus haut,
+    # et refaire la meme faute serait le degre zero de ce projet.
+    if "$PYTHON" -m jio bench --prose --runs 3 --rounds 2 > "$TMP_PROSE/brut.txt" 2>&1; then
+        code=0
+    else
+        code=$?
+    fi
+    sed -n '/bras /,/ERREURS LIVREES/p' "$TMP_PROSE/brut.txt"
+    echo "    -> code $code : $( [ "$code" -eq 0 ] && echo 'aucun document non correct livre sans rien dire' || echo 'AU MOINS UN SILENCE — a instruire' )"
+    rm -rf "$TMP_PROSE"
+else
+    echo "    module absent : etape ignoree."
+fi
+
 titre "Termine"

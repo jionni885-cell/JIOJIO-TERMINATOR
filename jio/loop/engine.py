@@ -97,6 +97,37 @@ class EngineConfig:
     #: temoin que TOUS les candidats echouent est declare NON DISCRIMINANT : il ne
     #: peut jamais, a lui seul, faire rejeter un candidat.
     temoins: bool = True
+    #: FAMILLE de temoins : "code" (defaut) ou "prose".
+    #:
+    #: Le choix ne cree pas une seconde boucle : il change ce que le candidat EST
+    #: (un document, pas un module) et la maniere de le demander au modele. La
+    #: preuve, le panel, le consensus, la porte, le journal et les garde-fous
+    #: restent identiques — un document traverse la meme machinerie qu'un
+    #: programme, et une seule doctrine doit etre expliquee.
+    #:
+    #: En famille "prose", les trois reglages qui n'ont pas de sens sont mis a
+    #: False par `Engine.__post_init__` : il n'y a ni documentation executable a
+    #: confronter (`self_check`), ni mutant a tuer (`mutation_gate`), ni regle de
+    #: code a traduire en test (`temoins`). Les laisser actifs produirait des
+    #: abstentions incomprehensibles.
+    famille: str = "code"
+    #: Graine de la MISSION. Elle entre dans la graine de chaque appel de generation.
+    #:
+    #: Le defaut (0) rend une mission reproductible, ce qui est voulu. Le bug qu'elle
+    #: corrige etait ailleurs, et il etait invisible : la generation utilisait
+    #: `1000 * tour + i`, SANS la graine de la mission. Consequences mesurees :
+    #:
+    #:   * deux executions du banc avec des graines de mission differentes
+    #:     produisaient EXACTEMENT les memes candidats — verifie sur trois graines,
+    #:     memes empreintes. Les `runs` repetitions des bras S2/S3 etaient donc le
+    #:     MEME tirage repete, et l'ecart mesure entre le harness et le modele brut
+    #:     n'etait pas une moyenne ;
+    #:   * une mission de prose mesuree a competence 0.2 rendait 100 % de reussite,
+    #:     non parce que le harness etait bon, mais parce que le tirage etait fige.
+    #:
+    #: Une mesure dont la variance est nulle par construction ne peut pas etre
+    #: presentee comme un resultat.
+    seed: int = 0
 
 
 @dataclass(frozen=True)
@@ -142,6 +173,13 @@ class Engine:
     _self_check_cache: dict = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.config.famille == "prose":
+            # Trois etages n'ont aucun sens sur un document. Les desactiver ICI
+            # plutot que dans chaque appelant : un seul endroit decide, et il est
+            # impossible d'en oublier un.
+            object.__setattr__(self.config, "self_check", False)
+            object.__setattr__(self.config, "mutation_gate", False)
+            object.__setattr__(self.config, "temoins", False)
         # Tous les temoins sont journalises : une preuve non tracee n'existe pas.
         self.prover.journal = self.journal
         # Memoire du controle d'auto-coherence, par contenu d'artefact : le
@@ -1057,7 +1095,7 @@ class Engine:
                      Message("user", prompt)],
                     temperature=temperature,
                     max_tokens=self.config.max_tokens,
-                    seed=1000 * rnd + i,
+                    seed=1000 * self.config.seed + 100 * rnd + i,
                 )
             except Exception as exc:  # noqa: BLE001 — un fournisseur en panne ne bloque pas le panel
                 self.journal.append("provider_error", {"provider": getattr(provider, "name", "?"),
@@ -1068,7 +1106,10 @@ class Engine:
             usage["completion_tokens"] += comp.completion_tokens
             usage["calls"] += 1
 
-            code = _extract_code(comp.text, work.entrypoint)
+            # En famille "prose", le candidat EST le document : l'extraire comme un
+            # bloc de code jetterait le texte (et un document n'a pas d'entree).
+            prose = self.config.famille == "prose"
+            code = comp.text.strip() if prose else _extract_code(comp.text, work.entrypoint)
             if not code.strip():
                 continue
 
@@ -1076,7 +1117,7 @@ class Engine:
                 Artifact(
                     id=f"r{rnd}-c{i}",
                     content=code,
-                    kind="code",
+                    kind="prose" if prose else "code",
                     agent=f"gen{i}",
                     model=comp.model,
                     provider=comp.provider,
@@ -1459,8 +1500,22 @@ class Engine:
             repeated=repeated,
         )
 
-    @staticmethod
-    def _system(work: WorkItem) -> str:
+    def _system(self, work: WorkItem) -> str:
+        if self.config.famille == "prose":
+            # Le contrat de prose dit AUSSI ce qui n'est pas demande : un modele
+            # pousse a « tout verifier » invente des chiffres plutot que d'ecrire
+            # une phrase sans nombre. Un fait verifiable doit rester un choix.
+            return (
+                "You are a precise technical writer. Return ONLY the finished "
+                "document, in Markdown, and nothing else — no preamble, no "
+                "meta-commentary about your process.\n"
+                "Every factual claim you write must be TRUE and, when it contains "
+                "an arithmetic result, exactly computable. Never invent a number: "
+                "if you are unsure of a figure, state the fact without it.\n"
+                "Fenced code blocks must be valid: any block you label as a "
+                "language must at least compile in that language.\n"
+                "Cite file paths only if they exist in the project you were given."
+            )
         lang = {"python": "Python", "javascript": "JavaScript"}.get(work.language, work.language)
         return (
             f"You are a precise {lang} engineer. Return ONLY the complete implementation "
@@ -1492,7 +1547,15 @@ class Engine:
                 "Fix the root cause. Do not guess — if the requirement is unclear, "
                 "handle the case explicitly."
             )
-        parts.append(f"\nReturn the full implementation of `{work.entrypoint}`.")
+        if self.config.famille == "prose":
+            parts.append(
+                "\nReturn the full document in Markdown. Include at least one "
+                "verifiable statement (a computed figure or a code block with a "
+                "declared language): a document that can be checked is worth more "
+                "than one that cannot."
+            )
+        else:
+            parts.append(f"\nReturn the full implementation of `{work.entrypoint}`.")
         return "\n".join(parts)
 
 

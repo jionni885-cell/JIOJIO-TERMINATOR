@@ -619,6 +619,89 @@ partagent maintenant un seul passage — un test couvre chacun des quatre bugs
 
 ---
 
+## Une mission sans code : le document entre dans la même boucle
+
+Tout ce qui précède prouve du **code**. Une mission généraliste — rapport, analyse,
+note — n'a rien à exécuter : le moteur s'abstenait, honnêtement mais inutilement. Or
+c'est là que se logent les hallucinations, dans du texte que personne ne recalcule.
+
+`jio run --prose` fait traverser **la même boucle** à un document. Pas une seconde
+machinerie : un vérificateur qui se présente comme un prouveur.
+
+```
+jio run --prose --simulate                 # banc de documents, sans clé API
+jio run "rédige le rapport de perf" --prose   # mission réelle
+jio bench --prose --runs 5                 # mesure : aveugle vs vérifié
+```
+
+| Étage | Sur du code | Sur un document |
+|---|---|---|
+| Spécification | dérivée de l'objectif | **statique** : la règle `P-000` est vraie par construction, la confier à un modèle serait lui demander d'autoriser sa propre existence |
+| Preuve | bac à sable, tests exécutés | calculs (AST restreint), blocs annoncés comme Python, chemins cités |
+| Auto-cohérence (`self_check`) | exemples `>>>` | **désactivé** — un document n'a pas de documentation exécutable |
+| Mutation | mutants tués | **désactivé** — il n'y a pas de mutant à tuer |
+| Panel, consensus, porte, journal, garde-fous | identiques | **identiques** |
+
+Les trois étages sans objet sont coupés **dans `Engine.__post_init__`**, à un seul
+endroit : les laisser actifs produirait une abstention incompréhensible, et compter
+sur chaque appelant pour y penser est une erreur de conception.
+
+### La règle `P-000` : « rien à vérifier » n'est pas un quitus
+
+Un document sans la moindre affirmation vérifiable ne ressort pas « conforme » mais
+« rien n'a été prouvé ». Sans cette règle, un vérificateur qui ne trouve rien
+produirait un succès vide — exactement le silence que ce projet refuse. Elle échoue
+aussi quand une affirmation est **réfutée** : un document fautif est refusé par une
+règle nommée, pas par un compteur.
+
+### Ce que le banc de documents mesure
+
+Même définition que pour le code, et c'est la plus sévère : **erreurs livrées sans
+rien dire** — un document non correct livré en `DELIVERED`.
+
+```
+bras                                   justes   comparaison
+competence 0.00                          0.0%   ... SILENCIEUX : 0   sous reserve : 4  appels 10.5
+competence 0.35                        100.0%   ... SILENCIEUX : 0   sous reserve : 0  appels 4.5
+ERREURS LIVREES SANS RIEN DIRE : 0  <- le seul chiffre qui doit rester a zero
+```
+
+Un document non correct livré **sous réserve** n'est pas un silence : le signalement
+est nommé et consultable. C'est un choix, et il est écrit dans le code.
+
+---
+
+## Le bug de mesure qui rendait le banc menteur
+
+En ajoutant le banc de documents, un chiffre impossible est apparu : **100 % de
+réussite à 20 % de compétence**. Cause, vérifiée : la génération utilisait
+`seed=1000 * tour + i`, **sans la graine de la mission**.
+
+Conséquence exacte, mesurée sur trois graines : les mêmes empreintes de candidats,
+identiques. Autrement dit :
+
+- les `runs` répétitions des bras S2/S3 du banc **rejouaient le même tirage** ;
+- l'écart annoncé entre le harness et le modèle brut **n'était pas une moyenne** ;
+- une mesure dont la variance est nulle par construction ne peut pas être présentée
+  comme un résultat — et rien, dans la sortie, ne le signalait.
+
+Corrigé par `EngineConfig.seed`, qui entre dans la graine de chaque génération. La
+reproductibilité est préservée : même graine de mission, même mission ; graine
+différente, tirage différent — les deux sont testés.
+
+Les chiffres du banc ont changé après ce correctif. Ils sont plus bas, et ils sont
+vrais :
+
+| Bras | Avant (variance nulle) | Après (tirages réels) |
+|---|---|---|
+| Modèle brut (1 appel) | 33,3 % | 33,3 % |
+| Échantillonnage seul (best-of-3) | 73,3 % | 73,3 % |
+| **Isolation : vérification vs échantillonnage à budget égal** | non mesurable | **+20,0 pts** |
+| Gain total du harness | +66,7 pts (surévalué) | **+60,0 pts** |
+| Erreurs livrées sans réserve | 0 | **0** |
+
+---
+
 ## Le rendre omniprésent : CI et hook standard
 
 Un défaut prouvé ne doit jamais atteindre un commit. JIO s'installe donc là où le
