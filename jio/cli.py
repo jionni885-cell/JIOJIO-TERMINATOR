@@ -24,10 +24,13 @@ from pathlib import Path
 from .core.env import bool_env, float_env, int_env, str_env
 from typing import Sequence
 
+from dataclasses import replace as _replace
+
 from . import __version__
 from .audit.consensus import ConsensusEngine
 from .audit.integrity import IntegrityMonitor
 from .bench.tasks import TASKS, TASKS_BY_ID, Task, build_bank
+from .bench.temoins import TraducteurSimule
 from .core.journal import Journal
 from .core.types import Mission, MissionReport, MissionStatus, Severity
 from .gate.conformal import ConformalGate
@@ -94,6 +97,7 @@ def _engine_config(max_rounds: int) -> EngineConfig:
         mutation_gate=bool_env("JIO_MUTATION_GATE", True),
         self_check=bool_env("JIO_SELF_CHECK", True),
         differential=bool_env("JIO_DIFFERENTIAL", True),
+        temoins=bool_env("JIO_WITNESS", True),
     )
 
 
@@ -108,6 +112,9 @@ def _simulated_engine(
     max_rounds: int = 5,
     alpha: float = 0.05,
     min_panel: int = 3,
+    temoins: bool = True,
+    traducteur: object | None = None,
+    traduire_les_regles: bool = False,
 ) -> Engine:
     """Assemble un moteur utilisant la simulation deterministe (aucune cle requise)."""
     from .audit.panel import DEFAULT_PERSONAS, AuditPanel
@@ -129,10 +136,25 @@ def _simulated_engine(
         prover=ExecutableProver(sandbox=Sandbox(timeout=20)),
         gate=ConformalGate(alpha=alpha),
         monitor=IntegrityMonitor(),
-        spec_compiler=SpecCompiler(),
+        spec_compiler=SpecCompiler(provider=traducteur or _traducteur_simule(traduire_les_regles)),
         consensus=_consensus(min_panel),
-        config=_engine_config(max_rounds),
+        config=_replace(_engine_config(max_rounds), temoins=temoins),
     )
+
+
+def _traducteur_simule(actif: bool):
+    """Un traducteur de regles simule, quand la simulation doit prouver sans oracle.
+
+    Hypothese DECLAREE : traduire une regle deja enumeree est plus facile que
+    resoudre la mission, donc le modele simule le fait fidelement. C'est la borne
+    HAUTE mesuree par le banc (`jio bench`, bras S4) ; les bornes basses y sont
+    mesurees aussi, et le systeme y survit sans jamais livrer d'erreur non declaree.
+    """
+    if not actif:
+        return None
+    from .bench.temoins import TraducteurSimule
+
+    return TraducteurSimule(taches=TASKS, fidelite=1.0)
 
 
 def _real_engine(
@@ -410,9 +432,16 @@ def cmd_bench(args: argparse.Namespace) -> int:
     print("  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.")
     print()
 
-    results: dict[str, list[float]] = {"S0": [], "S1": [], "S1b": [], "S2": [], "S3": []}
+    results: dict[str, list[float]] = {
+        "S0": [], "S1": [], "S1b": [], "S2": [], "S3": [], "S4": [], "S4b": [], "S4c": [],
+    }
     calls: dict[str, list[int]] = {k: [] for k in results}
     integrity_hits = 0
+    abstentions_sans_oracle = 0
+    contrefacons = 0
+    rejets_faux = 0
+    erreurs_silencieuses = 0
+    justes: list[tuple[str, bool]] = []
     started = time.monotonic()
 
     for seed in seeds:
@@ -478,6 +507,50 @@ def cmd_bench(args: argparse.Namespace) -> int:
             calls["S3"].append(n_calls)
             if not report.integrity.clean:
                 integrity_hits += 1
+            # --- S4 : AUCUN ORACLE — les regles traduites en temoins -------- #
+            # C'est l'etat d'une MISSION REELLE : personne ne fournit de test. Sans
+            # traduction, le moteur ne peut rien prouver et s'abstient. Avec
+            # traduction, chaque regle devient une assertion executable, et le moteur
+            # choisit sur preuve au lieu de parier. Meme budget que le controle :
+            # 3 candidats + 1 appel de traduction, soit exactement un best-of-4.
+            #
+            # Trois fidelites : la borne haute (le modele lit les regles), la borne
+            # basse (il les lit a l'envers), et le milieu. Le simulateur DECLARE ce
+            # qu'il simule : voir jio/bench/temoins.py.
+            for cle, fidelite in (
+                ("S4", 1.0), ("S4c", 0.5), ("S4b", 0.0),
+            ):
+                traducteur = TraducteurSimule(taches=TASKS, fidelite=fidelite)
+                moteur = _simulated_engine(
+                    task, skill=skill, seed=seed, max_rounds=args.rounds,
+                    temoins=True, traducteur=traducteur,
+                )
+                rapport = moteur.run(
+                    Mission(objective=task.objective, id=f"{task.id}-{seed}-{cle}",
+                            max_rounds=args.rounds),
+                    WorkItem(objective=task.objective, entrypoint=task.entrypoint,
+                             spec=task.spec()),
+                )
+                contrefacons += len(traducteur.contrefaites)
+                justes.append((cle, _check(rapport.subject, task)))
+                candidat_juste = any(
+                    e.payload.get("sim_correct") for e in moteur.journal.events()
+                    if getattr(e, "kind", "") == "candidate"
+                )
+                if rapport.status is MissionStatus.ABSTAINED:
+                    abstentions_sans_oracle += 1
+                elif not justes[-1][1] and candidat_juste:
+                    # Une implementation CORRECTE etait disponible et le moteur a
+                    # livre autre chose : c'est le cout reel d'un traducteur
+                    # imparfait, et le seul nombre qui puisse condamner l'axe.
+                    rejets_faux += 1
+                if not justes[-1][1] and rapport.status is MissionStatus.DELIVERED:
+                    # Le pire des cas, celui qui doit rester a ZERO : une erreur
+                    # livree SANS reserve, c'est-a-dire sans que rien ne le dise.
+                    erreurs_silencieuses += 1
+                results[cle].append(1.0 if justes[-1][1] else 0.0)
+                calls[cle].append(int(rapport.usage.get("calls", 0)) or 1)
+
             if os.environ.get("JIO_DEBUG_BENCH") and ok and not delivered:
                 print(
                     f"    [debug] {task.id} seed={seed} statut={report.status.value} "
@@ -495,11 +568,14 @@ def cmd_bench(args: argparse.Namespace) -> int:
         "S1b": "CONTROLE : autant d'appels, 0 verification",
         "S2": "verification executable + reprise",
         "S3": "JIO complet (livraison auditee)",
+        "S4": "AUCUN ORACLE : regles traduites en temoins",
+        "S4c": "AUCUN ORACLE : traducteur a 50 % de fidelite",
+        "S4b": "AUCUN ORACLE : traducteur FAUX (lue a l'envers)",
     }
     base = _mean(results["S0"]) or 1e-9
     print(f"    {'config':<40} {'reussite':>9} {'appels':>7} {'vs S0':>7}")
     print(f"    {'-' * 40} {'-' * 9} {'-' * 7} {'-' * 7}")
-    for key in ("S0", "S1", "S1b", "S2", "S3"):
+    for key in ("S0", "S1", "S1b", "S2", "S3", "S4", "S4c", "S4b"):
         rate = _mean(results[key])
         budget = _mean(calls[key])
         print(f"    {labels[key]:<40} {rate:>8.1%} {budget:>7.1f} {rate / base:>6.2f}x")
@@ -519,6 +595,24 @@ def cmd_bench(args: argparse.Namespace) -> int:
     print()
     print(f"    gain total du harness : {(_mean(results['S3']) - _mean(results['S0'])) * 100:+.1f} points"
           "  (cible mesuree dans la litterature : +15 a +54)")
+    print()
+    print("  QUAND LA MISSION NE FOURNIT AUCUN ORACLE — le cas de toute mission reelle")
+    print("    sans oracle, le moteur ne peut RIEN prouver : il s'abstient, et il le dit.")
+    print("    avec les regles traduites en temoins, une seule echelle : fidelite du traducteur")
+    print(f"      fidelite 100 %  -> {_mean(results['S4']):>6.1%} de livraisons justes"
+          f"   ({_mean(calls['S4']):.1f} appels, autant qu'un best-of-4)")
+    print(f"      fidelite  50 %  -> {_mean(results['S4c']):>6.1%} de livraisons justes"
+          f"   ({_mean(calls['S4c']):.1f} appels)")
+    print(f"      fidelite   0 %  -> {_mean(results['S4b']):>6.1%} de livraisons justes"
+          f"   ({contrefacons} regle(s) contrefaite(s) au total)")
+    print(f"    issues des bras sans oracle : {abstentions_sans_oracle} abstention(s),"
+          f" {rejets_faux} rejet(s) d'un candidat CORRECT")
+    print(f"    ERREURS LIVREES SANS RESERVE : {erreurs_silencieuses}  <- le seul chiffre qui doit rester a zero")
+    print("    -> la traduction est le chainon qui rend la preuve POSSIBLE hors banc, et")
+    print("       elle marche quand le traducteur est juste. Quand il se trompe, le systeme")
+    print("       s'abstient ou livre AVEC reserve : il ne presente jamais un artefact faux")
+    print("       comme prouve. Un temoin que TOUS les candidats echouent est declare NON")
+    print("       PROUVE : il ne peut ni accuser ni innocenter.")
     print(f"    exploites d'integrite detectes : {integrity_hits}")
     print(f"    duree : {elapsed:.1f}s")
     print()
@@ -560,10 +654,13 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     if args.simulate and not task:
         print(
-            "  Mode simulation : aucun CLI ni cle d'API requis, mais la boucle a besoin\n"
-            "  d'oracles pour prouver quoi que ce soit. Associez une tache du banc :\n"
+            "  Mode simulation : aucun CLI ni cle d'API requis. La generation a besoin\n"
+            "  d'une tache du banc pour que le modele SIMULE ait du code a rendre :\n"
             "    jio run \"<objectif>\" --simulate --task sum_even\n"
+            "    jio run \"<objectif>\" --simulate --task sum_even --no-oracle\n"
             "  Taches disponibles : " + ", ".join(t.id for t in TASKS) + "\n"
+            "  Sans --task, la simulation ne peut rien generer : elle le dit au lieu\n"
+            "  d'inventer une reponse.\n"
         )
         return 2
 
@@ -571,6 +668,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         engine = _simulated_engine(
             task, seed=0, journal_path=journal_path, max_rounds=args.rounds,
             alpha=args.alpha, min_panel=args.min_panel,
+            # --no-oracle : la mission ne fournit AUCUN test, comme une mission
+            # reelle. Le modele simule traduit les regles en temoins, et la preuve
+            # doit tenir toute seule.
+            traduire_les_regles=bool(getattr(args, "no_oracle", False)),
         )
     else:
         engine = _real_engine(
@@ -583,7 +684,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     work = WorkItem(
         objective=objective,
         entrypoint=(task.entrypoint if task else args.entrypoint or ""),
-        checks=dict(task.checks) if task else {},
+        checks=(dict(task.checks) if task and not getattr(args, "no_oracle", False) else {}),
         spec=task.spec() if task else None,
     )
     report = engine.run(mission, work)
@@ -1276,6 +1377,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="risque d'erreur accepte")
     r.add_argument("--journal", default=str_env("JIO_JOURNAL", ".jio/journal.jsonl"))
     r.add_argument("--json", default="", help="ecrit le rapport JSON a ce chemin")
+    r.add_argument(
+        "--no-oracle", dest="no_oracle", action="store_true",
+        help="retirer les tests fournis par la mission et PROUVER a partir des seules "
+             "regles, traduites en temoins executables — exactement ce qu'une mission "
+             "reelle impose. Un temoin ecrit par un modele ne peut jamais, a lui seul, "
+             "faire rejeter un candidat ; une regle non prouvee interdit la mention "
+             "« livre sans reserve ».",
+    )
     r.add_argument("-v", "--verbose", action="store_true")
     r.set_defaults(func=cmd_run)
 

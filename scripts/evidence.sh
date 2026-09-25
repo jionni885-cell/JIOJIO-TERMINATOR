@@ -159,6 +159,53 @@ print(f"    -> livrables corriges par la comparaison : {gains}/3 ; et le desacco
       "avoue dans tous les cas.")
 PYE
 
+    titre "3 bis. Sans oracle : les regles deviennent des temoins executables"
+    "$PYTHON" - <<'PYE'
+import sys
+sys.path.insert(0, ".")
+from jio.bench.tasks import TASKS
+from jio.bench.temoins import TraducteurSimule
+from jio.cli import _check, _simulated_engine
+from jio.core.types import Mission
+from jio.loop.engine import WorkItem
+
+print("    Une mission reelle ne fournit AUCUN test. Sans traduction des regles en")
+print("    temoins, le moteur ne peut rien prouver : il s'abstient. Mesure sur le banc,")
+print("    cinq taches, une seule graine, 3 candidats + 1 appel de traduction (4 appels :")
+print("    exactement le budget d'un best-of-4).")
+print()
+print(f"    {'fidelite du traducteur':<26}{'juste':>7}{'abstention':>12}{'faux+reserve':>14}{'SANS RESERVE':>14}")
+for fidelite in (1.0, 0.5, 0.0):
+    justes = abstentions = reserves = silencieuses = 0
+    for tache in TASKS:
+        traducteur = TraducteurSimule(taches=TASKS, fidelite=fidelite)
+        moteur = _simulated_engine(tache, skill=0.35, seed=0, max_rounds=1,
+                                   temoins=True, traducteur=traducteur)
+        rapport = moteur.run(
+            Mission(objective=tache.objective, id=tache.id, max_rounds=1),
+            WorkItem(objective=tache.objective, entrypoint=tache.entrypoint,
+                     spec=tache.spec()),
+        )
+        if _check(rapport.subject, tache):
+            justes += 1
+        elif rapport.status.value == "abstained":
+            abstentions += 1
+        elif rapport.status.value == "delivered":
+            silencieuses += 1
+        else:
+            reserves += 1
+    print(f"    {fidelite:>5.0%}{'':<21}{justes:>7}{abstentions:>12}{reserves:>14}"
+          f"{silencieuses:>14}")
+print()
+print("    -> quand le traducteur est juste, la preuve est possible SANS oracle.")
+print("       Quand il se trompe, le systeme S'ABSTIENT : il perd des livraisons,")
+print("       jamais la justesse. La colonne qui doit rester a zero est la derniere :")
+print("       une erreur livree sans que rien ne le dise.")
+print("       Lecture du garde-fou : un temoin que TOUS les candidats echouent ne")
+print("       prouve rien sur eux (il peut etre faux), donc la regle est declaree NON")
+print("       PROUVEE — et il fait s'abstenir au lieu de faire rejeter.")
+PYE
+
     titre "4. Le chemin reel (3 agents externes -> livraison auditee)"
     "$PYTHON" -m pytest -q tests/test_real_path.py 2>&1 | tail -2
 

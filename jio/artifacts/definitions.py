@@ -748,4 +748,9 @@ PRINCIPLES: tuple[str, ...] = (
     "dead end while a verifier can still select a better attempt.",
     "Record failures append-only, with the guard that now catches them.",
     "Improve skills only when you can measure a before and an after.",
+    "Translate the stated rules into executable checks before you claim anything: an "
+    "untranslated rule is a slogan, and a check nobody can fail proves nothing.",
+    "A check written by a model is untrusted content: it may rank candidates, but it "
+    "may never, on its own, condemn one. If every candidate fails it, it is declared "
+    "unproven — not believed.",
 )

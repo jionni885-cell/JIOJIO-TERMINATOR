@@ -364,6 +364,59 @@ mesurée était une piste séduisante. Mesure faite avant de construire : un cri
 l'absorbe déjà. L'axe n'a donc **pas** été construit : une brique qui ne change rien est du
 poids, pas une amélioration.
 
+**8. Les règles doivent devenir des tests — sinon ce ne sont que des slogans.** Jusqu'ici, le
+compilateur énumérait des règles (« une liste vide renvoie 0 »), le moteur les faisait **lire** au
+modèle… et aucune n'était jamais traduite en test exécutable. Hors banc d'essai — c'est-à-dire
+dans **toute mission réelle** — la seule preuve exécutable disponible était la cohérence de
+l'artefact avec sa propre documentation. Un artefact peut donc tenir parfaitement sa propre
+docstring et ne rien faire de la mission demandée. Le moteur ne pouvait alors que **s'abstenir**.
+
+JIO demande maintenant au modèle de traduire chaque règle en une assertion exécutable, avec trois
+issues possibles, toutes explicites :
+
+- la règle devient un **témoin exécutable** ;
+- le modèle **avoue** ne pas savoir la traduire, avec sa raison (« aucune règle » vaut mieux qu'une
+  règle fausse) ;
+- le test est **refusé par les garde-fous** — un modèle est du contenu **non fiable** : ses tests
+  n'entrent pas parce qu'il les a écrits, mais parce qu'ils ont passé une porte (aucun `import`,
+  aucun accès fichier/réseau/processus, aucune syntaxe invalide, et le test doit réellement
+  appeler l'entrée publique). Chaque refus est motivé et visible.
+
+Mesure au banc, **sans aucun oracle**, à budget égal (3 candidats + 1 appel de traduction = 4
+appels, soit exactement un best-of-4) :
+
+```
+fidelite du traducteur      juste  abstention  faux+reserve  SANS RESERVE
+ 100%                           5           0             0             0
+  50%                           2           3             0             0
+   0%                           0           5             0             0
+```
+
+Trois choses à lire dans ce tableau, et la troisième est la seule qui compte vraiment :
+
+1. quand le modèle **lit correctement** les règles, la preuve devient possible **sans oracle** :
+   5 livraisons justes sur 5, là où le moteur s'abstenait systématiquement ;
+2. quand il les lit **mal**, le moteur **s'abstient** : il perd des livraisons, **jamais la
+   justesse**. Traduire mal ne fait pas livrer faux, cela fait renoncer ;
+3. **la dernière colonne reste à zéro** : dans aucun cas une erreur n'a été livrée **sans que rien
+   ne le dise**. Le garde-fou est simple à énoncer : un témoin que **tous** les candidats échouent
+   ne prouve rien sur eux — soit il est faux, soit tous les candidats sont faux, et rien ne permet
+   de trancher. La règle est donc déclarée **NON PROUVÉE** : le témoin ne peut ni accuser ni
+   innocenter, et son échec n'est pas effacé du verdict. Toute règle non prouvée interdit la mention
+   « livré sans réserve », le rapport la nomme, et `jio trace` montre le texte exact du témoin — ce
+   que le modèle a eu le droit d'affirmer.
+
+Quand la mission **fournit** ses oracles (le banc), la traduction n'est même pas demandée : un
+oracle réel est la référence, le modèle ne prend pas sa place. Et quand la preuve repose sur des
+témoins traduits, le rapport **le dit** : un artefact prouvé par une traduction n'est pas prouvé de
+la même façon qu'un artefact prouvé par les oracles de la mission, et le lire est un droit.
+
+Essayez-le sans clé d'API :
+
+```sh
+jio run "somme des pairs d'une liste" --simulate --task sum_even --no-oracle
+```
+
 ---
 
 ## Le chemin réel est prouvé, pas seulement décrit

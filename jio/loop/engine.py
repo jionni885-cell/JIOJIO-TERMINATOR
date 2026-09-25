@@ -50,6 +50,7 @@ from ..core.types import (
 from ..gate.conformal import ConformalGate
 from ..providers.base import Completion, Message, Provider
 from ..spec.compiler import SpecCompiler
+from ..spec.witness import Temoignage, traduire
 from ..verify.executable import ExecutableProver, ProverResult
 
 
@@ -86,6 +87,14 @@ class EngineConfig:
     #: modele, precis et executable. Cout : une derivation STATIQUE (aucun reseau) et
     #: une passe de bac a sable par regle trouvee, memorisee par artefact.
     self_check: bool = True
+    #: Traduire les regles de la specification en TEMOINS EXECUTABLES quand la mission
+    #: n'en fournit aucun (toute mission reelle : le banc, lui, a ses oracles).
+    #: Sans cela, la seule preuve executable est l'auto-coherence — l'artefact peut
+    #: tenir sa propre documentation et ne rien faire de la mission. Cout : UN appel
+    #: de modele, une fois par mission. La traduction est sous garde-fous, et un
+    #: temoin que TOUS les candidats echouent est declare NON DISCRIMINANT : il ne
+    #: peut jamais, a lui seul, faire rejeter un candidat.
+    temoins: bool = True
 
 
 @dataclass(frozen=True)
@@ -136,6 +145,14 @@ class Engine:
         # Motif du dernier rejet par auto-coherence, par contenu d'artefact : la
         # boucle de reprise s'en sert pour que le modele sache QUOI corriger.
         self._motif_auto: dict[str, str] = {}
+        #: Temoins traduits depuis la specification, une seule fois par mission :
+        #: la traduction est un appel de modele, elle ne se repete pas.
+        self._temoignage: Temoignage | None = None
+        #: Regles declarees NON PROUVEES : le temoin traduit a echoue sur tous les
+        #: candidats, donc il ne prouve rien. Une mission qui en porte une ne peut
+        #: pas etre declaree livree sans reserve — c'est la doctrine « un etat se
+        #: prouve avant d'etre cru ».
+        self._regles_non_prouvees: set[str] = set()
 
     # -- point d'entree ----------------------------------------------------- #
 
@@ -206,11 +223,22 @@ class Engine:
                 break
 
             # --- 3. PREUVE EXECUTABLE (fail-closed) ----------------------- #
+            # Les regles de la mission doivent devenir executables : sans temoin,
+            # elles ne sont que des slogans, et l'artefact peut tenir sa propre
+            # documentation en ne faisant rien de la mission (voir spec/witness.py).
+            temoignage = self._temoins_de_la_spec(spec, work, usage)
+            checks: dict[str, str] = dict(self._checks_en_vigueur(work))
+            if rnd == 0 and temoignage.appels:
+                # PROVENANCE DE LA PREUVE, toujours declaree : le rapport doit dire sur
+                # QUOI il s'appuie. Un artefact prouve par des temoins traduits par un
+                # modele n'est pas prouve de la meme facon qu'un artefact prouve par
+                # les oracles de la mission, et le lecteur a le droit de le savoir.
+                warnings.append(self._avertir_sur_les_temoins(temoignage))
             proved: list[tuple[Artifact, ProverResult]] = []
             for art in candidates:
                 try:
                     res = self.prover.prove(
-                        art.content, spec, hidden_checks=work.checks,
+                        art.content, spec, hidden_checks=checks,
                         entrypoint=work.entrypoint, stage=Stage.PROVE,
                     )
                 except FailClosed as exc:
@@ -247,6 +275,12 @@ class Engine:
                     force_reason=abstained_for, infeasible=infeasible,
                 )
                 return residual
+
+            # Un temoin que TOUS les candidats echouent ne prouve RIEN sur eux :
+            # soit il est faux, soit il discrimine mal. Il ne peut donc pas, a lui
+            # seul, faire rejeter un candidat — il declasse, et il s'AVOUE.
+            if temoignage.tests:
+                self._signaler_temoins_non_discriminants(proved, temoignage, warnings, rnd)
 
             proved.sort(key=lambda pair: pair[1].ratio, reverse=True)
             top_art, top_res = proved[0]
@@ -409,6 +443,113 @@ class Engine:
         )
         self._learn(mission, report)
         return report
+
+    @staticmethod
+    def _avertir_sur_les_temoins(temoignage: Temoignage) -> Finding:
+        """Ce qui n'a PAS pu devenir un temoin est dit, jamais passe sous silence."""
+        if temoignage.motif and not temoignage.utilisable:
+            return Finding(
+                agent="temoins",
+                severity=Severity.MEDIUM,
+                message=(
+                    f"aucune regle n'a pu etre traduite en temoin executable ({temoignage.motif}) : "
+                    "la seule preuve disponible est la coherence de l'artefact avec sa propre "
+                    "documentation — ce n'est PAS une preuve contre la mission."
+                ),
+            )
+        if not (temoignage.aveux or temoignage.refuses or temoignage.motif):
+            return Finding(
+                agent="temoins",
+                severity=Severity.MEDIUM,
+                message=(
+                    f"preuve etablie sur {len(temoignage.tests)} temoin(s) EXECUTABLE(S) "
+                    "TRADUIT(S) par le modele : la mission ne fournissait aucun oracle. "
+                    "Les regles sont donc prouvees — mais par une traduction, pas par un "
+                    "oracle fourni : la traduction passe les garde-fous, elle n'est pas "
+                    "pour autant infaillible."
+                ),
+            )
+        details = []
+        for rid, raison in list(temoignage.aveux.items())[:3]:
+            details.append(f"{rid} declaree non verifiable par le modele ({raison[:120]})")
+        for rid, motif in list(temoignage.refuses.items())[:3]:
+            details.append(f"{rid} refusee par les garde-fous ({motif[:120]})")
+        return Finding(
+            agent="temoins",
+            severity=Severity.MEDIUM,
+            message=(
+                f"preuve etablie sur {len(temoignage.tests)} temoin(s) executable(s) "
+                "TRADUIT(S) par le modele (aucun oracle fourni par la mission) ; "
+                "le reste est declare NON PROUVE : " + " ; ".join(details)
+            ),
+        )
+
+    def _signaler_temoins_non_discriminants(
+        self,
+        proved: list[tuple[Artifact, ProverResult]],
+        temoignage: Temoignage,
+        warnings: list[Finding],
+        rnd: int,
+    ) -> None:
+        """Nomme l'ambiguite : un temoin que TOUS les candidats echouent.
+
+        Deux causes possibles, et le systeme ne peut PAS trancher entre elles :
+        le temoin est faux, ou tous les candidats sont faux. Ce que cette methode
+        fait — et ce qu'elle ne fait pas — a ete decide par la mesure :
+
+          * elle N'EFFACE PAS l'echec du verdict (la premiere version le faisait,
+            et c'etait une faute : « non prouve » devenait « livre ». Le brouillon
+            livrait alors un artefact FAUX avec une simple reserve, la ou l'abstention
+            etait la bonne sortie) ;
+          * elle NE CHANGE PAS le classement : un temoin que personne ne passe ne
+            departage personne, donc l'ignorer ne change aucun ordre ;
+          * elle DECLARE la regle non prouvee, et interdit la mention « livre sans
+            reserve » (voir la post-condition de `_finalize`).
+
+        Le resultat est conservateur dans le bon sens : on s'abstient quand on ne
+        peut pas prouver, au lieu de livrer en esperant.
+        """
+        discriminants = set(temoignage.tests)
+        for _art, res in proved:
+            discriminants -= {w.rule_id for w in res.witnesses if w.ok}
+        if not discriminants:
+            return
+
+        # Une regle que personne ne satisfait n'a rien departage : le classement est
+        # identique a ce qu'il serait sans elle. On le VERIFIE au lieu de l'affirmer.
+        # L'ORDRE, et seulement l'ordre : un temoin que personne ne passe fait
+        # baisser tous les ratios de la meme quantite, donc il ne peut pas changer
+        # le classement. Comparer les ratios eux-memes ne testerait pas cela.
+        ordre_sans = [art.digest for art, _res in proved]
+        partielles: list[tuple[str, float]] = []
+        for art, res in proved:
+            temoins = tuple(w for w in res.witnesses if w.rule_id not in discriminants)
+            echecs = tuple(w for w in temoins if not w.ok)
+            total = len(temoins) or 1
+            partielles.append((art.digest, (total - len(echecs)) / total))
+        ordre_sans_eux = [digest for digest, _r in sorted(
+            partielles, key=lambda x: x[1], reverse=True)]
+
+        for rid in sorted(discriminants):
+            warnings.append(Finding(
+                agent="temoins",
+                severity=Severity.MEDIUM,
+                message=(
+                    f"regle {rid} NON PROUVEE : son temoin echoue sur TOUS les candidats. "
+                    "Deux causes possibles — le temoin est faux, ou tous les candidats "
+                    "sont faux — et rien ici ne permet de trancher. La regle reste "
+                    "declaree NON PROUVEE, jamais supposee satisfaite."
+                ),
+            ))
+        self._regles_non_prouvees.update(discriminants)
+        self.journal.append(
+            "temoins-non-discriminants",
+            {
+                "round": rnd,
+                "regles": sorted(discriminants),
+                "classement_identique": ordre_sans == ordre_sans_eux,
+            },
+        )
 
     def _arbitrer(
         self,
@@ -590,7 +731,7 @@ class Engine:
         for mutant in mutants:
             try:
                 res = self.prover.prove(
-                    mutant.source, spec, hidden_checks=work.checks,
+                    mutant.source, spec, hidden_checks=self._checks_en_vigueur(work),
                     entrypoint=work.entrypoint, stage=Stage.PROVE,
                 )
             except FailClosed:
@@ -707,6 +848,61 @@ class Engine:
 
     # -- etapes internes ---------------------------------------------------- #
 
+    def _temoins_de_la_spec(self, spec: Spec, work: WorkItem, usage: dict[str, int]) -> Temoignage:
+        """Traduit les regles en temoins executables — UNE fois par mission.
+
+        Rien n'est fait quand la mission FOURNIT deja ses oracles (le banc les
+        fournit) : traduire par-dessus un oracle reel serait un gaspillage, et
+        surtout une substitution — l'oracle cache est la reference, pas le modele.
+        """
+        if not self.config.temoins or work.checks:
+            return Temoignage()
+        if self._temoignage is not None:
+            return self._temoignage
+
+        provider = self.spec_compiler.provider or (self.generators[0] if self.generators else None)
+        temoignage = traduire(
+            spec, provider, entrypoint=work.entrypoint,
+            objectif=work.objective or spec.mission,
+        )
+        self._temoignage = temoignage
+        usage["calls"] = usage.get("calls", 0) + temoignage.appels
+        self.journal.append(
+            "temoins",
+            {
+                "regles": len(spec.rules),
+                "traduites": sorted(temoignage.tests),
+                # Le TEXTE exact de ce que le modele a eu le droit d'affirmer : sans
+                # lui, « jio trace » montrerait un vote sans montrer la question.
+                # Borne a 400 caracteres par temoin : c'est un journal, pas un depot.
+                "tests": {k: v[:400] for k, v in temoignage.tests.items()},
+                "aveux": {k: v[:200] for k, v in temoignage.aveux.items()},
+                "refuses": {k: v[:200] for k, v in temoignage.refuses.items()},
+                "motif": temoignage.motif,
+                "appels": temoignage.appels,
+                "modele": temoignage.modele,
+            },
+        )
+        return temoignage
+
+    def _checks_en_vigueur(self, work: WorkItem) -> Mapping[str, str]:
+        """Les temoins valables pour cette mission, en un seul endroit.
+
+        Priorite ABSOLUE aux oracles fournis par la mission : le banc est la
+        reference, le modele ne se substitue pas a elle. Les temoins traduits ne
+        prennent le relais que lorsque personne d'autre n'a fourni de test — et
+        c'est le cas de toute mission reelle.
+
+        Un seul point de verite : la boucle de preuve, le panel et la porte de
+        mutation doivent juger sur les MEMES temoins. Sinon le panel voterait sur
+        une preuve que la livraison n'utilise pas.
+        """
+        if work.checks:
+            return work.checks
+        if self._temoignage is not None:
+            return dict(self._temoignage.tests)
+        return {}
+
     def _compile(self, mission: Mission, work: WorkItem) -> Spec:
         compiler = self.spec_compiler
         if compiler.provider is None and self.generators:
@@ -789,7 +985,7 @@ class Engine:
 
         def verifier(src: str) -> tuple[bool, str]:
             res = self.prover.prove(
-                src, spec, hidden_checks=work.checks,
+                src, spec, hidden_checks=self._checks_en_vigueur(work),
                 entrypoint=work.entrypoint, stage=Stage.PROVE,
             )
             if res.failures:
@@ -1001,6 +1197,23 @@ class Engine:
         else:
             status = MissionStatus.FAILED
             abstention = "aucune verification n'a pu etre menee a bien"
+
+        # POST-CONDITION, quelle que soit la branche empruntee plus haut : une regle
+        # dont le temoin echoue sur TOUS les candidats n'est PAS prouvee. La livrer
+        # « sans reserve » laisserait croire que la specification est couverte alors
+        # qu'elle ne l'est pas. On ne peut pas non plus la transformer en rejet : un
+        # temoin que personne ne satisfait peut etre faux. Donc : reserve, et le nom
+        # de la regle dans le rapport.
+        if self._regles_non_prouvees and status in (
+            MissionStatus.DELIVERED, MissionStatus.DELIVERED_WITH_RESERVATION
+        ):
+            mention = (
+                "regle(s) NON PROUVEE(s) : " + ", ".join(sorted(self._regles_non_prouvees))
+                + " — leur temoin traduit echoue sur TOUS les candidats : il ne les "
+                "departage pas, donc il ne peut ni accuser ni innocenter."
+            )
+            status = MissionStatus.DELIVERED_WITH_RESERVATION
+            abstention = f"{abstention} · {mention}" if abstention else mention
 
         # --- blame : localisation du PREMIER pas fautif -------------------- #
         blames: tuple[Blame, ...] = ()
