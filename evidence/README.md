@@ -6,9 +6,9 @@ mesurent ces fichiers ; `scripts/evidence.sh` rejoue l'ensemble.
 | Dossier | Ce qu'il contient | Mesure verrouillee par |
 |---|---|---|
 | `properties/` | 8 artefacts **fautifs** (mutation d'argument, aller-retour avec perte, idempotence rompue, tri infidele) et 8 artefacts **sains** | detection 1/8 -> 8/8, **0** artefact sain accuse |
-| `selfspec/` | 5 artefacts **documentes** : un correct, deux qui mentent sur leur propre docstring, deux dont la documentation decrit fidelement un contrat faux | 2 defauts sur 4 rattrapes par l'auto-controle, **0** faux rejet |
+| `selfspec/` | 9 artefacts **documentes** : fonctions et **classes**, dont un menteur dont un exemple pedagogique masquait l'echec decisif, une pile LIFO qui depile par le bas, et un artefact sain | **4** rejets francs, **1** reserve motivee, **0** faux rejet ; 240 doctests de paquets publies balayes en plus, sans une seule accusation |
 | `witness/` | les 3 modes d'echec d'un **traducteur de regles** (valeur d'un distracteur, contrat d'erreur inverse, regle lue a l'envers), sur les 22 regles du banc | la contrefacon est **refusee par l'implementation correcte** et satisfaite par une fausse ; sans oracle, 5/5 livraisons justes a fidelite 100 %, et **0** erreur livree sans reserve a fidelite 0 |
-| `witness/` | **+ bibliothèque de témoins** : la même mission répétée 3 fois, la mémoire étant le seul changement | 1 traduction payée, puis **0** ; une mémoire forgée est mise en quarantaine et jamais appliquée |
+| `witness/` | **+ bibliotheque de temoins** : la même mission répétée 3 fois, la mémoire étant le seul changement | 1 traduction payée, puis **0** ; une mémoire forgée est mise en quarantaine et jamais appliquée |
 | `divergence/` | 2 candidats a la meme tache (vraie moyenne, division entiere), tous deux acceptes par une specification reduite au cas nominal | le livrable ne depend plus de l'ordre d'arrivee, et le desaccord est **avoue** avec l'entree exacte |
 
 Regles d'ecriture de ces corpus — elles sont le sujet autant que les fichiers :

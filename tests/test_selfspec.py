@@ -70,8 +70,24 @@ def _fichiers() -> list[pathlib.Path]:
     return sorted(CORPUS.glob("*.py"))
 
 
-def test_le_corpus_est_present():
-    assert len(_fichiers()) == 5, [p.name for p in _fichiers()]
+def _fichiers_attendus() -> set[str]:
+    """Le corpus doit rester complet : un fichier disparu rendrait la mesure muette."""
+    return {
+        "correct.py",
+        "honnete_sur_son_comportement.py",
+        "classe_honnete.py",
+        "classe_pedagogique.py",
+        "ment_sur_la_division.py",
+        "arrondit_en_douce.py",
+        "docstring_coherente_contrat_faux.py",
+        "classe_menteuse_masquee.py",
+        "classe_lifo_trompeuse.py",
+    }
+
+
+@pytest.mark.parametrize("nom", sorted(_fichiers_attendus()))
+def test_le_corpus_est_present(nom):
+    assert (CORPUS / nom).exists(), f"{nom} manquant dans le corpus"
 
 
 @pytest.mark.parametrize("fichier", _fichiers(), ids=lambda p: p.name)
@@ -224,3 +240,96 @@ def test_le_controle_est_desactivable_et_le_comportement_redevient_permissif():
         "controle desactive : le harness doit accepter ce que la spec accepte"
     )
     assert not [p for p in modele.prompts if "CONTREDIT" in p]
+
+
+# --------------------------------------------------------------------------- #
+# Classes : la meme exigence, et une trappe qui a bien failli passer
+# --------------------------------------------------------------------------- #
+
+
+def _audit_classe(nom_fichier: str) -> tuple[bool, str]:
+    """Audite une CLASSE comme le fait `jio audit` : derive, puis preuve executable.
+
+    Rend (conforme, motif) : le verdict vient d'une preuve executee, pas d'une
+    lecture.
+    """
+    from jio.verify.autocheck import derive
+    from jio.verify.executable import ExecutableProver, Sandbox
+
+    source = (CORPUS / nom_fichier).read_text(encoding="utf-8")
+    # `path=` compte : la derivation s'en sert pour le preambule du paquet. Passer
+    # la source seule donnait un verdict DIFFERENT de `jio audit` sur le meme
+    # fichier — un test qui ne teste pas le meme chemin que l'outil ne prouve rien.
+    derive_result = derive(source, path=CORPUS / nom_fichier)
+    prover = ExecutableProver(sandbox=Sandbox(timeout=20))
+    res = prover.prove(
+        source, derive_result.spec, hidden_checks=derive_result.checks,
+        entrypoint=derive_result.entrypoint or "", preamble=derive_result.preamble,
+    )
+    if not res.failures:
+        return True, ""
+    temoin = res.failures[0]
+    return False, (temoin.stderr or "") + (temoin.stdout or "")
+
+
+def test_une_classe_menteuse_nest_pas_sauvee_par_un_exemple_pedagogique() -> None:
+    """La trappe trouvee en verifiant l'axe « classes », et elle etait reelle.
+
+    La docstring melange deux choses :
+      * `>>> c.ajouter(-5)` — un appel dont la SORTIE n'est pas annoncee : c'est un
+        exemple d'illustration, et l'outil a raison de ne pas l'accuser (une
+        docstring pedagogique n'est pas une specification) ;
+      * `>>> c.valeur` puis `0` alors que le code rend `-5` — un echec DECISIF.
+
+    La premiere ligne suffisait a faire classer l'ensemble en RESERVE : le mensonge
+    du code passait. Le tampon de doctest contient pourtant les deux echecs, donc il
+    suffit de regarder si l'un d'eux est decisif (« Expected: » suivi de « Got: »).
+    """
+    conforme, motif = _audit_classe("classe_menteuse_masquee.py")
+    assert not conforme, "une classe qui contredit ses propres exemples doit etre rejetee"
+    assert "[RESERVE]" not in motif, (
+        f"l'echec decisif a ete classe en reserve : {motif[:200]}"
+    )
+    assert "Expected:" in motif and "Got:" in motif, motif[:200]
+
+
+def test_un_exemple_dillustration_seul_reste_une_reserve_pas_une_accusation() -> None:
+    """Le pendant exact du test precedent : un exemple sans sortie annoncee n'accuse personne.
+
+    Sans ce test, la correction precedente pourrait etre « reparee » un jour en
+    supprimant la notion de reserve — et l'outil accuserait alors toute docstring
+    pedagogique. Un faux positif ici rend l'outil inutilisable sur du vrai code.
+    """
+    conforme, motif = _audit_classe("classe_pedagogique.py")
+    assert not conforme, "le controle ne peut pas conclure : il doit le dire"
+    assert "[RESERVE]" in motif, motif[:200]
+
+
+def test_une_classe_dont_une_methode_trahit_la_promesse_est_rejetee() -> None:
+    conforme, motif = _audit_classe("classe_lifo_trompeuse.py")
+    assert not conforme, "une pile qui depile par le bas trahit sa promesse LIFO"
+    assert "[RESERVE]" not in motif, motif[:200]
+
+
+def test_une_classe_honnete_est_muette() -> None:
+    """Le corpus sain compte autant que le corpus fautif."""
+    conforme, motif = _audit_classe("classe_honnete.py")
+    assert conforme, f"faux rejet sur une classe correcte : {motif[:200]}"
+
+
+def test_le_balayage_du_corpus_ne_produit_aucun_faux_rejet() -> None:
+    """Le corpus ENTIER : le sain doit rester muet, le fautif doit tomber.
+
+    Les deux fichiers dont la documentation decrit FIDELEMENT un mauvais contrat
+    ne sont pas juges ici : aucune methode locale ne peut les voir, et le test
+    dedie plus haut le dit deja.
+    """
+    sains = {"correct.py", "honnete_sur_son_comportement.py", "classe_honnete.py"}
+    fautifs = {"ment_sur_la_division.py", "arrondit_en_douce.py",
+               "classe_menteuse_masquee.py", "classe_lifo_trompeuse.py"}
+    for nom in sorted(sains | fautifs):
+        conforme, motif = _audit_classe(nom)
+        if nom in sains:
+            assert conforme, f"faux rejet sur {nom} : {motif[:200]}"
+        else:
+            assert not conforme, f"{nom} devrait etre rejete"

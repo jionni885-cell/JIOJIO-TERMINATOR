@@ -456,6 +456,31 @@ modifiée n'était plus jamais traduite, et la mission ne la prouvait plus du to
 d'une mémoire utilisait `from_jsonl`, qui **lit sans vérifier** — la quarantaine n'avait donc jamais
 lieu.
 
+**10. Classes comprises, et une trappe qui a bien failli passer.** L'axe d'auto-cohérence (« un
+artefact ne doit pas contredire ce qu'il affirme ») couvrait déjà les classes par leurs exemples
+`>>>`. En le vérifiant, une trappe réelle est apparue :
+
+```
+>>> c.ajouter(-5)     <- sortie non annoncée : « Expected nothing »
+>>> c.valeur          <- « Expected: 0, Got: -5 » : DÉCISIF
+```
+
+La première ligne suffisait à faire classer **l'ensemble** en réserve, et le mensonge du code
+passait. Le tampon de doctest contient pourtant les deux échecs : il suffit de regarder si l'un
+d'eux est **décisif** (`Expected:` suivi de `Got:` — et non la forme `Expected nothing`). Un échec
+décisif ne se cache plus derrière un exemple pédagogique voisin.
+
+Symétriquement, l'exemple d'**illustration seul** reste une réserve motivée : accuser toute docstring
+pédagogique rendrait l'outil inutilisable sur du vrai code. Les deux comportements sont verrouillés
+par des tests, le second autant que le premier. Mesure sur le corpus : **4 rejets francs, 1 réserve
+motivée, 0 faux rejet**. Balayage de contrôle sur **240 doctests** de paquets publiés
+(`more-itertools`, `toolz`, `python-dateutil`, `PyYAML`) : aucun échec, donc aucune accusation — la
+règle ne peut pas produire de faux positif sur du code dont les exemples passent.
+
+Le message d'échec porte maintenant la **valeur attendue**. Avant, il rapportait
+`2 exemple(s) en echec : 0 | Got: | -5` : l'auteur lisait un échec sans savoir à quoi son code
+devait répondre.
+
 ---
 
 ## Le chemin réel est prouvé, pas seulement décrit

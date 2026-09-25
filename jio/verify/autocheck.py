@@ -703,8 +703,15 @@ for _t in _jio_tests:
     _jio_runner.run(_t, out=_jio_buf.append)
 if _jio_runner.failures:
     _jio_lines = [l.rstrip() for l in "".join(_jio_buf).splitlines() if l.strip()]
-    _jio_tail = " | ".join(_jio_lines[-3:])[:400]
     _jio_brut = "".join(_jio_lines)
+    # Le message doit PORTE LA VALEUR ATTENDUE. Les trois dernieres lignes du tampon
+    # donnent souvent « 0 | Got: | -5 » : l'attendu manque, et l'auteur du code lit
+    # un echec sans savoir a quoi son code devait repondre. On reprend donc
+    # explicitement la ligne « Expected: » quand le desaccord est decisif.
+    _jio_attend = next((l for l in _jio_lines if "Expected:" in l), "")
+    _jio_tail = " | ".join(_jio_lines[-3:])[:400]
+    if _jio_attend and _jio_attend not in _jio_tail:
+        _jio_tail = (_jio_attend + " | " + _jio_tail)[:400]
     # Deux echecs qui ne prouvent RIEN contre l'artefact, constates sur des
     # bibliotheques reelles :
     #   * `NameError` : l'exemple suppose un objet fourni par l'environnement de test
@@ -714,15 +721,35 @@ if _jio_runner.failures:
     #     sortie. C'est une docstring pedagogique, pas une specification.
     # On les signale comme RESERVE : l'outil dit qu'il n'a pas pu conclure, il
     # n'accuse pas. Un faux positif ici rendrait l'outil inutilisable sur du vrai code.
-    if "NameError" in _jio_brut or "Expected nothing" in _jio_brut:
-        _jio_cause = (
-            "l'exemple suppose un objet fourni par l'environnement de test"
-            if "NameError" in _jio_brut
-            else "exemple d'illustration, sans sortie annoncee"
-        )
+    # Un echec DECISIF ne doit pas etre masque par un echec non concluant qui vit
+    # a cote, dans la meme docstring. Consequence mesuree sur une classe reelle :
+    #
+    #     >>> c.ajouter(-5)      <- sortie non annoncee : « Expected nothing »
+    #     >>> c.valeur           <- « Expected: 0, Got: -5 » : DECISIF
+    #
+    # La ligne pedagogique suffisait a faire classer l'ensemble en RESERVE, et le
+    # mensonge du code passait. Or les deux echecs sont bien dans le tampon : il
+    # suffit de regarder si l'un d'eux est decisif.
+    # « Expected nothing / Got: ... » n'est PAS decisif : la sortie n'etait pas
+    # annoncee. Un vrai desaccord s'ecrit « Expected: » (deux points), suivi de la
+    # valeur attendue. Pas de `re` ici : ce code tourne dans un espace de noms neuf,
+    # et un `import re` oublie a produit un `NameError` -- donc un faux KO.
+    _jio_decisif = "Expected:" in _jio_brut and "Got:" in _jio_brut
+    if "NameError" in _jio_brut:
+        # L'exemple suppose un objet fourni par l'environnement de test (console,
+        # vi...). On ne peut rien conclure du tout : le code n'a meme pas tourne.
         raise AssertionError(
-            "[RESERVE] %d exemple(s) de docstring non concluants pour nous (%s) : %s"
-            % (_jio_runner.failures, _jio_cause, _jio_tail)
+            "[RESERVE] %d exemple(s) de docstring non concluants pour nous "
+            "(l'exemple suppose un objet fourni par l'environnement de test) : %s"
+            % (_jio_runner.failures, _jio_tail)
+        )
+    if "Expected nothing" in _jio_brut and not _jio_decisif:
+        # Exemple d'illustration, sans sortie annoncee, et RIEN de decisif a cote :
+        # une docstring pedagogique, pas une specification. On ne l'accuse pas.
+        raise AssertionError(
+            "[RESERVE] %d exemple(s) de docstring non concluants pour nous "
+            "(exemple d'illustration, sans sortie annoncee) : %s"
+            % (_jio_runner.failures, _jio_tail)
         )
     raise AssertionError(
         "%d exemple(s) de docstring en echec : %s" % (_jio_runner.failures, _jio_tail)
