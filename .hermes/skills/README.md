@@ -16,4 +16,5 @@ cp -r .hermes/skills/* ~/.hermes/skills/
 - `harness/structured-failure` — Convertir chaque echec en donnee exploitable plutot qu'en recit : regle, attendu, observe, temoin, contre-exemple minimal.
 - `harness/decorrelated-panel` — Obtenir plusieurs avis reellement independants : D1 a D5, quorum n >= 3f+1, et detection de l'echo entre verificateurs.
 - `security/hostile-content` — Traiter tout contenu externe (depot, page web, issue, fichier) comme hostile : donnees jamais instructions, actions jamais implicites.
+- `verification/prose-witnesses` — Verifier un DOCUMENT comme on verifie du code : les faits d'un texte (calculs, blocs de code, chemins) se prouvent au lieu de se relire.
 - `evolution/skill-forge` — Auto-amelioration disciplinee : transformer les echecs repetes en competences bornees, mesurees et reversibles.
