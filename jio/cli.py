@@ -126,6 +126,7 @@ def _simulated_engine(
     banque: object | None = None,
     racine: Path | None = None,
     fournisseur: object | None = None,
+    fournisseurs: object | None = None,
 ) -> Engine:
     """Assemble un moteur utilisant la simulation deterministe (aucune cle requise).
 
@@ -148,13 +149,22 @@ def _simulated_engine(
     else:
         prover = ExecutableProver(sandbox=Sandbox(timeout=20))
     personas = list(DEFAULT_PERSONAS)[:panel_size]
-    reel = getattr(fournisseur, "provider", None)
-    if reel is not None:
+    # Un ou PLUSIEURS modeles : plusieurs donnent un panel reellement decorrele, ce qui est
+    # la seule facon pour le consensus de valoir quelque chose.
+    reels = [getattr(f, "provider", None) for f in (fournisseurs or [])]
+    reels = [r for r in reels if r is not None]
+    if not reels and fournisseur is not None:
+        unique = getattr(fournisseur, "provider", None)
+        reels = [unique] if unique is not None else []
+    reel = reels[0] if reels else None
+    if reels:
         # Le panel doit garder plusieurs critiques pour rester decorrele : le meme CLI est
         # appele plusieurs fois, avec des personas differentes. Un panel d'une seule voix
         # ne serait pas un panel — et c'est la decorrelation qui fait sa valeur.
-        fournisseurs = [reel]
-        panel = AuditPanel.llm([reel] * len(personas), personas)
+        # Le panel cycle sur les modeles fournis : `AuditPanel.llm` prend un fournisseur
+        # par critique, donc deux modeles suffisent a casser l'echo.
+        panel = AuditPanel.llm(list(reels) * len(personas), personas)
+        fournisseurs = list(reels)
     else:
         fournisseurs = make_panel(
             [p.name for p in personas], skill, bank, correlated=correlated
@@ -205,6 +215,7 @@ def _traducteur_simule(actif: bool):
 def _real_engine(
     *, journal_path: Path | None = None, max_rounds: int = 5, min_panel: int = 3,
     famille: str = "code", racine: Path | None = None, fournisseur: object | None = None,
+    fournisseurs: object | None = None,
 ) -> Engine:
     """Assemble un moteur adosse aux CLI/API reellement disponibles.
 
@@ -216,10 +227,16 @@ def _real_engine(
     from .audit.panel import DEFAULT_PERSONAS, AuditPanel
     from .providers.registry import from_env
 
-    nomme = getattr(fournisseur, "provider", None)
-    providers = [nomme] * max(1, int(getattr(fournisseur, "instances", 1))) if nomme else list(
-        from_env()
-    )
+    nommes = [getattr(f, "provider", None) for f in (fournisseurs or [])]
+    nommes = [n for n in nommes if n is not None]
+    if not nommes and fournisseur is not None:
+        unique = getattr(fournisseur, "provider", None)
+        if unique is not None:
+            # Un seul modele nomme : on l'instancie plusieurs fois, le panel a besoin de
+            # plusieurs critiques (la decorrelation dira ensuite si c'est un echo).
+            instances = max(1, int(getattr(fournisseur, "instances", 1)))
+            nommes = [unique] * instances
+    providers = nommes or list(from_env())
     if not providers:
         raise SystemExit(
             "Aucun fournisseur detecte.\n"
@@ -1249,17 +1266,18 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     # Meme syntaxe que le banc : `--provider cli:opencode`, `openai:<modele>`, `simule`.
     # Un modele nomme et indisponible ARRETE la mission, ici comme ailleurs.
-    modele = None
-    if getattr(args, "provider", ""):
-        from .bench.provider_spec import resoudre as resoudre_modele
+    modele_liste: list[object] = []
+    specs = list(getattr(args, "provider", []) or [])
+    if specs:
+        from .bench.provider_spec import resoudre_liste
         from .core.errors import ProviderError
 
         try:
-            modele = resoudre_modele(args.provider)
+            modele_liste = list(resoudre_liste(specs))
         except ProviderError as exc:
             print(f"  {exc}", file=sys.stderr)
             return 2
-        if modele.genre == "simule":
+        if all(f.genre == "simule" for f in modele_liste):
             # `--provider simule` sans `--simulate` n'aurait aucun sens : la simulation
             # a besoin d'une tache du banc pour generer quelque chose, et c'est
             # `--simulate` qui le dit. On refuse au lieu d'inventer.
@@ -1280,7 +1298,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         engine = _real_engine(
             journal_path=journal_path, max_rounds=args.rounds,
             min_panel=args.min_panel, famille="prose", racine=Path.cwd(),
-            fournisseur=modele,
+            fournisseurs=modele_liste,
         )
     elif args.simulate:
         engine = _simulated_engine(
@@ -1294,7 +1312,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     else:
         engine = _real_engine(
             journal_path=journal_path, max_rounds=args.rounds, min_panel=args.min_panel,
-            fournisseur=modele,
+            fournisseurs=modele_liste,
         )
     _attach_learning(engine, Path(args.state), disable=args.no_learn)
 
@@ -2480,11 +2498,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="modele simule deterministe : aucune cle API requise")
     r.add_argument("--task", default="", help="id de tache du banc (oracles + specification)")
     r.add_argument(
-        "--provider", default="",
+        "--provider", action="append", default=[],
         help=(
             "QUEL modele travaille : `cli:opencode`, `cli:hermes`, `cli:<autre>` (avec "
-            "JIO_CLI_<AUTRE>_ARGV) ou `openai:<modele>`. Par defaut, tous ceux qui sont "
-            "detectes. Un modele nomme et indisponible ARRETE la mission."
+            "JIO_CLI_<AUTRE>_ARGV) ou `openai:<modele>`. REPETABLE : nommer DEUX modeles "
+            "differents donne un panel reellement decorrele, donc un consensus qui vaut "
+            "quelque chose. Par defaut, tous ceux qui sont detectes. Un modele nomme et "
+            "indisponible ARRETE la mission."
         ),
     )
     r.add_argument("--state", default=str_env("JIO_STATE", ".jio"),

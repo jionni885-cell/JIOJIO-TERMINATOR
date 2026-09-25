@@ -34,7 +34,7 @@ from ..providers.base import Provider
 from ..providers.cli import CliProvider
 from ..providers.registry import KNOWN_CLIS
 
-__all__ = ["Fournisseur", "disponibles", "resoudre"]
+__all__ = ["Fournisseur", "disponibles", "resoudre", "resoudre_liste"]
 
 #: Modele simule : accepte sous plusieurs noms, parce qu'un utilisateur ne doit pas avoir
 #: a deviner lequel est le bon.
@@ -166,6 +166,29 @@ def resoudre(spec: str) -> Fournisseur:
         f"specification de fournisseur inconnue : {brut!r}. Attendu : `simule`, "
         "`cli:<opencode|hermes|claude|codex|gemini|autre>` ou `openai:<modele>`."
     )
+
+
+def resoudre_liste(specs: list[str] | tuple[str, ...]) -> list[Fournisseur]:
+    """Resout PLUSIEURS specifications, dans l'ordre, sans doublon.
+
+    Pourquoi plusieurs : le panel de red-team n'a de valeur que s'il est DECORRELE, et
+    cinq appels au meme modele ne donnent pas cinq avis — le harness le detecte et le dit
+    (« ce n'est pas un consensus, c'est un echo »). Avec deux ou trois modeles differents,
+    la decorrelation devient possible, et le consensus redevient ce qu'il doit etre.
+
+    Un benchmark, lui, doit faire varier UNE chose a la fois : `jio bench` garde donc une
+    seule specification. La distinction est de principe, pas technique.
+    """
+    vus: set[str] = set()
+    out: list[Fournisseur] = []
+    for spec in specs:
+        fournisseur = resoudre(spec)
+        cle = fournisseur.spec
+        if cle in vus:
+            continue
+        vus.add(cle)
+        out.append(fournisseur)
+    return out
 
 
 def disponibles() -> list[tuple[str, bool]]:

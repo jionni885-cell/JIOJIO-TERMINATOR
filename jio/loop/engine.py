@@ -144,6 +144,35 @@ class WorkItem:
 # --------------------------------------------------------------------------- #
 
 
+def _motif_consensus(outcome: object | None) -> str:
+    """Pourquoi le panel n'a pas approuve — en disant ce qui s'est REELLEMENT passe.
+
+    Defaut trouve en branchant deux modeles sur une mission : le rapport affichait
+
+        preuve complete mais consensus non atteint : accord suffisant et quorum
+        byzantin satisfait
+
+    « non atteint » suivi de la phrase qui decrit un consensus ATTEINT. La cause : la
+    condition exige un verdict PASS, mais le message, lui, etait ecrit pour le seul cas
+    « quorum non atteint ». Or un panel PEUT atteindre un consensus sur FAIL — c'est meme
+    son travail — et l'artefact n'est alors pas approuve pour une raison entierement
+    differente. Un motif faux envoie chercher au mauvais endroit.
+    """
+    if outcome is None:
+        return "preuve complete mais consensus non atteint : aucun panel n'a pu conclure"
+    if not getattr(outcome, "reached", False):
+        return f"preuve complete mais consensus non atteint : {outcome.reason}"
+    decision = getattr(getattr(outcome, "decision", None), "value", "?")
+    accord = getattr(outcome, "agreement", 0.0)
+    panel = getattr(outcome, "panel_size", 0)
+    dissidences = getattr(outcome, "dissent", ())
+    detail = f" ; desaccords : {', '.join(dissidences)}" if dissidences else ""
+    return (
+        f"preuve complete mais le panel a conclu {decision.upper()} "
+        f"({accord:.0%} d'accord sur {panel} voix){detail}"
+    )
+
+
 @dataclass
 class Engine:
     """Le noyau. Assemble les couches et fait tourner la boucle."""
@@ -1366,7 +1395,7 @@ class Engine:
             abstention = f"preuve complete mais confiance sous le seuil : {gate_reason}"
         elif all_passed and integrity_ok:
             status = MissionStatus.DELIVERED_WITH_RESERVATION
-            abstention = f"preuve complete mais consensus non atteint : {outcome.reason if outcome else 'aucun panel'}"
+            abstention = _motif_consensus(outcome)
         elif ratio > 0.0:
             status = MissionStatus.ABSTAINED
             abstention = (

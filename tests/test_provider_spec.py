@@ -284,3 +284,53 @@ def test_run_avec_un_cli_reel_livre_les_preuves_et_NOMME_la_reserve(
     assert code in (0, 1), sortie[-400:]
     assert "3/3" in sortie, sortie[-400:]
     assert "non decorrele" in sortie or "echo" in sortie, sortie[-400:]
+
+
+# --------------------------------------------------------------------------- #
+# 4. Plusieurs modeles : le seul panel qui ne soit pas un echo
+# --------------------------------------------------------------------------- #
+
+
+def test_nommer_DEUX_modeles_donne_un_panel_heterogene(tmp_path: Path, monkeypatch) -> None:
+    """Cinq appels au meme modele ne font pas cinq avis — deux modeles, oui.
+
+    `AuditPanel.llm` prend un fournisseur par critique : avec deux modeles nommes, les
+    voix viennent de sources differentes, et le controle de decorrelation peut conclure.
+    C'est la difference entre un consensus et un echo.
+    """
+    from jio.audit.panel import DEFAULT_PERSONAS
+    from jio.bench.tasks import T_SUM_EVEN
+    from jio.bench.provider_spec import resoudre_liste
+    from jio.cli import _simulated_engine
+
+    for nom in ("un", "deux"):
+        binaire = _faux_binaire(tmp_path, f"faux-{nom}")
+        monkeypatch.setenv(f"JIO_BIN_{nom.upper()}", str(binaire))
+        monkeypatch.setenv(f"JIO_CLI_{nom.upper()}_ARGV", "{binary}")
+
+    fournisseurs = resoudre_liste(["cli:un", "cli:deux"])
+    moteur = _simulated_engine(
+        T_SUM_EVEN, seed=0, max_rounds=1, fournisseurs=fournisseurs
+    )
+
+    modeles = {getattr(c.provider, "name", "?") for c in moteur.panel.critics}
+    assert len(modeles) == 2, modeles
+    assert len(moteur.panel.critics) >= len(DEFAULT_PERSONAS)
+
+
+def test_un_seul_modele_nomme_reste_un_echo_et_le_harness_le_DIT(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Non-regression de la doctrine : un modele, cinq critiques, aucune pluralite."""
+    from jio.audit.consensus import ConsensusEngine
+    from jio.core.types import Verdict, Vote
+
+    votes = tuple(
+        Vote(agent=f"critique-{i}", decision=Verdict.PASS, confidence=0.9,
+             rationale="", model="sim-1", provider="cli:un")
+        for i in range(5)
+    )
+    outcome = ConsensusEngine(min_panel=3).decide(votes)
+
+    assert not outcome.reached
+    assert "echo" in outcome.reason or "non decorrele" in outcome.reason, outcome.reason

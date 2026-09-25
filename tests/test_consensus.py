@@ -93,3 +93,58 @@ def test_severity_reflects_dissent():
     assert eng.disagreement_severity(eng.decide(_votes(["pass"] * 4))) is not None
     split = eng.decide(_votes(["pass", "fail", "fail", "pass"]))
     assert split.agreement == 0.5
+
+
+# --------------------------------------------------------------------------- #
+# Le motif dit ce qui s'est REELLEMENT passe
+# --------------------------------------------------------------------------- #
+
+
+def test_un_consensus_ATTEINT_sur_FAIL_n_est_pas_un_consensus_non_atteint() -> None:
+    """Defaut trouve en branchant deux modeles sur une mission reelle.
+
+    Le rapport affichait « preuve complete mais consensus non atteint : accord suffisant et
+    quorum byzantin satisfait » : la phrase du SUCCES dans un message d'echec. La cause est
+    un raccourci — la condition exige un verdict PASS, mais le message etait ecrit pour le
+    seul cas « quorum non atteint ». Or le panel a parfaitement le droit de conclure FAIL :
+    c'est meme son travail. Un motif faux envoie chercher au mauvais endroit.
+    """
+    from jio.audit.consensus import ConsensusOutcome
+    from jio.core.types import Verdict
+    from jio.loop.engine import _motif_consensus
+
+    outcome = ConsensusOutcome(
+        decision=Verdict.FAIL, reached=True, agreement=1.0, quorum_required=4,
+        panel_size=5, estimated_faulty=0, tally={"fail": 5}, dissent=(),
+        confidence=0.9, effective_panel=5, reason="accord suffisant et quorum byzantin satisfait",
+    )
+
+    motif = _motif_consensus(outcome)
+
+    assert "non atteint" not in motif, motif
+    assert "FAIL" in motif
+    assert "100%" in motif and "5 voix" in motif
+
+
+def test_un_quorum_non_atteint_dit_la_raison_du_quorum() -> None:
+    from jio.audit.consensus import ConsensusOutcome
+    from jio.core.types import Verdict
+    from jio.loop.engine import _motif_consensus
+
+    outcome = ConsensusOutcome(
+        decision=Verdict.ABSTAIN, reached=False, agreement=0.6, quorum_required=5,
+        panel_size=3, estimated_faulty=1, tally={"pass": 2, "fail": 1}, dissent=("a:fail",),
+        confidence=0.4, effective_panel=2,
+        reason="quorum byzantin non satisfait : 3 voix pour f=1 (requis n >= 5)",
+    )
+
+    motif = _motif_consensus(outcome)
+
+    assert "non atteint" in motif
+    assert "quorum byzantin non satisfait" in motif
+
+
+def test_aucun_panel_est_dit_comme_tel() -> None:
+    from jio.loop.engine import _motif_consensus
+
+    assert "aucun panel" in _motif_consensus(None)
