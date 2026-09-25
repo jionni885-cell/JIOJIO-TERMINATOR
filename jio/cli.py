@@ -272,7 +272,94 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print()
     print(f"  Banc d'essai : {len(TASKS)} taches verifiables avec oracles caches")
     print()
+
+    # ---------------------------------------------------------------- #
+    # Coherence de l'etat local.
+    #
+    # Incident reel, vecu par ce projet : l'environnement d'execution a restaure
+    # `.git` a son etat INITIAL entre deux sessions. Le travail etait intact sur le
+    # disque, mais le depot ne suivait plus rien (`git status` affichait tout le code
+    # comme « non suivi », `git log` revenait au commit initial). Rien ne le
+    # signalait : un `git commit` ulterieur aurait produit un historique absurde, et
+    # toute la tracabilite — la promesse centrale de JIO — etait perdue.
+    #
+    # Un outil dont l'etat peut reculer SANS LE DIRE n'est pas un outil de confiance.
+    # On le dit, avec la commande exacte pour reparer.
+    # ---------------------------------------------------------------- #
+    etat = _git_state()
+    print("  Etat du depot :")
+    if etat is None:
+        print("    pas un depot git (ou git absent) — tracabilite NON disponible")
+    else:
+        branche, avance, recul, distant = etat
+        if not distant:
+            # « 0 en retard » quand on n'a AUCUN distant a comparer serait un
+            # mensonge par omission : c'est exactement le silence qui a fait passer
+            # inapercu le retour en arriere du depot. On dit ce qu'on ne peut pas
+            # savoir.
+            print(f"    branche {branche}  ·  aucun distant comparable")
+            print("        (aucun depot `origin` : impossible de dire si ce travail est")
+            print("         sauvegarde ailleurs. `git remote -v` pour verifier.)")
+        else:
+            print(f"    branche {branche}  ·  {avance} commit(s) en avance  ·  {recul} en retard")
+        if distant and recul and not avance:
+            print()
+            print(f"    /!\\ Le depot local est EN RETARD de {recul} commit(s) sur origin.")
+            print("        Reparation sure (aucun travail perdu) :  scripts/sync.sh")
+        elif distant and recul and avance:
+            print()
+            print(f"    /!\\ Les historiques ont DIVERGE ({avance} local, {recul} distant).")
+            print("        Ne rien forcer a l'aveugle : comparer, puis fusionner ou choisir.")
+        elif distant and avance:
+            print("        travail local non pousse (normal en session ; pousser pour le garder)")
+    print()
     return 0
+
+
+def _git_state() -> tuple[str, int, int, bool] | None:
+    """`(branche, en avance, en retard, distant_connu)` par rapport au distant.
+
+    Que des lectures : on ne modifie JAMAIS le depot depuis `doctor`. Un diagnostic
+    qui agit est un diagnostic qu'on n'ose plus lancer.
+    """
+    import subprocess
+
+    def git(*argv: str) -> tuple[int, str]:
+        try:
+            # On interroge le depot du DOSSIER COURANT : c'est la que l'utilisateur
+            # travaille. Un `jio doctor` lance depuis son projet doit parler de son
+            # projet ; fixer le chemin sur l'installation de JIO repondait toujours
+            # l'etat de JIO, quel que soit l'endroit d'ou on appelait.
+            proc = subprocess.run(
+                ["git", *argv], capture_output=True, text=True, timeout=10,
+            )
+        except Exception:
+            return 1, ""
+        return proc.returncode, proc.stdout.strip()
+
+    code, branche = git("rev-parse", "--abbrev-ref", "HEAD")
+    if code != 0 or not branche:
+        return None
+    # La reference de suivi peut manquer (`git fetch origin <branche>` ne cree pas
+    # forcement `origin/<branche>`). On essaie l'amont configure, puis la convention.
+    for candidat in ("@{upstream}", f"origin/{branche}"):
+        code, ref = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", candidat)
+        if code == 0 and ref:
+            break
+        code, ref = git("rev-parse", "--verify", "--quiet", candidat)
+        if code == 0 and ref:
+            ref = candidat
+            break
+    else:
+        return branche, 0, 0, False    # aucun distant comparable : on le DIT
+    code, comptes = git("rev-list", "--left-right", "--count", f"{ref}...HEAD")
+    if code != 0 or not comptes:
+        return branche, 0, 0, False
+    try:
+        retard, avance = (int(x) for x in comptes.split()[:2])
+    except Exception:
+        return branche, 0, 0, False
+    return branche, avance, retard, True
 
 
 def cmd_tasks(args: argparse.Namespace) -> int:

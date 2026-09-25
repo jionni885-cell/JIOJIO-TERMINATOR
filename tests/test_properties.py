@@ -24,6 +24,9 @@ import subprocess
 import sys
 import tempfile
 
+import pytest
+
+from jio.core.errors import FailClosed
 from jio.verify.autocheck import derive
 from jio.verify.executable import ExecutableProver, Sandbox
 from jio.verify.properties import derive_properties, generate_inputs
@@ -41,6 +44,17 @@ def _props(source: str):
 
 
 def _prove(source: str):
+    """Chemin reel du produit : TOUTES les regles derivees sont executees."""
+    derived = derive(source)
+    prover = ExecutableProver(sandbox=Sandbox(timeout=20))
+    return prover.prove(
+        source, derived.spec, hidden_checks=derived.checks,
+        entrypoint=derived.entrypoint, preamble=derived.preamble,
+    )
+
+
+def _prove_proprietes(source: str):
+    """Seules les regles de propriete : sert a isoler ce que l'axe P apporte."""
     derived = derive(source)
     prover = ExecutableProver(sandbox=Sandbox(timeout=20))
     return prover.prove(
@@ -76,7 +90,7 @@ def test_mutation_detectee_sans_annotation():
     """
     props = _props(MUTATION_SANS_ANNOTATION)
     assert [p.id for p in props] == ["P-001"]
-    res = _prove(MUTATION_SANS_ANNOTATION)
+    res = _prove_proprietes(MUTATION_SANS_ANNOTATION)
     echecs = [w.rule_id for w in res.witnesses if not w.ok]
     assert echecs == ["P-001:normalize"]
 
@@ -93,7 +107,7 @@ def process(data, seen):
     seen.append(len(data))
     return list(data)
 '''
-    res = _prove(source)
+    res = _prove_proprietes(source)
     assert [w.rule_id for w in res.witnesses if not w.ok] == ["P-001:process"]
 
 
@@ -109,7 +123,7 @@ def normalize(nums):
     nums.sort()
     return nums
 '''
-    res = _prove(source)
+    res = _prove_proprietes(source)
     (witness,) = [w for w in res.witnesses if not w.ok]
     assert "contre-exemple est ([" in witness.stderr
     # 6 elements au depart ; le reducteur doit descendre a moins de 5.
@@ -130,7 +144,7 @@ def url_encode(value: str) -> bytes:
 def url_decode(data: bytes) -> str:
     return data.decode("utf-8")
 '''
-    res = _prove(source)
+    res = _prove_proprietes(source)
     echecs = [w.rule_id for w in res.witnesses if not w.ok]
     assert echecs == ["P-003:url_encode"], echecs
 
@@ -318,19 +332,19 @@ def test_tri_qui_perd_des_elements_detecte():
     depuis les annotations n'avaient aucun doublon. Les cas sont donc enrichis par
     deformation structurelle (liste dupliquee, vide, reduite).
     """
-    res = _prove(TRI_PERD_DOUBLONS)
+    res = _prove_proprietes(TRI_PERD_DOUBLONS)
     assert [w.rule_id for w in res.witnesses if not w.ok] == ["P-004:sort_values"]
 
 
 def test_tri_decroissant_qui_rend_croissant_detecte():
     """Le nom promet l'ordre decroissant ; la sortie est croissante."""
-    res = _prove(TRI_DESC_FAUX)
+    res = _prove_proprietes(TRI_DESC_FAUX)
     assert [w.rule_id for w in res.witnesses if not w.ok] == ["P-004:sort_desc"]
 
 
 def test_dedoublonnage_qui_perd_un_element_detecte():
     """Retirer les REPETITIONS est permis ; retirer une valeur unique ne l'est pas."""
-    res = _prove(DEDUPE_PERD)
+    res = _prove_proprietes(DEDUPE_PERD)
     assert [w.rule_id for w in res.witnesses if not w.ok] == ["P-005:dedupe"]
 
 
@@ -420,3 +434,74 @@ def test_un_echec_est_une_violation_pas_un_plantage_de_l_outillage():
     assert "MODIFIE par normalize" in witness.stderr, witness.stderr
     for plantage in ("SyntaxError", "AttributeError", "NameError", "TypeError"):
         assert plantage not in witness.stderr, witness.stderr
+
+
+# --------------------------------------------------------------------------- #
+# Corpus versionne : les chiffres du README sont MESURES, pas recopies
+# --------------------------------------------------------------------------- #
+
+CORPUS = REPO / "evidence" / "properties"
+FAUTIFS = sorted((CORPUS / "fautifs").glob("*.py"))
+SAINS = sorted((CORPUS / "sains").glob("*.py"))
+
+
+def test_le_corpus_de_preuve_est_present():
+    """Sans corpus, les chiffres annonces ne sont plus verifiables par personne."""
+    assert len(FAUTIFS) == 8, [p.name for p in FAUTIFS]
+    assert len(SAINS) == 8, [p.name for p in SAINS]
+
+
+@pytest.mark.parametrize("fichier", FAUTIFS, ids=lambda p: p.name)
+def test_chaque_artefact_fautif_du_corpus_est_condamne(fichier):
+    """8/8 : chaque defaut de propriete du corpus est detecte ET nomme."""
+    res = _prove(fichier.read_text(encoding="utf-8"))
+    assert res.failures, f"{fichier.name} n'a produit aucun echec"
+    assert any(w.rule_id.startswith("P-") for w in res.failures), (
+        f"{fichier.name} : detecte, mais pas par une propriete : "
+        f"{[w.rule_id for w in res.failures]}"
+    )
+
+
+@pytest.mark.parametrize("fichier", SAINS, ids=lambda p: p.name)
+def test_chaque_artefact_sain_du_corpus_reste_muet(fichier):
+    """8/8 muets : aucune fausse accusation, y compris sur la paire join/split.
+
+    `join_fields` / `split_fields` n'est PAS une promesse d'aller-retour (un
+    separateur peut apparaitre dans un element) : le silence est le comportement
+    attendu, et ce test l'exige.
+    """
+    res = _prove(fichier.read_text(encoding="utf-8"))
+    assert not res.failures, [w.rule_id for w in res.failures]
+
+
+def test_l_apport_des_proprietes_est_mesure_sur_le_corpus():
+    """Le gain annonce (1/8 -> 8/8) est recalcule ici, pas recopie.
+
+    Si un jour les proprietes n'apportaient plus rien, ce test echouerait : le
+    chiffre du README ne pourrait pas mentir.
+    """
+    def detectes(avec_proprietes: bool) -> int:
+        total = 0
+        for fichier in FAUTIFS:
+            derived = derive(fichier.read_text(encoding="utf-8"))
+            prover = ExecutableProver(sandbox=Sandbox(timeout=20))
+            checks = {
+                k: v for k, v in derived.checks.items()
+                if avec_proprietes or not k.startswith("P-")
+            }
+            try:
+                res = prover.prove(
+                    fichier.read_text(encoding="utf-8"), derived.spec, hidden_checks=checks,
+                    entrypoint=derived.entrypoint, preamble=derived.preamble,
+                )
+            except FailClosed:
+                # Aucune regle derivable : le mode fail-closed refuse de conclure.
+                # Ce n'est pas une detection, et ce n'est pas une accusation.
+                continue
+            total += bool([w for w in res.witnesses if not w.ok])
+        return total
+
+    sans = detectes(False)
+    avec = detectes(True)
+    assert sans == 1, f"sans proprietes : {sans}/8 (le README annonce 1/8)"
+    assert avec == 8, f"avec proprietes : {avec}/8 (le README annonce 8/8)"
