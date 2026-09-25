@@ -76,6 +76,10 @@ class EngineConfig:
     mutation_gate: bool = True
     #: Nombre de mutants executes (cout borne : chaque mutant est une passe entiere).
     mutation_budget: int = 4
+    #: Comparer les candidats a EGALITE de preuves et AVOUER leurs desaccords.
+    #: Cout : aucun appel de modele (les candidats sont deja payes), seulement des
+    #: executions dans le bac a sable.
+    differential: bool = True
     #: Confronter l'artefact a SA PROPRE documentation (exemples `>>>`, annotations).
     #: Un artefact qui contredit ce qu'il affirme est suspect, meme quand il satisfait
     #: la specification de la mission — et c'est un signal qu'on peut renvoyer au
@@ -246,6 +250,15 @@ class Engine:
 
             proved.sort(key=lambda pair: pair[1].ratio, reverse=True)
             top_art, top_res = proved[0]
+
+            # --- comparaison differentielle des candidats a EGALITE -------- #
+            # Quand plusieurs candidats ont le meme nombre de preuves, le choix
+            # entre eux etait ARBITRAIRE (`_better` prend le DERNIER dont le ratio est
+            # au moins egal : le livrable dependait de l'ordre de generation). S'ils
+            # se contredisent sur une entree non couverte par la specification, le
+            # systeme livrait donc l'un des deux sans rien dire. Les comparer ne
+            # coute aucun appel de modele : ils sont deja la.
+            top_art, top_res = self._arbitrer(proved, spec, work, rnd, warnings)
             best = self._better(best, (top_art, top_res))
 
             guard.record(
@@ -396,6 +409,87 @@ class Engine:
         )
         self._learn(mission, report)
         return report
+
+    def _arbitrer(
+        self,
+        proved: list[tuple[Artifact, ProverResult]],
+        spec: Spec,
+        work: WorkItem,
+        rnd: int,
+        warnings: list[Finding],
+    ) -> tuple[Artifact, ProverResult]:
+        """Choisit entre candidats a EGALITE de preuves, en comparant leurs resultats.
+
+        Trois comportements, dans cet ordre :
+        1. s'il n'y a pas d'egalite (un candidat a strictement plus de preuves), il
+           gagne — rien a arbitrer ;
+        2. si les candidats a egalite s'accordent sur toutes les entrees derivees, le
+           premier est livre (l'ordre reste deterministe) ;
+        3. s'ils divergent, un **constat** est enregistre avec l'entree exacte et les
+           valeurs obtenues, et un candidat partage par une majorite stricte est
+           prefere a un candidat isole.
+
+        Le desaccord n'est JAMAIS bloquant : deux implementations correctes peuvent
+        differer sur un comportement non specifie (`mean([])`). L'accuser serait le
+        faux positif que tout ce projet refuse. On l'AVOUE, avec la preuve.
+        """
+        if len(proved) < 2 or not self.config.differential:
+            return proved[0]
+
+        meilleur = proved[0][1].ratio
+        ex_aequo = [pair for pair in proved if abs(pair[1].ratio - meilleur) < 1e-9]
+        if len(ex_aequo) < 2:
+            return proved[0]
+
+        from ..verify.divergence import comparer
+
+        etiquette = {pair[0].digest: f"candidat-{i + 1}" for i, pair in enumerate(ex_aequo)}
+        try:
+            divergences, majoritaire = comparer(
+                [(etiquette[pair[0].digest], pair[0].content) for pair in ex_aequo],
+                work.entrypoint,
+            )
+        except Exception as exc:      # observation, jamais une cause d'echec
+            self.journal.append("divergence", {"round": rnd, "error": str(exc)[:200]})
+            return proved[0]
+
+        if not divergences:
+            return proved[0]
+
+        self.journal.append(
+            "divergence",
+            {
+                "round": rnd,
+                "candidats": len(ex_aequo),
+                "cas": len(divergences),
+                "detail": [d.render()[:200] for d in divergences[:3]],
+                "majoritaire": etiquette.get(
+                    next((p[0].digest for p in ex_aequo if etiquette[p[0].digest] == majoritaire), ""),
+                    "",
+                ),
+            },
+        )
+        warnings.append(
+            Finding(
+                agent="divergence",
+                severity=Severity.MEDIUM,
+                message=(
+                    f"{len(divergences)} desaccord(s) entre {len(ex_aequo)} candidats a "
+                    "egalite de preuves : la specification ne tranche pas. Le livrable "
+                    "est celui du "
+                    + (f"candidat majoritaire ({majoritaire})" if majoritaire else
+                       "premier candidat (aucune majorite)")
+                ),
+                evidence=" ; ".join(d.render() for d in divergences[:3])[:400],
+                counterexample=divergences[0].entree,
+            )
+        )
+
+        if majoritaire:
+            for pair in ex_aequo:
+                if etiquette[pair[0].digest] == majoritaire:
+                    return pair
+        return proved[0]
 
     def _contredit_sa_documentation(self, src: str, work: WorkItem) -> tuple[bool, str]:
         """L'artefact tient-il ce qu'il AFFIRME de lui-meme ?

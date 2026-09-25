@@ -7,6 +7,7 @@ mesurent ces fichiers ; `scripts/evidence.sh` rejoue l'ensemble.
 |---|---|---|
 | `properties/` | 8 artefacts **fautifs** (mutation d'argument, aller-retour avec perte, idempotence rompue, tri infidele) et 8 artefacts **sains** | detection 1/8 -> 8/8, **0** artefact sain accuse |
 | `selfspec/` | 5 artefacts **documentes** : un correct, deux qui mentent sur leur propre docstring, deux dont la documentation decrit fidelement un contrat faux | 2 defauts sur 4 rattrapes par l'auto-controle, **0** faux rejet |
+| `divergence/` | 2 candidats a la meme tache (vraie moyenne, division entiere), tous deux acceptes par une specification reduite au cas nominal | le livrable ne depend plus de l'ordre d'arrivee, et le desaccord est **avoue** avec l'entree exacte |
 
 Regles d'ecriture de ces corpus — elles sont le sujet autant que les fichiers :
 

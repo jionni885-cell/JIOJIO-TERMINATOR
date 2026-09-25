@@ -93,6 +93,7 @@ def _engine_config(max_rounds: int) -> EngineConfig:
         candidates_per_round=int_env("JIO_CANDIDATES", 3),
         mutation_gate=bool_env("JIO_MUTATION_GATE", True),
         self_check=bool_env("JIO_SELF_CHECK", True),
+        differential=bool_env("JIO_DIFFERENTIAL", True),
     )
 
 
@@ -210,6 +211,20 @@ def render_report(report: MissionReport, *, verbose: bool = False, color: bool =
         lines.append(_c("  ALERTES BLOQUANTES", "bold", color))
         for f in blocking[:6]:
             lines.append(f"    - {f.agent}: {f.message[:110]}")
+
+    # Un desaccord entre candidats n'est pas une alerte bloquante — il porte souvent
+    # sur un comportement non specifie — mais il doit etre VISIBLE : livrer l'un des
+    # deux sans le dire etait exactement le trou que cette section comble. Le constat
+    # nomme l'entree et les valeurs obtenues, donc il est exploitable tel quel.
+    desaccords = [f for f in report.findings if f.agent == "divergence"]
+    if desaccords:
+        lines.append("")
+        lines.append(_c("  DESACCORDS ENTRE CANDIDATS (non bloquant, non tranche)", "warn", color))
+        for f in desaccords[:3]:
+            lines.append(f"    - {f.message[:150]}")
+            if f.evidence:
+                for extrait in f.evidence.split(" ; ")[:3]:
+                    lines.append(f"        {extrait[:150]}")
 
     if report.blames:
         lines.append("")

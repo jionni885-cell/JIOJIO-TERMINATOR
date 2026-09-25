@@ -94,18 +94,83 @@ if accuses_avec:
     print(f"\n    /!\\ {accuses_avec} artefact(s) sain(s) accuse(s) : c'est un faux positif, a instruire.")
 PY
 
-    titre "3. Le chemin reel (3 agents externes -> livraison auditee)"
+    titre "3. Divergence entre candidats : le choix depend-il de l'ordre ?"
+    "$PYTHON" - <<'PYE'
+import pathlib, sys
+sys.path.insert(0, ".")
+from jio.core.types import Mission, Rule, RuleKind, Spec
+from jio.loop.engine import Engine, EngineConfig, WorkItem
+from jio.providers.base import Completion
+
+CORPUS = pathlib.Path("evidence/divergence")
+JUSTE = (CORPUS / "candidat_juste.py").read_text(encoding="utf-8")
+FAUX = (CORPUS / "candidat_faux.py").read_text(encoding="utf-8")
+
+
+class Candidats:
+    name, model = "sim", "sim-1"
+
+    def __init__(self, sources):
+        self.sources = list(sources)
+        self.index = 0
+
+    def complete(self, messages, *, temperature=0.0, max_tokens=2048, seed=None):
+        source = self.sources[self.index % len(self.sources)]
+        self.index += 1
+        return Completion(text="```python\n" + source + "```\n",
+                          prompt_tokens=10, completion_tokens=20, model=self.model)
+
+
+def juste(source):
+    """Oracle : la vraie moyenne de [1, 2] vaut 1.5 ; la division entiere rend 1.0."""
+    espace = {}
+    try:
+        exec(source, espace)
+        return abs(espace["mean"]([1, 2]) - 1.5) < 1e-9
+    except Exception:
+        return False
+
+
+SPEC = Spec(mission="moyenne", rules=(
+    Rule(id="R-001", statement="moyenne nominale", kind=RuleKind.PROPERTY),))
+CHECKS = {"R-001": "assert mean([1, 2, 3]) == 2.0, f'nominal: {mean([1,2,3])}'"}
+
+print(f"    {'ordre des candidats':<26}{'sans comparaison':>18}{'avec comparaison':>18}")
+gains = 0
+for nom, sources in (
+    ("le faux en premier", [FAUX, JUSTE, JUSTE]),
+    ("le faux au milieu", [JUSTE, FAUX, JUSTE]),
+    ("le faux en dernier", [JUSTE, JUSTE, FAUX]),
+):
+    resultats = []
+    for flag in (False, True):
+        engine = Engine(generators=[Candidats(sources)], config=EngineConfig(
+            max_rounds=1, candidates_per_round=3, self_check=True,
+            differential=flag, mutation_gate=False))
+        rapport = engine.run(Mission(objective="moyenne", id="evidence"),
+                             WorkItem(objective="moyenne", entrypoint="mean",
+                                      checks=CHECKS, spec=SPEC))
+        resultats.append(juste(rapport.subject or ""))
+    if not resultats[0] and resultats[1]:
+        gains += 1
+    print(f"    {nom:<26}{('juste' if resultats[0] else 'FAUX'):>18}"
+          f"{('juste' if resultats[1] else 'FAUX'):>18}")
+print(f"    -> livrables corriges par la comparaison : {gains}/3 ; et le desaccord est "
+      "avoue dans tous les cas.")
+PYE
+
+    titre "4. Le chemin reel (3 agents externes -> livraison auditee)"
     "$PYTHON" -m pytest -q tests/test_real_path.py 2>&1 | tail -2
 
-    titre "4. Le banc : le harness a budget d'appels egal"
+    titre "5. Le banc : le harness a budget d'appels egal"
     "$PYTHON" -m jio bench --rounds 1 2>&1 | sed -n '/RESULTATS/,$p' | head -14
 
-    titre "5. Le projet s'audite lui-meme"
+    titre "6. Le projet s'audite lui-meme"
     "$PYTHON" -m jio scan jio --exclude-tests --no-learn 2>&1 | tail -5
 fi
 
 if [ "$FAIRE_TIERS" -eq 1 ]; then
-    titre "6. Zero fausse accusation sur des paquets publies"
+    titre "7. Zero fausse accusation sur des paquets publies"
     echo "    (telechargement temporaire : more-itertools, click, rich, jinja2, attrs)"
     TEMP=$(mktemp -d)
     trap 'rm -rf "$TEMP"' EXIT
