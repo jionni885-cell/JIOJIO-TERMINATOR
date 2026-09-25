@@ -329,7 +329,13 @@ class Engine:
                 self._signaler_temoins_non_discriminants(
                     proved, temoignage, warnings, rnd, work.objective or spec.mission)
 
-            proved.sort(key=lambda pair: pair[1].ratio, reverse=True)
+            # Tri par (preuves, MOINS de reserves). Mesure : sur une mission de
+            # document ou un candidat cite un chemin inexistant et l'autre non, les
+            # deux ont un ratio de 1.0 — le premier etait donc livre au hasard de
+            # l'ordre de generation, et 13 livraisons sur 30 citaient un chemin
+            # inexistant alors qu'un candidat PROPRE etait disponible. A preuves
+            # egales, celui qui laisse le moins de choses en suspens gagne.
+            proved.sort(key=_cle_de_preference, reverse=True)
             top_art, top_res = proved[0]
 
             # --- comparaison differentielle des candidats a EGALITE -------- #
@@ -653,6 +659,15 @@ class Engine:
 
         meilleur = proved[0][1].ratio
         ex_aequo = [pair for pair in proved if abs(pair[1].ratio - meilleur) < 1e-9]
+        # A egalite de preuves, on ecarte d'abord ceux qui traînent le plus de
+        # reserves : comparer des candidats dont l'un cite un chemin inexistant
+        # reviendrait a arbitrer sur un desaccord qui n'en est pas un.
+        if len(ex_aequo) > 1:
+            moins_de_reserves = min(len(pair[1].reservations) for pair in ex_aequo)
+            ex_aequo = [
+                pair for pair in ex_aequo
+                if len(pair[1].reservations) == moins_de_reserves
+            ]
         if len(ex_aequo) < 2:
             return proved[0]
 
@@ -1445,10 +1460,18 @@ class Engine:
         current: tuple[Artifact, ProverResult] | None,
         candidate: tuple[Artifact, ProverResult],
     ) -> tuple[Artifact, ProverResult]:
-        """On ne livre jamais pire que le meilleur etat rencontre."""
+        """On ne livre jamais pire que le meilleur etat rencontre.
+
+        L'ordre est lexicographique : d'abord les preuves, ensuite les RESERVES. Une
+        reserve est ce qu'on n'a pas pu confirmer ; a preuves egales, un artefact qui
+        en laisse moins est strictement preferable. La version precedente comparait le
+        seul ratio, donc un artefact propre et un artefact citant un chemin
+        inexistant etaient equivalents — et le second pouvait etre livre.
+        """
         if current is None:
             return candidate
-        return candidate if candidate[1].ratio >= current[1].ratio else current
+        return candidate if _cle_de_preference(candidate) >= _cle_de_preference(current) \
+            else current
 
     def _check_budget(self, started: float, mission: Mission) -> None:
         limit = mission.deadline_s or self.config.time_budget_s
@@ -1591,6 +1614,19 @@ def _extract_assertion(stderr: str) -> str:
         if s.startswith("AssertionError") or "assert" in s.lower():
             return s[:300]
     return ""
+
+
+def _cle_de_preference(pair: tuple[Artifact, ProverResult]) -> tuple[float, int, int]:
+    """Ordre de preference d'un candidat : preuves, puis MOINS de reserves.
+
+    Les reserves sont des echecs NON BLOQUANTS (regles advisory : reproductibilite,
+    chemin introuvable). Elles ne condamnent pas l'artefact — mais entre deux artefacts
+    egalement prouves, celui qui en porte moins est celui qui laisse le moins de choses
+    en suspens. Le troisieme terme departage par le nombre d'echecs bruts, pour que
+    l'ordre soit total et donc deterministe.
+    """
+    resultat = pair[1]
+    return (resultat.ratio, -len(resultat.reservations), -len(resultat.failures))
 
 
 def _decorrelation(reports: Sequence[CriticReport]) -> float:

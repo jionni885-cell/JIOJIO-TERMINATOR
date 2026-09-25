@@ -215,3 +215,83 @@ def test_le_banc_de_prose_ne_silence_rien(skill: float) -> None:
     # Chaque essai finit dans UNE et une seule categorie : rien ne disparait.
     assert (mesure.jio * mesure.essais) + mesure.erreurs_silencieuses \
         + mesure.sous_reserve + mesure.abstentions == mesure.essais
+
+
+# --------------------------------------------------------------------------- #
+# 4. A preuves egales, l'artefact qui laisse le MOINS de choses en suspens gagne
+# --------------------------------------------------------------------------- #
+
+
+def test_la_cle_de_preference_departage_par_les_reserves() -> None:
+    """Mesure : 13 livraisons sur 30 citaient un chemin inexistant, faute de departage."""
+    from jio.core.types import Artifact, Witness
+    from jio.loop.engine import _cle_de_preference
+    from jio.verify.executable import ProverResult
+
+    def resultat(reserves: int) -> ProverResult:
+        temoins = tuple(Witness(rule_id=f"R-{i:03d}", command="x", exit_code=0, ok=True)
+                        for i in range(3))
+        reserv = tuple(
+            Witness(rule_id=f"A-{i:03d}", command="x", exit_code=1, ok=False,
+                    stderr="chemin cite INTROUVABLE")
+            for i in range(reserves)
+        )
+        return ProverResult(witnesses=temoins, failures=reserv,
+                            advisory_ids=frozenset(w.rule_id for w in reserv))
+
+    propre = (Artifact(id="a", content="propre"), resultat(0))
+    charge = (Artifact(id="b", content="charge"), resultat(2))
+
+    assert _cle_de_preference(propre) > _cle_de_preference(charge)
+    assert _cle_de_preference(propre)[0] == _cle_de_preference(charge)[0], "meme ratio"
+
+
+def test_un_candidat_propre_ne_perd_jamais_contre_un_candidat_qui_cite_un_chemin_faux() -> None:
+    """La propriete qui compte, mesuree sur 30 missions reelles.
+
+    Quand un candidat PROPRE est disponible dans le tour, la livraison ne doit jamais
+    citer un chemin inexistant. Les cas ou aucun candidat propre n'existe sont
+    legitimes — le document est alors livre SOUS RESERVE, et la reserve est nommee —
+    mais ils ne doivent pas se confondre avec un mauvais arbitrage.
+    """
+    from jio.bench.prose import PROSE_TASKS, prose_bank
+    from jio.cli import _simulated_engine
+    from jio.core.types import Mission
+    from jio.loop.engine import WorkItem
+    from jio.verify.prose_prover import spec_prose
+
+    tache = PROSE_TASKS[0]
+    banque = prose_bank(tache)
+    chemin_faux = tache.distractors[2].strip()
+    correct = tache.correct.strip()
+    malgre_un_propre = 0
+    rencontres = 0
+
+    for seed in range(30):
+        moteur = _simulated_engine(
+            None, skill=0.5, seed=seed, max_rounds=1, famille="prose",
+            banque=banque, racine=REPO,
+        )
+        rapport = moteur.run(
+            Mission(objective=tache.objective, id=f"p{seed}", max_rounds=1),
+            WorkItem(objective=tache.objective, spec=spec_prose(tache.objective)),
+        )
+        if (rapport.subject or "").strip() != chemin_faux:
+            continue
+        rencontres += 1
+        propre_disponible = any(
+            ev.payload.get("sim_correct") for ev in moteur.journal.events("candidate")
+        )
+        if propre_disponible:
+            malgre_un_propre += 1
+        else:
+            assert rapport.status.value == "delivered_with_reservation", (
+                "livrer un document a chemin introuvable SANS reserve serait un silence"
+            )
+        assert rapport.subject.strip() != correct or propre_disponible
+
+    assert rencontres > 0, "le cas doit se presenter pour que ce test ait un sens"
+    assert malgre_un_propre == 0, (
+        f"{malgre_un_propre} livraison(s) ont cite un chemin inexistant alors qu'un "
+        "candidat propre etait disponible"
+    )
