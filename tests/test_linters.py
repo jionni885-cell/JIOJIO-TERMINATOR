@@ -194,3 +194,25 @@ def test_du_code_propre_ne_produit_aucun_constat(tmp_path: Path) -> None:
     report = analyse([path], root=tmp_path, prefer="ruff")
 
     assert report.findings == []
+
+
+@pytest.mark.skipif(not RUFF_AVAILABLE, reason="ruff non installe")
+def test_le_depot_passe_sa_propre_porte() -> None:
+    """Le controle qui engage ce depot : son propre code passe son propre seuil.
+
+    Un projet qui vend un verificateur doit l'appliquer a lui-meme, sinon il ne vend rien.
+    Ce test est le seul de ce fichier qui ne porte pas sur un exemple fabrique : il portait
+    sur le code reellement livre, et il a ete perdu lors d'un reclone — un message de commit
+    affirmait alors que le depot passait sa porte, ce qui n'etait plus verifie nulle part.
+    Un message n'est pas une preuve : ce test l'est.
+
+    `jio scan .` sur le depot ENTIER rend 1 (les tests contiennent volontairement du code
+    fautif : c'est leur sujet). Le paquet `jio/`, lui, doit etre propre sans reserve.
+    """
+    racine = Path(__file__).resolve().parents[1]
+
+    report = analyse([racine / "jio"], root=racine, prefer="ruff")
+
+    details = "\n".join(f"  {f.path}:{f.line} {f.rule} — {plain_french(f.message)}"
+                        for f in report.findings[:20])
+    assert report.findings == [], f"le paquet jio/ ne passe pas sa propre porte :\n{details}"
