@@ -2992,6 +2992,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="code de sortie 3 si des questions restent sans reponse (a utiliser "
                          "quand une IA doit DEMANDER avant d'agir)")
     cl.add_argument("--json", action="store_true", help="analyse lisible par une machine")
+    cl.add_argument(
+        "--mesure", "--bench", dest="mesure", action="store_true",
+        help="mesure la porte sur le banc d'objectifs REELS annote a la main "
+             "(`jio/bench/objectifs.py`) : precision, rappel, et chaque erreur en clair",
+    )
     cl.add_argument("--max", type=int, default=MAX_QUESTIONS, dest="maximum",
                     help=f"nombre maximum de questions (defaut {MAX_QUESTIONS})")
     cl.set_defaults(func=cmd_clarify)
@@ -3165,6 +3170,21 @@ def cmd_clarify(args: argparse.Namespace) -> int:
     au plus trois questions, chacune pesant une consequence ecrite.
     """
     from .clarify import analyser, formater, resume
+
+    if getattr(args, "mesure", False):
+        from .bench.objectifs import formater as formater_banc, mesurer as mesurer_banc
+
+        rapport = mesurer_banc()
+        print(BANNER)
+        print(formater_banc(rapport))
+        print()
+        if not rapport.exact:
+            print("    -> la porte se trompe : chaque erreur ci-dessus est un cas a corriger")
+            print("       avant de lui faire confiance sur une vraie mission.")
+            return 1
+        print("    -> sur ce corpus annote, la porte ne se trompe pas. Le corpus est la")
+        print("       limite de cette affirmation, et il est ecrit dans le depot.")
+        return 0
 
     contexte = ""
     if args.contexte:

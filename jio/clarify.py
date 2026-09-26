@@ -107,10 +107,50 @@ _VAGUES = frozenset({"ameliorer", "optimise", "optimiser", "simplifier", "nettoy
 _CIBLES = (
     re.compile(r"`[^`]+`"),
     re.compile(r"\b[\w./-]+\.(py|md|json|yaml|yml|toml|sh|txt|csv)\b"),
-    re.compile(r"\b(jio|tests?|docs?|scripts?|harnais|harness|cli|api|moteur|boucle)\b"),
+    # Noms qui IDENTIFIENT un objet du projet. `tests`, `docs` et `scripts` en sont
+    # volontairement ABSENTS : « ajoute des tests » n'a pas de cible, et les y laisser faisait
+    # passer l'objectif le plus vague du corpus pour une mission precise (mesure faite par
+    # `jio/bench/objectifs.py`, qui l'a compte en FAUX NEGATIF).
+    re.compile(r"\b(jio|harnais|harness|cli|api|moteur|boucle|banc|panel|journal)\b"),
     re.compile(r"\b[a-z_][a-z0-9_]{2,}\(\)"),
     re.compile(r"\b[A-Z][A-Za-z0-9]+[A-Z][A-Za-z0-9]*\b"),
 )
+
+#: Determiniant + nom : « la memoire des echecs », « le calcul de la moyenne ». C'est une
+#: cible quand le nom designe une CHOSE, et pas un collectif vague.
+_DETERMINEE = re.compile(
+    r"\b(?:le|la|les|l'|mon|ma|mes|notre|nos|un|une|des|du|de la)\s+"
+    r"([a-z][a-z0-9_-]{3,})"
+)
+
+#: Noms qui ne designent RIEN de verifiable : « corriger le bug », « ameliorer la qualite ».
+#: Sans cette liste, la regle ci-dessus transformerait le moindre article en cible — et la
+#: porte se tairait sur les objectifs les plus ambigus, exactement ceux qu'elle doit arreter.
+#: Mesure a l'origine : `tests/test_clarify.py` et le banc d'objectifs ont montre que
+#: « corrige le bug » et « ajoute des tests » passaient pour des objectifs cibles.
+_NOMS_VAGUES = frozenset({
+    "bug", "bugs", "erreur", "erreurs", "probleme", "problemes", "chose", "choses", "truc",
+    "trucs", "ca", "cela", "projet", "depot", "repo", "code", "fichier", "fichiers",
+    "documentation", "docs", "qualite", "revue", "test", "tests", "performance",
+    "performances", "rapidite", "vitesse", "tout", "tous", "toutes", "ensemble", "partie",
+    "parties", "aspect", "aspects", "point", "points", "zone", "zones", "endroit", "endroits",
+    "thing", "things", "stuff", "issue", "issues", "quality", "review", "everything",
+})
+
+
+def _cible_nommee(texte: str) -> str:
+    """Une cible par son NOM (« la memoire des echecs »), hors collectifs vagues.
+
+    Rend le fragment reconnu, ou la chaine vide. C'est une detection de FORME, declaree comme
+    telle : elle se trompe si un nom de chose est dans `_NOMS_VAGUES`, et cette liste est
+    courte et lisible a dessein.
+    """
+    for trouve in _DETERMINEE.finditer(texte.lower()):
+        nom = trouve.group(1)
+        if nom not in _NOMS_VAGUES:
+            return trouve.group(0)
+    return ""
+
 
 #: Mots qui annoncent un CRITERE de succes : on saura si c'est fini, et comment.
 _CRITERES = (
@@ -122,7 +162,49 @@ _CRITERES = (
     re.compile(r"\b(pour|afin) que\b"),
     re.compile(r"\b(attendu|verifiable?|prouve|preuve|critere|seuil|borne)\b"),
     re.compile(r"\b(doit|devra|doivent)\b"),
+    # « en points de reussite », « en missions », « en appels » : l'unite annoncee EST le
+    # critere. Mesure a l'origine : « mesurer le gain ... en points de reussite » etait juge
+    # sans critere, donc la porte demandait « comment saura-t-on ? » a un objectif qui venait
+    # de le dire.
+    re.compile(r"\b(?:en|de|par)\s+(?:points?|pour ?cent|%|missions?|tours?|appels?|regles?|"
+               r"tests?|lignes?|secondes?|minutes?|millisecondes?)\b"),
+    # Le LIVRABLE enonce fait office de critere : « et lister les regles non couvertes »
+    # dit ce qui doit exister a la fin.
+    re.compile(r"\b(lister|produire|rendre|fournir|sortir|ecrire|rapporter)\b.*\b(regles?|"
+               r"liste|tableau|rapport|resume|fichiers?|resultats?)\b"),
+    # Anglais : « proving X is idempotent », « the suite must stay green », « within 20 ms ».
+    # Mesure a l'origine : deux objectifs anglais parfaitement bornes sortaient avec la
+    # question « comment saura-t-on que c'est fini ? » — la porte ne connaissait que le
+    # francais, et l'utilisateur ecrit dans les deux langues.
+    re.compile(r"\b(proving|proves|proven|must\s+(stay|remain|pass|be)|should\s+(stay|remain|"
+               r"pass|be)|so\s+that|stay\s+green|passing|green|within\s+\d+)\b"),
 )
+
+#: Actions dont le RESULTAT est directement observable sur la cible : supprimer X (X a
+#: disparu), renommer X en Y (Y existe), creer X dans un chemin donne (X existe). Le critere
+#: est alors IMPLIQUE par l'action et la cible, et demander « comment saura-t-on que c'est
+#: fini ? » serait une question de confort — le genre qui apprend a ignorer la porte.
+#:
+#: La liste est VOLONTAIREMENT courte : « corriger », « optimiser » ou « ameliorer » n'y sont
+#: pas, parce qu'un fichier qui existe encore ne dit pas s'il est CORRECT.
+_CRITERE_IMPLIQUE = {
+    "supprimer": r"\b(supprimer|supprime|effacer|efface|retirer|retire|enlever|enleve)\b",
+    "renommer": r"\b(renommer|renomme|deplacer|deplace)\b",
+    "creer": r"\b(ecrire|ecris|creer|cree|generer|genere|ajouter|ajoute)\b",
+}
+
+
+def _critere_implique(texte: str, cible: str) -> str:
+    """Le critere est-il IMPLIQUE par l'action et la cible nommee ? Rend la raison, ou vide."""
+    if not cible:
+        return ""
+    for famille, motif in _CRITERE_IMPLIQUE.items():
+        if re.search(motif, texte.lower()):
+            # Il faut une cible NOMMEE (un chemin, un identifiant) : sans elle, « ajoute des
+            # tests » ne dit toujours pas ce qui doit exister a la fin.
+            return f"critere implique par l'action ({famille}) et la cible « {cible} »"
+    return ""
+
 
 #: Mots qui annoncent une SOURCE : d'ou vient ce sur quoi on travaille.
 _SOURCES = (
@@ -370,8 +452,23 @@ def _questions(
             poids=1,
         ),
     }
-    ordre = ("cible", "critere", "source", "perimetre", "format", "action")
-    questions = [catalogue[nom] for nom in ordre if nom in manquants]
+    # Ce qui est ESSENTIEL, et ce qui ne l'est pas. Trois regles, chacune payee par une
+    # mesure prise sur le banc d'objectifs (`jio/bench/objectifs.py`) :
+    #
+    #   * `cible` et `critere` sont essentiels : sans eux, le systeme choisit a la place de
+    #     l'utilisateur, et personne ne peut dire si le travail est fini ;
+    #   * `source` et `format` ne sont JAMAIS essentiels a eux seuls. Six objectifs reels
+    #     parfaitement travaillables les ont fait poser en vain, soit 6 faux positifs sur 31 —
+    #     et un faux positif apprend a ignorer la porte ;
+    #   * `perimetre` n'est demande que si la cible ET le critere manquent : c'est alors une
+    #     demande entierement floue (« ameliore le projet »), et le seul degat irreversible
+    #     possible merite sa question. Sur un objectif cible et borne, elle est du confort.
+    essentielles = ["cible", "critere"]
+    if "cible" in manquants and "critere" in manquants:
+        essentielles.append("perimetre")
+    if "action" in manquants:
+        essentielles.append("action")
+    questions = [catalogue[nom] for nom in essentielles if nom in manquants]
     if action in _VAGUES:
         # Un verbe vague est traite comme une action absente : c'est precise dans le motif.
         questions.sort(key=lambda q: (q.signal != "cible", q.signal != "critere"))
@@ -426,10 +523,13 @@ def analyser(
     # Une version precedente laissait le contexte fournir la CIBLE : n'importe quel README
     # citant un chemin faisait alors disparaitre la question « sur quoi ? », et la porte se
     # taisait precisement dans le cas ou elle sert.
+    cible = _cherche(_CIBLES, brut) or _cible_nommee(brut)
+    critere = _cherche(_CRITERES, brut)
+    implique = _critere_implique(brut, cible) if not critere else ""
     signaux = (
         Signal("action", bool(action), indice_action),
-        Signal("cible", bool(_cherche(_CIBLES, brut)), _cherche(_CIBLES, brut)),
-        Signal("critere", bool(_cherche(_CRITERES, brut)), _cherche(_CRITERES, brut)),
+        Signal("cible", bool(cible), cible),
+        Signal("critere", bool(critere or implique), critere or implique),
         Signal("source", bool(_cherche(_SOURCES, texte)), _cherche(_SOURCES, brut)),
         Signal("perimetre", bool(_cherche(_PERIMETRES, texte)), _cherche(_PERIMETRES, brut)),
         Signal("format", bool(_cherche(_FORMATS, brut)), _cherche(_FORMATS, brut)),

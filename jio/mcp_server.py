@@ -85,6 +85,31 @@ _SKILLS_SCHEMA: dict[str, Any] = {
     },
 }
 
+_CLARIFY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "objective": {
+            "type": "string",
+            "description": "The task as the human wrote it, verbatim.",
+        },
+        "context": {
+            "type": "string",
+            "description": (
+                "Optional project context (README, AGENTS.md). It can supply where the work "
+                "comes from and what is forbidden — never the action, the target or the "
+                "success criterion: those belong to the request."
+            ),
+        },
+    },
+    "required": ["objective"],
+}
+
+_STATUS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {},
+}
+
+
 TOOLS: tuple[dict[str, Any], ...] = (
     {
         "name": "jio_prove",
@@ -128,6 +153,28 @@ TOOLS: tuple[dict[str, Any], ...] = (
         "name": "jio_skills",
         "description": "List the JIO skills and when to use them, or fetch one body.",
         "inputSchema": _SKILLS_SCHEMA,
+    },
+    {
+        "name": "jio_clarify",
+        "description": (
+            "Call this BEFORE doing any work. It reports the 0-3 ESSENTIAL questions your "
+            "objective leaves open, each with the consequence of not answering and the "
+            "assumption that will be taken instead. If it returns questions, ASK THE HUMAN "
+            "them — do not start. An answer to the wrong question is the most expensive "
+            "failure there is. If it returns none, the objective carries an action, a named "
+            "target and a success criterion: work, and declare any assumption you take."
+        ),
+        "inputSchema": _CLARIFY_SCHEMA,
+    },
+    {
+        "name": "jio_status",
+        "description": (
+            "Is this project integrated, and what is missing? Reports which native artifacts "
+            "exist, whether the MCP server is wired, whether `.jio/ACTIVE.md` exists, and the "
+            "exact command to fix what is missing. Fail-closed: an unreported state is not a "
+            "good state."
+        ),
+        "inputSchema": _STATUS_SCHEMA,
     },
 )
 
@@ -342,6 +389,78 @@ def _tool_skills(args: dict[str, Any]) -> str:
     return "\n".join(rows)
 
 
+def _tool_clarify(args: dict[str, Any]) -> str:
+    """La porte de clarification, accessible DANS la boucle de l'agent.
+
+    C'est le point qui compte : l'agent n'a pas besoin de quitter son contexte pour demander
+    « qu'est-ce qui manque pour decider ? ». Il appelle l'outil, obtient les questions, et
+    les pose a l'humain. Un controle qui exige de sortir de la boucle n'est pas applique.
+    """
+    from .clarify import analyser, formater
+
+    objectif = str(args.get("objective", ""))
+    if not objectif.strip():
+        return "REFUS : aucun objectif. Donnez la demande telle que l'humain l'a ecrite."
+    analyse = analyser(objectif, contexte=str(args.get("context", "")))
+    texte = formater(analyse)
+    if analyse.actionnable:
+        return texte + "\n\nVERDICT : actionnable — travaille, et declare tes hypotheses."
+    return (
+        texte
+        + "\n\nVERDICT : demande CES questions a l'humain AVANT de commencer.\n"
+        + "Si tu ne peux pas lui parler, prends les hypotheses ci-dessus et ECRIS-LES en tete "
+        + "de livraison, une ligne chacune."
+    )
+
+
+def _tool_status(_args: dict[str, Any]) -> str:
+    """L'etat d'integration du projet, lu sur le disque et jamais suppose.
+
+    Un agent qui arrive dans un depot inconnu n'a aucun moyen de savoir si les artefacts
+    qu'il lit sont a jour, ou si le serveur MCP qu'on lui propose repond vraiment. Cet outil
+    le dit — y compris « je ne sais pas », quand le fichier de registre manque.
+    """
+    import json
+
+    from .artifacts import TARGETS, manifest
+    from .artifacts.write_guard import REGISTRE
+
+    racine = _root()
+    attendus = manifest(TARGETS)
+    manquants = [rel for rel in sorted(attendus) if not (racine / rel).is_file()]
+    fiche = racine / ".jio" / "ACTIVE.md"
+    lignes = [
+        f"PROJET : {racine}",
+        f"artefacts natifs : {len(attendus) - len(manquants)}/{len(attendus)} presents",
+    ]
+    if manquants:
+        lignes.append("  manquants : " + ", ".join(manquants[:6]) + (" ..." if len(manquants) > 6 else ""))
+        lignes.append("  -> `jio start` les ecrit, sans rien detruire.")
+    registre = racine / REGISTRE
+    if registre.is_file():
+        try:
+            entrees = json.loads(registre.read_text(encoding="utf-8")).get("fichiers", {})
+            lignes.append(f"registre : {len(entrees)} fichier(s) signes par jio (mise a jour sure)")
+        except (OSError, ValueError):
+            lignes.append("registre : ILLISIBLE — jio redeviendra prudent (regle de repli : la marque)")
+    else:
+        lignes.append("registre : absent — jio ne sait pas quels fichiers sont les siens")
+    lignes.append(
+        f"fiche d'integration : {'presente' if fiche.is_file() else 'ABSENTE (.jio/ACTIVE.md)'}"
+    )
+    cablage = [rel for rel in ("opencode.json", ".cursor/mcp.json", ".mcp.json")
+               if (racine / rel).is_file()]
+    lignes.append("cablage MCP : " + (", ".join(cablage) if cablage else "aucun fichier trouve"))
+    lignes += [
+        "",
+        "PROCHAINES ETAPES",
+        "  1. si des artefacts manquent : `jio start`",
+        "  2. avant de travailler : `jio clarify \"<objectif>\"` (code 3 = il faut DEMANDER)",
+        "  3. etat du systeme : `jio doctor`",
+    ]
+    return "\n".join(lignes)
+
+
 _HANDLERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "jio_prove": _tool_prove,
     "jio_audit": _tool_audit,
@@ -350,6 +469,8 @@ _HANDLERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "jio_claims": _tool_claims,
     "jio_contract": _tool_contract,
     "jio_skills": _tool_skills,
+    "jio_clarify": _tool_clarify,
+    "jio_status": _tool_status,
 }
 
 

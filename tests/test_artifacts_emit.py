@@ -214,3 +214,100 @@ def test_un_artefact_a_nous_mais_MODIFIE_est_sauvegarde_avant_mise_a_jour(tmp_pa
     assert (tmp_path / "AGENTS.md.avant-jio").read_text(encoding="utf-8") == edite
     assert "Note ajoutee a la main." not in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
     assert AGENTS and SKILLS  # les sources existent bien : sinon ce fichier teste le vide
+
+
+# --------------------------------------------------------------------------- #
+# Les outils MCP : ce que l'agent peut appeler DEPUIS sa propre boucle
+# --------------------------------------------------------------------------- #
+
+
+def test_les_outils_MCP_sont_exposes_et_comptes() -> None:
+    """Le serveur annonce ses outils ; la liste et l'implementation ne divergent pas.
+
+    Un outil annonce mais non implemente est pire qu'un outil absent : l'agent l'appelle,
+    recoit « outil inconnu », et conclut que le serveur est casse. Le controle croise donc
+    `TOOLS` (l'annonce) et `_HANDLERS` (l'implementation) — deux verites, un seul test.
+    """
+    from jio.mcp_server import TOOLS, _HANDLERS
+
+    noms_annonces = {outil["name"] for outil in TOOLS}
+    assert noms_annonces == set(_HANDLERS), (
+        f"annonce et implementation divergent : {noms_annonces ^ set(_HANDLERS)}"
+    )
+    assert {"jio_prove", "jio_audit", "jio_claims", "jio_contract", "jio_skills",
+            "jio_clarify", "jio_status"} <= noms_annonces
+    for outil in TOOLS:
+        assert outil["description"].strip(), outil["name"]
+        assert outil["inputSchema"]["type"] == "object", outil["name"]
+
+
+def test_l_outil_MCP_de_clarification_demande_la_meme_chose_que_la_CLI() -> None:
+    """`jio_clarify` rend les questions et DIT a l'agent de les poser avant de commencer.
+
+    L'interet de l'outil est la : l'agent n'a pas besoin de quitter son contexte pour savoir
+    ce qui manque. Un controle qui exige de sortir de la boucle n'est pas applique.
+    """
+    from jio.clarify import analyser
+    from jio.mcp_server import handle
+
+    def appeler(argument: dict) -> str:
+        reponse = handle({
+            "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+            "params": {"name": "jio_clarify", "arguments": argument},
+        })
+        assert reponse is not None
+        contenu = (reponse.get("result") or {}).get("content") or [{}]
+        return str(contenu[0].get("text", ""))
+
+    vague = appeler({"objective": "ameliore le projet"})
+    attendues = [q.question[:40] for q in analyser("ameliore le projet").questions]
+    for question in attendues:
+        assert question in vague
+    assert "AVANT de commencer" in vague or "AVANT de travailler" in vague
+
+    precis = appeler({"objective": "corriger tests/test_start.py : le drapeau --sans-mcp doit "
+                                 "ne rien ecrire, avec un test qui le prouve"})
+    assert "actionnable" in precis.lower()
+    assert "AVANT de commencer" not in precis
+
+    # Un objectif vide est refuse, jamais devine.
+    assert "REFUS" in appeler({"objective": "   "})
+
+
+def test_l_outil_MCP_d_etat_lit_le_DISQUE_et_ne_devine_rien(tmp_path) -> None:
+    """`jio_status` rapporte ce qui existe vraiment, et la commande qui repare.
+
+    Un agent qui arrive dans un depot inconnu n'a aucun moyen de savoir si les artefacts
+    qu'il lit sont a jour. Le cas « rien n'est integre » est le plus important : il doit
+    dire quoi lancer, pas seulement constater.
+    """
+    import os
+
+    from jio.mcp_server import handle
+
+    def etat() -> str:
+        reponse = handle({
+            "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+            "params": {"name": "jio_status", "arguments": {}},
+        })
+        assert reponse is not None
+        contenu = (reponse.get("result") or {}).get("content") or [{}]
+        return str(contenu[0].get("text", ""))
+
+    ancien = os.environ.get("JIO_ROOT")
+    os.environ["JIO_ROOT"] = str(tmp_path)
+    try:
+        vide = etat()
+        assert "0/" in vide and "jio start" in vide
+        assert "registre : absent" in vide
+        assert "ABSENTE" in vide, "la fiche .jio/ACTIVE.md doit etre signalee manquante"
+
+        emit.write_manifest(tmp_path, ("claude", "agents"))
+        apres = etat()
+        assert "0/" not in apres
+        assert ".jio/ACTIVE.md" in apres
+    finally:
+        if ancien is None:
+            os.environ.pop("JIO_ROOT", None)
+        else:
+            os.environ["JIO_ROOT"] = ancien

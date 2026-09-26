@@ -149,9 +149,9 @@ def test_le_contexte_peut_fournir_ce_qui_manque_a_l_objectif() -> None:
     C'est le cas reel de ce depot : `AGENTS.md` et le README portent le perimetre, la source
     et le format. Sans contexte, la porte juge l'objectif seul — et le dit dans ses indices.
     """
-    sans = analyser("corrige la borne de mutation")
+    sans = analyser("corrige")
     avec = analyser(
-        "corrige la borne de mutation",
+        "corrige",
         contexte="Le fichier jio/verify/mutation.py porte MUTATION_BUDGET ; la suite doit rester verte.",
     )
     def signal(analyse, nom: str) -> bool:
@@ -163,7 +163,7 @@ def test_le_contexte_peut_fournir_ce_qui_manque_a_l_objectif() -> None:
     assert signal(sans, "source") is False
     assert signal(avec, "source") is True
     assert signal(sans, "cible") is False and signal(avec, "cible") is False
-    assert "cible" in avec.manquants
+    assert "cible" in avec.manquants, "la cible appartient a la demande, jamais au projet"
 
 
 def test_le_verdict_est_lisible_par_une_machine() -> None:
@@ -200,3 +200,82 @@ def test_le_formateur_n_ampute_jamais_une_question() -> None:
     # d'un paragraphe est soit vide, soit une phrase finie ou un mot entier.
     for ligne in formater(analyse).splitlines():
         assert len(ligne) <= 100, ligne
+
+
+# --------------------------------------------------------------------------- #
+# Le banc d'objectifs : la porte est MESUREE, pas supposee bonne
+# --------------------------------------------------------------------------- #
+
+
+def test_la_porte_ne_se_trompe_sur_AUCUN_objectif_du_banc() -> None:
+    """Sur 31 objectifs reels annotes a la main : 0 faux positif, 0 faux negatif.
+
+    C'est le test le plus important de ce fichier. Une porte de clarification qui demande a
+    tort aprend a l'utilisateur a l'ignorer ; une porte qui ne demande pas quand il faut
+    laisse le systeme choisir a sa place. Les deux se mesurent, et les deux doivent rester a
+    zero — pas « faibles » : a zero, parce que le corpus est petit et annote.
+
+    Quand ce test echoue, il ne dit pas « le seuil est depasse » : il nomme l'objectif et
+    l'erreur, dans `jio/bench/objectifs.py`.
+    """
+    from jio.bench.objectifs import CORPUS, mesurer
+
+    rapport = mesurer()
+    assert rapport.total == len(CORPUS) >= 30, "le banc doit rester representatif"
+    assert rapport.faux_positifs == 0, "\n".join(rapport.erreurs)
+    assert rapport.faux_negatifs == 0, "\n".join(rapport.erreurs)
+    assert rapport.signaux_oublies == 0, "\n".join(rapport.erreurs)
+    assert rapport.precision == 1.0 and rapport.rappel == 1.0
+    assert rapport.max_questions <= MAX_QUESTIONS
+
+
+def test_le_banc_contient_LES_DEUX_cas_et_des_objectifs_des_deux_langues() -> None:
+    """Un banc qui ne contient que des cas faciles mesure la facilite du banc.
+
+    On exige donc : des objectifs actionnables ET des objectifs ambigus, dans les deux
+    langues, et au moins un cas limite (une action destructrice parfaitement claire, ou la
+    porte ne doit PAS demander « sur quoi ? »).
+    """
+    from jio.bench.objectifs import CORPUS
+
+    actionnables = [o for o in CORPUS if o.attendu]
+    ambigus = [o for o in CORPUS if not o.attendu]
+    assert len(actionnables) >= 8 and len(ambigus) >= 15
+    assert any("test" in o.texte and o.attendu for o in CORPUS)
+    assert any(o.texte.startswith(("fix ", "add ")) for o in CORPUS), "aucun objectif anglais"
+    assert any("supprimer" in o.texte for o in CORPUS), "aucun cas limite destructeur"
+    for item in CORPUS:
+        assert item.note, f"objectif sans justification : {item.texte!r}"
+
+
+def test_les_regles_de_decision_de_la_porte_sont_Ecrites() -> None:
+    """Les trois regles qui decident quelles questions sont essentielles sont verifiables.
+
+    Elles ont chacune ete payees par une mesure (six faux positifs, un faux negatif) : les
+    ecrire ici sous forme de test empeche de les casser par megarde au prochain reglage.
+    """
+    # 1. `source` et `format` ne declenchent JAMAIS de question a eux seuls.
+    analyse = analyser("corrige jio/verify/entropy.py, _numeric_equal doit rendre False, "
+                       "avec un test qui le prouve")
+    assert analyse.actionnable and analyse.questions == ()
+    assert "source" in analyse.manquants or "format" in analyse.manquants, (
+        "ce cas doit bien laisser au moins un signal non essentiel absent"
+    )
+
+    # 2. Le critere peut etre IMPLIQUE par l'action et la cible, mais seulement alors.
+    clair = analyser("supprimer jio/artifacts/doctrine.py")
+    assert clair.actionnable, "supprimer un fichier nomme est une mission claire"
+    vague = analyser("ajoute des tests")
+    assert not vague.actionnable, "« ajoute des tests » n'a ni cible ni critere"
+
+    # 3. `perimetre` n'est demande que si la cible ET le critere manquent.
+    signaux = {q.signal for q in analyser("ameliore le projet").questions}
+    assert "perimetre" in signaux
+    # Cible ET critere absents (« corrige le bug ») : le perimetre rejoint les questions.
+    signaux = {q.signal for q in analyser("corrige le bug").questions}
+    assert {"cible", "critere", "perimetre"} <= signaux
+    # Cible presente, critere absent (« corrige jio/verify/entropy.py ») : PAS de question de
+    # perimetre. Le travail a un objet precise ; demander ce qui est interdit serait du
+    # confort, et c'est ce confort qui a produit six faux positifs sur trente et un cas.
+    signaux = {q.signal for q in analyser("corrige jio/verify/entropy.py").questions}
+    assert signaux == {"critere"}

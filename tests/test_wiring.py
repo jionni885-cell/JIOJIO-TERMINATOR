@@ -185,7 +185,14 @@ def test_le_serveur_repond_au_protocole_utilise_par_la_sonde() -> None:
     reponses = [json.loads(l) for l in resultat.stdout.splitlines() if l.strip()]
     assert [r["id"] for r in reponses] == [1, 2]
     assert reponses[0]["result"]["serverInfo"]["name"] == "jio"
-    assert len(reponses[1]["result"]["tools"]) == 5
+    # Le nombre est LU dans la source, jamais recopie : un 5 ecrit a la main a fait echouer ce
+    # test des qu'un outil a ete ajoute — alors que le serveur, lui, allait tres bien. Le
+    # controle porte sur le PROTOCOLE (le serveur sert ce qu'il annonce), pas sur un compte.
+    from jio.mcp_server import TOOLS
+
+    servis = [outil["name"] for outil in reponses[1]["result"]["tools"]]
+    assert servis == [outil["name"] for outil in TOOLS]
+    assert len(servis) >= 5
 
 def test_le_fragment_opencode_ACTIVE_le_serveur_explicitement() -> None:
     """`enabled: true` : un serveur cable mais DESACTIVE serait un cablage qui ne fait rien.

@@ -280,7 +280,11 @@ def _target_mcp() -> dict[str, str]:
             "- `jio_prove` — prouve une source contre des regles executables\n"
             "- `jio_audit` — audite un fichier et derive ses regles\n"
             "- `jio_contract` — renvoie le contrat de livraison (3 etats)\n"
-            "- `jio_skills` — liste les competences et leur declencheur\n\n"
+            "- `jio_skills` — liste les competences et leur declencheur\n"
+            "- `jio_clarify` — les 0 a 3 questions ESSENTIELLES avant de travailler ; si la\n"
+            "  reponse manque, l'agent doit DEMANDER a l'humain avant de commencer\n"
+            "- `jio_status` — l'etat d'integration du projet, lu sur le disque : artefacts,\n"
+            "  registre, cablage MCP, et la commande qui repare ce qui manque\n\n"
             "Transport : stdio, JSON-RPC 2.0, **zero dependance**.\n"
         ),
     }
