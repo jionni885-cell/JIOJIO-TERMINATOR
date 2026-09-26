@@ -45,6 +45,58 @@ class Completion:
         return self.prompt_tokens + self.completion_tokens
 
 
+#: Plafond de texte accepte d'un modele : 4 millions de caracteres (~1 M jetons). Au-dela,
+#: on tronque ET on le dit. Une reponse de modele n'a pas a etre lue sans limite : un modele
+#: qui part en boucle, ou un serveur hostile, remplirait sinon la memoire du processus avant
+#: qu'on puisse reagir — et `capture_output=True` lit tout avant de rendre la main.
+MAX_REPONSE = 4_000_000
+
+
+def extraire_texte(valeur: object) -> str:
+    """Le texte utile d'un champ `content`, quelle que soit sa FORME.
+
+    Les API de modeles renvoient deux formes, et la seconde cassait tout :
+
+      * `"content": "du texte"` — la forme classique ;
+      * `"content": [{"type": "text", "text": "du texte"}, ...]` — la forme par BLOCS,
+        desormais courante.
+
+    La seconde etait passee telle quelle dans `Completion(text=...)` : `text` devenait une
+    LISTE. En aval, le premier `re.search` sur ce texte levait un `AttributeError` — un
+    plantage la ou le systeme doit s'abstenir. Le type declare (`str`) n'etait verifie nulle
+    part : c'est le genre de contrat non controle qui ne se voit qu'en production.
+
+    Les blocs non-texte (images, appels d'outil) sont ignores : ils ne portent pas de
+    reponse a la question posee. Un bloc `content` imbrique est lu aussi, par prudence.
+    """
+    if isinstance(valeur, str):
+        return valeur
+    if isinstance(valeur, list):
+        morceaux: list[str] = []
+        for bloc in valeur:
+            if isinstance(bloc, str):
+                morceaux.append(bloc)
+            elif isinstance(bloc, dict):
+                texte = bloc.get("text")
+                if isinstance(texte, str):
+                    morceaux.append(texte)
+                elif isinstance(bloc.get("content"), str):
+                    morceaux.append(bloc["content"])
+        return "\n".join(morceaux)
+    if valeur is None:
+        return ""
+    if isinstance(valeur, (int, float, bool)):
+        return str(valeur)
+    return ""
+
+
+def borner(texte: str) -> tuple[str, bool]:
+    """Tronque au plafond. Rend `(texte, tronque)` — jamais une troncature silencieuse."""
+    if len(texte) <= MAX_REPONSE:
+        return texte, False
+    return texte[:MAX_REPONSE], True
+
+
 class ProviderError(RuntimeError):
     """Echec d'appel au modele."""
 

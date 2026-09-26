@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 615 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 634 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1481,6 +1481,41 @@ Python résout ses imports — mais le message, lui, n'aide personne.
 par l'environnement d'installation et n'a pas ce problème. Toutes les commandes de ce document
 s'écrivent donc `jio …`, et les preuves lancent `python -m jio` depuis le dépôt lui-même, où le
 dossier `jio/` est bien le paquet.
+
+## La réponse du modèle est du contenu non fiable, y compris dans sa **forme**
+
+Le dépôt est traité comme hostile. La réponse d'un modèle l'est tout autant : elle vient d'un
+serveur, d'un binaire, d'un proxy — ou d'un modèle qui part en boucle. Trois défauts réels,
+trouvés en cherchant :
+
+| Défaut | Ce qui se passait |
+|---|---|
+| **`content` en blocs** | les API modernes renvoient `"content": [{"type": "text", "text": …}]` ; le texte partait tel quel dans `Completion(text=…)`, donc `text` devenait une **liste** — et le premier `re.search` en aval levait un `AttributeError`. Un plantage, là où le système doit s'abstenir |
+| **Taille illimitée** | `resp.read()` lisait tout : un serveur hostile ou un agent en boucle remplissait la mémoire avant qu'on puisse réagir |
+| **Réponse vide** | elle passait pour une réponse ; les règles échouaient trois couches plus bas, sans que personne ne sache pourquoi |
+
+Corrigé, et verrouillé contre un **vrai serveur local** (`http.server` sur un thread) — c'est le
+chemin réseau qui était en cause, donc c'est lui qu'on exerce :
+
+```
+  content en blocs            -> les textes sont joints, seuls les blocs-texte comptent
+  content null / pas de choix -> ProviderError « chaine vide (finish_reason=length) »
+  JSON valide mais absurde    -> refuse (liste, nombre, chaine a la racine)
+  au-dela du plafond          -> refuse : « refusee plutot que chargee en memoire »
+  texte long mais legitime    -> tronque, ET marque `tronque: true`
+  binaire muet (exit 0)       -> ProviderError « n'a produit aucun texte : rien a verifier »
+  binaire en erreur           -> ProviderError qui CITE son stderr et son code
+```
+
+### Un plafond, un seul endroit — et le test qui l'a prouvé
+
+Le test de troncature a d'abord échoué : il croyait avoir abaissé le plafond, et rien ne
+changeait. Cause : le plafond existait à **deux** endroits — `openai_compat` l'importait par
+valeur, `borner` le lisait dynamiquement dans `base`. Deux valeurs pour une même règle, c'est
+la première fissure. Il n'en reste qu'une, lue au même endroit par les deux.
+
+Un test qui croit avoir changé la règle sans rien changer est un test qui ment — et c'est le
+test qui l'a dit.
 
 ## Toutes les commandes répondent, et c'est testé
 

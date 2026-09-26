@@ -19,7 +19,7 @@ from shlex import split as shsplit
 from typing import Sequence
 
 from ..core.errors import ProviderError
-from .base import Completion, Message, render
+from .base import Completion, Message, borner, extraire_texte, render
 
 
 @dataclass
@@ -94,6 +94,18 @@ class CliProvider:
             if parsed is not None:
                 text, meta = parsed, {"cli": self.binary, "format": "jsonl"}
 
+        # Plafond, comme pour les fournisseurs HTTP : un agent en boucle peut ecrire des
+        # centaines de megaoctets. Le processus a deja ete lu par `subprocess.run` (on ne
+        # peut pas borner la lecture sans reecrire en `Popen`), mais rien de tout cela ne
+        # doit entrer dans l'artefact ni dans le journal.
+        text, tronque = borner(text)
+        if tronque:
+            meta = {**meta, "tronque": True}
+        if not text.strip():
+            raise ProviderError(
+                f"{self.binary} n'a produit aucun texte (exit=0) : rien a verifier"
+            )
+
         return Completion(
             text=text,
             model=self.model,
@@ -119,13 +131,18 @@ def _try_jsonl(text: str) -> str | None:
             return None
         for key in ("text", "content", "message"):
             val = obj.get(key)
-            if isinstance(val, str) and val:
-                chunks.append(val)
+            # `content` peut etre une LISTE de blocs (`{"type": "text", "text": ...}`) :
+            # la meme normalisation que pour les fournisseurs HTTP, une seule fonction.
+            texte = extraire_texte(val)
+            if texte:
+                chunks.append(texte)
                 break
         else:
             part = obj.get("part")
-            if isinstance(part, dict) and isinstance(part.get("text"), str):
-                chunks.append(part["text"])
+            if isinstance(part, dict):
+                texte = extraire_texte(part.get("text") or part.get("content"))
+                if texte:
+                    chunks.append(texte)
     return "\n".join(chunks) if chunks else None
 
 

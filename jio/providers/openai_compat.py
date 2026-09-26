@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from ..core.errors import ProviderError
-from .base import Completion, Message
+from . import base as _base
+from .base import Completion, Message, borner, extraire_texte
 
 
 @dataclass
@@ -63,7 +64,21 @@ class OpenAiCompatProvider:
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
-                raw = json.loads(resp.read().decode("utf-8"))
+                # Lecture BORNEE : un serveur (ou un proxy) hostile peut streamer sans fin.
+                # On refuse au lieu de tout charger — une reponse tronquee ne serait pas du
+                # JSON valide, et la lire quand meme reviendrait a accepter n'importe quoi.
+                # `_base.MAX_REPONSE` et non une copie importee : le plafond doit exister
+                # a UN seul endroit. La premiere version l'importait par valeur ici et le
+                # lisait dynamiquement dans `borner` — deux valeurs pour une meme regle,
+                # et un test qui croyait l'avoir baissee sans rien changer.
+                plafond = _base.MAX_REPONSE * 8
+                brut = resp.read(plafond + 1)
+                if len(brut) > plafond:
+                    raise ProviderError(
+                        f"reponse de {self.name} au-dela de {plafond} octets : "
+                        "refusee plutot que chargee en memoire"
+                    )
+                raw = json.loads(brut.decode("utf-8", "replace"))
         except urllib.error.HTTPError as exc:  # pragma: no cover
             detail = exc.read().decode("utf-8", "replace")[:400]
             raise ProviderError(f"HTTP {exc.code} sur {self.name}: {detail}") from exc
@@ -72,18 +87,32 @@ class OpenAiCompatProvider:
         except json.JSONDecodeError as exc:  # pragma: no cover
             raise ProviderError(f"reponse non-JSON de {self.name}") from exc
 
+        if not isinstance(raw, dict):
+            raise ProviderError(f"reponse inattendue de {self.name}: {type(raw).__name__}")
         choices = raw.get("choices") or []
         if not choices:
             raise ProviderError(f"reponse vide de {self.name}: {str(raw)[:300]}")
-        text = (choices[0].get("message") or {}).get("content", "") or ""
-        usage = raw.get("usage") or {}
+        premier = choices[0] if isinstance(choices[0], dict) else {}
+        message = premier.get("message") if isinstance(premier.get("message"), dict) else {}
+        text = extraire_texte(message.get("content"))
+        text, tronque = borner(text)
+        if not text.strip():
+            # Une reponse vide n'est pas un artefact : la laisser passer ferait echouer les
+            # regles en aval sans que personne ne sache pourquoi. On le dit ici.
+            raison = premier.get("finish_reason", "?")
+            raise ProviderError(
+                f"{self.name} a repondu une chaine vide (finish_reason={raison})"
+            )
+        usage = raw.get("usage") if isinstance(raw.get("usage"), dict) else {}
+        meta: dict[str, object] = {"tronque": True} if tronque else {}
         return Completion(
             text=text,
             model=raw.get("model", self.model),
             provider=self.name,
             prompt_tokens=int(usage.get("prompt_tokens", 0)),
             completion_tokens=int(usage.get("completion_tokens", 0)),
-            stop_reason=choices[0].get("finish_reason", "stop"),
+            stop_reason=premier.get("finish_reason", "stop"),
+            metadata=meta,
         )
 
 
