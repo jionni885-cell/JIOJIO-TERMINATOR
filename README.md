@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 564 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 615 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1481,6 +1481,33 @@ Python résout ses imports — mais le message, lui, n'aide personne.
 par l'environnement d'installation et n'a pas ce problème. Toutes les commandes de ce document
 s'écrivent donc `jio …`, et les preuves lancent `python -m jio` depuis le dépôt lui-même, où le
 dossier `jio/` est bien le paquet.
+
+## Toutes les commandes répondent, et c'est testé
+
+Un utilisateur n'utilise pas « le projet » : il utilise **une** commande, un jour, dans un
+contexte précis. Une commande rare qui plante fait plus de dégâts qu'une fonctionnalité
+absente — elle laisse croire que le reste ne marche pas non plus.
+
+`tests/test_fumee_cli.py` lance donc **chaque** sous-commande de la CLI :
+
+| Contrôle | Ce qu'il attrape |
+|---|---|
+| `jio <commande> --help` sort en **0**, sans traceback, avec un `usage:` | la commande qu'on n'a jamais ouverte et qui plante au premier contact |
+| `jio <commande> --option-inconnue` sort en **2** | l'argument lu avant d'être validé (traceback au lieu d'un message) |
+| Les commandes sûres tournent sur un **dossier vide** sans traceback et **sans rien écrire** | la commande d'inspection qui exige un contexte et le dit mal |
+
+La liste des commandes n'est pas recopiée à la main : elle est lue **dans le parseur réel**.
+Une liste écrite à la main oublie toujours la dernière commande ajoutée — et c'est justement
+celle qui n'a jamais été lancée. Deux contrôles ferment la boucle :
+
+* toute commande doit être soit lancée, soit **citée avec sa raison** de ne pas l'être
+  (`run`, `bench`, `learn`, `audit`, `mcp`, `recover`, `sync` — couvertes ailleurs) ;
+* une commande citée qui n'existe plus est un **mensonge du test**, et il échoue.
+
+Et le contrôle du contrôle : `_lancer` doit vraiment capturer la sortie et vraiment laisser
+remonter une panne. Le premier essai de ce test modifiait le parseur rendu par
+`build_parser()` — or `main` construit **le sien** : rien n'était cassé, et le test échouait
+proprement. Un contrôle qui ne contrôle rien doit échouer ; il l'a fait.
 
 ## Documentation
 
