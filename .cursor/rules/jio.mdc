@@ -134,6 +134,7 @@ jio doctor                 etat du systeme, fournisseurs detectes
 jio bench --skill 0.30     mesure le gain du harness (S0 -> S3, controle a budget egal)
 jio audit <fichier>        audite un artefact ; derive des regles executables de lui-meme
 jio run "<objectif>"       mission complete avec la boucle verifiee
+jio auto "<objectif>"      travaille SEUL : chaque etape porte sa preuve, un echec ARRETE
 jio run "<objectif>" --prose   mission de DOCUMENT : la boucle de preuve complete
                                s'applique a un texte (calculs, blocs, chemins cites)
 jio claims <document>      verifie les faits d'une prose : calculs annonces, blocs

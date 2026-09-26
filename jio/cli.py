@@ -2979,6 +2979,29 @@ def build_parser() -> argparse.ArgumentParser:
                     help="n'ecrit pas les fichiers de cablage MCP (artefacts seuls)")
     st.set_defaults(func=cmd_start)
 
+    au = sub.add_parser(
+        "auto",
+        help="travaille SEUL sur un plan dont chaque etape doit porter sa preuve",
+    )
+    au.add_argument("objective", nargs="?", default="", help="l'objectif global")
+    au.add_argument("--cible", default="jio", help="cible du plan (chemin, module)")
+    au.add_argument("--entrypoint", default="", help="fonction attendue, si le plan en a besoin")
+    au.add_argument(
+        "--budget", type=int, default=6,
+        help="nombre maximum d'etapes executees (defaut 6) : au-dela, le reste est declare "
+             "NON TENTE au lieu d'etre fait en silence",
+    )
+    au.add_argument(
+        "--plan", default="", metavar="FICHIER",
+        help="plan JSON a executer. Sans ce fichier, un plan de REFERENCE deterministe est "
+             "utilise et ANNONCE comme tel (le modele reel fournirait le sien)",
+    )
+    au.add_argument("--strict", action="store_true",
+                    help="refuse de commencer si la porte de clarification a des questions")
+    au.add_argument("--etat", default=".jio/plan.json", help="ou enregistrer l'etat du plan")
+    au.add_argument("--json", action="store_true", help="resultat lisible par une machine")
+    au.set_defaults(func=cmd_auto)
+
     cl = sub.add_parser(
         "clarify",
         help="pose les questions ESSENTIELLES avant de travailler (ou dit qu'il n'y en a pas)",
@@ -3353,6 +3376,8 @@ def _fiche_active(
 jio doctor                  # etat reel : fournisseurs, artefacts, journal, garde-fous
 jio clarify "<objectif>"    # les questions ESSENTIELLES ; code 3 si la reponse manque
 jio run "<objectif>"        # mission complete : preuve, panel, consensus, reserves
+jio auto "<objectif>"       # plusieurs etapes vers un objectif large : une etape sans
+                            # preuve est REFUSEE, un echec non resolu ARRETE le plan
 ```
 
 `jio clarify` sort en **3** quand une question essentielle reste sans reponse. Dans ce cas,
@@ -3367,6 +3392,9 @@ la bonne action est de POSER la question a l'utilisateur, pas de commencer.
    competences a la main est perdu : editer `jio/artifacts/doctrine.py`, puis `jio sync`.
 3. **Trois etats, pas quatre.** `DELIVERED`, `DELIVERED_UNDER_RESERVATION`, `ABSTAINED`.
    « Ca devrait marcher » n'est pas un etat.
+4. **Une etape sans preuve n'existe pas.** En mode autonome (`jio auto`), chaque etape du plan
+   porte la commande qui peut echouer ; un echec non resolu ARRETE le plan au lieu de
+   l'enchainer, et ce qui reste est declare NON TENTE.
 
 ## Ce que "fini" veut dire ici
 
@@ -3377,6 +3405,155 @@ la bonne action est de POSER la question a l'utilisateur, pas de commencer.
 
 Detail complet : `README.md`, `docs/VISION-ARCHITECTURE.md`, doctrine : `jio/artifacts/doctrine.py`.
 """
+
+
+def cmd_auto(args: argparse.Namespace) -> int:
+    """Execute un plan verifie, et s'ARRETE des que la preuve manque.
+
+    La difference avec `jio run` : `run` fait UNE mission (un artefact, une preuve). `auto`
+    enchaine PLUSIEURS etapes vers un objectif plus large, avec deux garanties que rien d'autre
+    ne donne dans l'ecosysteme des agents :
+
+      * chaque etape doit porter une preuve executable : sans elle, l'etape est REFUSEE avec sa
+        raison, jamais executee « en attendant ». Un plan dont on retire la moitie en silence
+        n'est plus le plan du modele, et personne ne saurait ce qui a ete change ;
+      * un echec non resolu ARRETE le plan (etat `bloque`) au lieu d'empiler des etapes sur une
+        base qu'on sait fausse. Le budget epuise est declare `budget`, avec ce qui reste.
+
+    Trois issues, jamais quatre : `termine`, `bloque`, `budget`. L'etat est ecrit dans
+    `.jio/plan.json` — avec la revision du depot sur laquelle il a ete obtenu, parce que
+    reprendre un plan apres un changement de revision, c'est changer de monde.
+    """
+    from .loop.auto import (
+        MAX_ETAPES, enregistrer, executer, extraire_etapes, formater, plan_simule,
+    )
+
+    objectif = args.objective.strip()
+    if not objectif:
+        print("  objectif requis : jio auto \"<objectif>\"", file=sys.stderr)
+        print("  exemple : jio auto \"corrige la borne de mutation\" --cible jio/verify/mutation.py",
+              file=sys.stderr)
+        return 2
+
+    analyse = None
+    if not args.plan:
+        from .clarify import analyser as _analyser, formater as _formater
+
+        analyse = _analyser(objectif, mode="strict" if args.strict else "assume")
+        if analyse.bloquant:
+            print(_formater(analyse))
+            print()
+            print("  PLAN NON COMMENCE (--strict) : reponds aux questions, puis relance.")
+            return 3
+
+    # Le plan : un fichier fourni, ou le plan de reference deterministe — ANNONCE.
+    texte = ""
+    simule = False
+    if args.plan:
+        chemin = Path(args.plan).expanduser()
+        if not chemin.is_file():
+            print(f"  plan introuvable : {chemin}", file=sys.stderr)
+            return 2
+        texte = chemin.read_text(encoding="utf-8")
+    else:
+        import json as _json
+
+        texte = _json.dumps(plan_simule(objectif, cible=args.cible, entree=args.entrypoint))
+        simule = True
+
+    etapes, refusees = extraire_etapes(texte, max_etapes=MAX_ETAPES)
+
+    print(BANNER)
+    print("  MISSION AUTONOME  ·  chaque etape doit porter sa preuve")
+    print(f"    objectif : {objectif}")
+    if simule:
+        print("    plan : REFERENCE deterministe (aucun modele n'a planifie). Chaque etape cite")
+        print("    une preuve qui existe dans ce depot ; `--plan <fichier>` execute le tien.")
+    print()
+
+    questions: tuple[str, ...] = ()
+    if analyse is not None and analyse.questions:
+        questions = tuple(q.question for q in analyse.questions)
+        print("    HYPOTHESES DECLAREES (l'objectif laissait ces points ouverts) :")
+        for q in analyse.questions:
+            print(f"      - {q.signal} : {q.defaut[:80]}")
+
+    if not etapes:
+        print()
+        print(formater(executer((), objective=objectif, lancer=lambda e: (False, "", 0),
+                                racine=Path.cwd(), refusees=refusees)))
+        return 1
+
+    def lancer(etape: object) -> tuple[bool, str, int]:
+        """Execute UNE etape : la preuve est une commande reelle, dans le depot."""
+        import subprocess
+
+        commande = getattr(etape, "preuve", "")
+        argv = _argv_de_preuve(commande)
+        if argv is None:
+            return False, (
+                "preuve refusee : seules les commandes `jio ...`, `python -m pytest|ruff|mypy "
+                f"` sont executees (ni chainage, ni shell). Recu : {commande[:60]}"
+            ), 0
+        proc = subprocess.run(
+            argv, cwd=Path.cwd(), capture_output=True, text=True, timeout=1800, check=False,
+        )
+        sortie = (proc.stdout or proc.stderr or "").strip().splitlines()
+        queue = sortie[-1][:120] if sortie else "(aucune sortie)"
+        return proc.returncode == 0, f"code {proc.returncode} · {queue}", 1
+
+    resultat = executer(
+        etapes, objective=objectif, lancer=lancer, racine=Path.cwd(),
+        budget_etapes=max(1, min(args.budget, MAX_ETAPES)), refusees=refusees, questions=questions,
+    )
+    enregistrer(resultat, Path(args.etat))
+    print()
+    if args.json:
+        print(json.dumps(resultat.as_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(formater(resultat))
+        print()
+        print(f"    etat enregistre : {args.etat} (reprise possible apres correction)")
+    return {"termine": 0, "bloque": 1, "budget": 2, "refuse": 1}.get(resultat.etat, 1)
+
+
+def _argv_de_preuve(commande: str) -> list[str] | None:
+    """Traduit une ligne de preuve en `argv`, sans shell — et refuse ce qui n'est pas permis.
+
+    Une preuve vient d'un modele : c'est du contenu NON FIABLE, et l'executer dans un shell
+    serait lui donner le droit d'enchainer des commandes (le meme defaut que CVE-2025-53773
+    chez Copilot). On accepte donc une liste blanche : `jio ...`, `python -m pytest ...`, et
+    rien d'autre. Les caracteres de chainage sont refuses AVANT toute execution.
+    """
+    import shlex
+
+    ligne = (commande or "").strip()
+    if not ligne:
+        return None
+    for dangereux in (";", "&&", "||", "|", ">", "<", "`", "$(", "\n", "&"):
+        if dangereux in ligne:
+            return None
+    try:
+        argv = shlex.split(ligne)
+    except ValueError:
+        return None
+    if not argv:
+        return None
+    # `jio <args>` est REECRIT en `[interpreteur courant] -m jio <args>`. Mesure a l'origine :
+    # sur cette machine, `jio auto` avec une preuve « jio version » echouait avec
+    # « No such file or directory: 'jio' » — le script console n'est pas toujours dans le PATH,
+    # et surtout pas celui de l'interpreteur qui execute la mission. C'est EXACTEMENT le defaut
+    # que `prouver_branchement` traque sur le cablage MCP, et il se rejoue ici.
+    if argv[0] == "jio":
+        return [sys.executable, "-m", "jio", *argv[1:]]
+    if len(argv) > 1 and argv[1] == "-m" and argv[0].startswith("python"):
+        return [sys.executable, *argv[1:]]
+    if argv[0] in {"python", "python3"} and len(argv) > 2 and argv[1] == "-m" and argv[2] in {
+        "pytest", "ruff", "mypy", "pyright",
+    }:
+        return [sys.executable, *argv[1:]]
+    return None
+
 
 
 def main(argv: Sequence[str] | None = None) -> int:

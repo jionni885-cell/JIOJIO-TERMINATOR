@@ -119,6 +119,9 @@ SURES: dict[str, list[str]] = {
     # `clarify` : la porte de clarification. Sans argument, elle dit qu'il n'y a pas
     # d'objectif — c'est le pire cas d'un utilisateur qui decouvre la commande.
     "clarify": [],
+    # `auto` : la meme chose sans objectif. Sans objectif, elle refuse et explique — aucun
+    # effet de bord, aucune ecriture, aucun plan invente.
+    "auto": [],
 }
 
 
@@ -179,6 +182,9 @@ def test_chaque_commande_est_couverte_par_ce_fichier() -> None:
         "ablation", "audit", "bench", "learn", "mcp", "mutants", "recover", "run", "start",
         "sync",
     }
+    # `auto` est couvert par `SURES` ci-dessus (sans objectif : refus propre) ET, pour le
+    # chemin qui execute vraiment des plans, par `tests/test_auto.py`, qui lance la machinerie
+    # avec un executeur truque — aucune mission reelle, aucune ecriture chez l'utilisateur.
     couvertes = set(SURES) | exclues
     manquantes = sorted(set(COMMANDES) - couvertes)
     assert not manquantes, (

@@ -249,7 +249,10 @@ class Question:
     pourquoi: str
     defaut: str
     #: Nombre de consequences concretes : sert a classer (la plus lourde d'abord).
-    poids: int = 1
+    #: Obligatoire, et non « par defaut 1 » : toutes les constructions le donnent, et une
+    #: valeur par defaut que personne n'utilise est une ligne que `jio mutants` signalait a
+    #: juste titre comme non prouvee — elle ne pouvait pas changer le comportement.
+    poids: int
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -472,6 +475,10 @@ def _questions(
     if action in _VAGUES:
         # Un verbe vague est traite comme une action absente : c'est precise dans le motif.
         questions.sort(key=lambda q: (q.signal != "cible", q.signal != "critere"))
+    # Le departage se fait par POIDS : la question dont l'ignorance coute le plus passe
+    # devant. Sans ce tri, `poids` etait une valeur decorative — et une valeur decorative
+    # finit par etre fausse sans que personne ne le voie.
+    questions.sort(key=lambda q: -q.poids)
     return tuple(questions[:max_questions])
 
 

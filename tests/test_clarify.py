@@ -279,3 +279,44 @@ def test_les_regles_de_decision_de_la_porte_sont_Ecrites() -> None:
     # confort, et c'est ce confort qui a produit six faux positifs sur trente et un cas.
     signaux = {q.signal for q in analyser("corrige jio/verify/entropy.py").questions}
     assert signaux == {"critere"}
+
+
+def test_la_borne_de_questions_est_un_NOMBRE_fige_et_pas_un_renvoi_a_elle_meme() -> None:
+    """`MAX_QUESTIONS == 3`, et la borne MORD : le pire objectif en recoit exactement 3.
+
+    Mesure a l'origine : `jio mutants` a montre que ce `3` pouvait passer a `4` sans qu'aucun
+    test ne bouge — parce que les tests comparaient `len(questions) <= MAX_QUESTIONS`, donc la
+    constante se comparait a elle-meme. Un objet qui se cite en guise de preuve ne prouve rien.
+
+    On exige donc les deux : la valeur, ET le comportement au-dela (quatre signaux manquants
+    doivent rendre trois questions, pas quatre).
+    """
+    from jio.clarify import MAX_QUESTIONS
+
+    assert MAX_QUESTIONS == 3
+    # « fais en sorte que ca marche mieux » : action, cible, critere ET perimetre manquent.
+    pire = analyser("fais en sorte que ca marche mieux")
+    assert len(pire.manquants) >= 4
+    assert len(pire.questions) == MAX_QUESTIONS, "la borne doit mordre, pas seulement exister"
+
+
+def test_le_classement_des_questions_suit_leur_POIDS() -> None:
+    """La question dont l'ignorance coute le plus passe devant — mesurable, pas cosmetique.
+
+    `Question.poids` vaut 3 pour la cible et le critere, 2 pour la source et le perimetre, 1
+    pour le format et l'action. Le tri est verifie en comparant les poids rendus : si le tri
+    disparaissait, l'ordre du catalogue le masquerait la plupart du temps — et un jour ou
+    l'ordre changerait, la porte poserait d'abord la question la moins utile.
+    """
+    analyse = analyser("ameliore le projet")
+    poids = [q.poids for q in analyse.questions]
+    assert poids == sorted(poids, reverse=True), poids
+    assert all(p >= 1 for p in poids)
+    # Un poids manquant dans la construction leverait : le champ est obligatoire.
+    import dataclasses
+
+    from jio.clarify import Question
+
+    assert dataclasses.fields(Question)[-1].default is dataclasses.MISSING, (
+        "un poids par defaut serait une valeur que personne n'utilise"
+    )

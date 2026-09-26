@@ -54,6 +54,11 @@ VALEURS_FIGEES: dict[str, str] = {
     "jio.core.types:MissionReport": (
         "le rapport d'une mission est archive tel quel et ne doit pas bouger apres coup"
     ),
+    # --- la porte de clarification (mesure : `jio mutants` la voyait survivre) ---
+    "jio.bench.objectifs:Objectif": (
+        "la verite de REFERENCE d'un objectif annote ne se revise pas en place : si le banc "
+        "pouvait modifier son attendu pendant la mesure, il fabriquerait son propre resultat"
+    ),
     "jio.core.journal:Event": (
         "un evenement de journal est la matiere du rejeu deterministe"
     ),

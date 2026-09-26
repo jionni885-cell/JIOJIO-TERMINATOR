@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 845 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 869 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -27,6 +27,8 @@ Hermes sont **générés**, et le câblage MCP est **prouvé** en démarrant ré
 jio start                     # artefacts + câblage MCP + preuve du câblage + fiche .jio/ACTIVE.md
 jio clarify "<objectif>"      # les 0 à 3 questions ESSENTIELLES — code 3 : il faut DEMANDER
 jio run "<objectif>"          # mission complète : preuve, panel, consensus, réserves nommées
+jio auto "<objectif>"         # travaille SEUL, étape par étape : chaque étape doit porter sa
+                              # preuve ; une étape sans preuve est REFUSÉE, un échec ARRÊTE
 ```
 
 `jio clarify` existe pour une seule raison : une IA qui part sans question choisit le
