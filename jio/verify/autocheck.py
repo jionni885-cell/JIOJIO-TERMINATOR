@@ -241,6 +241,69 @@ def _required_dataclass_fields(node: ast.ClassDef) -> list[str]:
     return required
 
 
+def _lie_la_sortie_standard(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> bool:
+    """Vrai si un parametre LIE un flux des l'import (`file=sys.stdout` par defaut).
+
+    Consequence pour doctest, mesuree sur du code public (`pyparsing.show_best_practices`) :
+    la valeur par defaut est evaluee a la DEFINITION de la fonction, donc elle pointe la
+    sortie standard d'AVANT le test. Doctest remplace `sys.stdout` pendant l'execution :
+    l'exemple ecrit dans l'ancien flux, doctest ne voit rien, et conclut « Got nothing » —
+    alors que le code fait exactement ce que sa docstring annonce.
+
+    C'est notre facon de MESURER qui est en cause, pas l'artefact. L'exemple est donc
+    declare en reserve avec cette raison, au lieu d'etre accuse.
+
+    Le seul cas traite est le lien par VALEUR PAR DEFAUT, qui est detectable sans deviner :
+    un `file=sys.stdout` ecrit dans le corps de la fonction, lui, est capturable.
+    """
+    # Une CLASSE est acceptee : ses exemples peuvent appeler une de ses methodes qui lie le
+    # flux. Sans ce cas, `derive` levait `'ClassDef' object has no attribute 'args'` —
+    # regression attrapee par la mesure sur pyparsing, apres avoir ete introduite par cette
+    # fonction meme. Le controle doit accepter ce que les sites d'appel lui donnent.
+    if isinstance(node, ast.ClassDef):
+        if any(
+            _lie_la_sortie_standard(item)
+            for item in node.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ):
+            return True
+        return False
+
+    defauts = list(node.args.defaults) + [
+        d for d in node.args.kw_defaults if d is not None
+    ]
+    for defaut in defauts:
+        try:
+            texte = ast.unparse(defaut)
+        except Exception:  # arbre partiel
+            continue
+        if texte in {"sys.stdout", "sys.stderr"}:
+            return True
+    return False
+
+
+def _refuse_la_construction(constructeur: ast.FunctionDef) -> bool:
+    """Vrai si le constructeur leve une exception SANS CONDITION.
+
+    C'est la signature d'une classe a FABRIQUES : `packaging.ranges.VersionRange` refuse
+    `VersionRange()` par un `__new__` dont le corps est un `raise TypeError(...)` qui
+    indique les vraies portes d'entree (`to_range()`, `full()`, `empty()`, `singleton()`).
+
+    Defaut reel, mesure sur du code public : l'audit instanciait cette classe, recevait
+    `TypeError: cannot create 'VersionRange' instances directly` et rapportait CINQ
+    problemes (C-001 a C-005) sur une bibliotheque qui va bien. Le refus est une decision
+    d'architecture, ecrite en clair ; l'appeler un defaut est un faux positif — et un faux
+    positif de cette farine detruit la confiance dans le garde.
+
+    On ne detecte QUE le `raise` au premier niveau du corps : un `raise` dans un `if`
+    depend d'un argument, donc il ne dit rien de la construction a vide. Le doute profite
+    a l'artefact : on ne retire une accusation que dans le cas non ambigu.
+    """
+    return any(isinstance(item, ast.Raise) for item in constructeur.body)
+
+
 def _instantiable_without_args(node: ast.ClassDef) -> tuple[bool, str]:
     """L'instanciation sans argument est-elle garantie possible ?
 
@@ -295,6 +358,15 @@ def _instantiable_without_args(node: ast.ClassDef) -> tuple[bool, str]:
         if bases:
             return False, f"constructeur herite de {', '.join(sorted(bases))}"
         return True, ""
+    # Une classe qui REFUSE la construction directe n'est pas cassee : elle est
+    # volontairement construite par fabriques. Aucune regle d'instance ne s'applique.
+    for nom, constructeur in constructeurs.items():
+        if _refuse_la_construction(constructeur):
+            return False, (
+                f"{nom} refuse la construction directe (exception levee sans condition) : "
+                "classe a fabriques, pas un defaut"
+            )
+
     args = constructeurs[next(iter(constructeurs))].args
     nom_constructeur = next(iter(constructeurs))
     positional = list(args.posonlyargs) + list(args.args)
@@ -722,6 +794,7 @@ assert _jio_checked, "aucune sonde executable pour {name}.{method}"
 '''
 
 _CHECK_DOCTESTS = '''
+_jio_stdout_defaut = {stdout_defaut}
 import doctest as _jio_doc
 _jio_fn = globals().get({name!r})
 assert callable(_jio_fn), "entree {name!r} absente ou non appelable"
@@ -771,6 +844,60 @@ if _jio_runner.failures:
     # annoncee. Un vrai desaccord s'ecrit « Expected: » (deux points), suivi de la
     # valeur attendue. Pas de `re` ici : ce code tourne dans un espace de noms neuf,
     # et un `import re` oublie a produit un `NameError` -- donc un faux KO.
+    # Troisieme echec qui ne prouve RIEN contre l'artefact, constate sur une
+    # bibliotheque reelle (packaging) : l'exemple attend une TRACEBACK.
+    #
+    #     >>> Specifier("lolwat")
+    #     Traceback (most recent call last):
+    #         ...
+    #     packaging.specifiers.InvalidSpecifier: Invalid specifier: 'lolwat'
+    #
+    # Le bac a sable execute l'artefact sous un nom SYNTHETIQUE : la traceback reelle
+    # commence par `InvalidSpecifier:` et non `packaging.specifiers.InvalidSpecifier:`,
+    # donc doctest compare deux textes qui ne peuvent pas coincider — alors que le type
+    # leve est le BON. On rejoue donc les memes exemples avec `IGNORE_EXCEPTION_DETAIL`
+    # (le mecanisme prevu par doctest pour ce cas exact : il compare le NOM DE LA CLASSE
+    # et ignore le chemin du module et le message). Si tout passe ainsi, l'exemple est
+    # verifie quant au type : c'est une RESERVE, pas une accusation. Si un autre
+    # desaccord subsiste, il est decisif et l'echec reste un echec.
+    if _jio_runner.failures and "Traceback (most recent call last)" in _jio_brut:
+        _jio_buf2 = []
+        _jio_runner2 = _jio_doc.DocTestRunner(
+            verbose=False, optionflags=_jio_doc.IGNORE_EXCEPTION_DETAIL
+        )
+        # Les objets de test sont RECONSTRUITS, pas rejoues. Reexecuter le meme `DocTest`
+        # n'est pas idempotent : mesure faite ici, le second passage levait
+        # `NameError: name 'Specifier' is not defined` — les globales du test ne
+        # survivaient pas a la premiere execution, et la reprise echouait pour une raison
+        # qui n'avait rien a voir avec ce qu'elle verifiait. Un `DocTestFinder` neuf coute
+        # une lecture d'AST et redonne a chaque exemple l'espace de noms du module.
+        _jio_tests2 = [
+            _t for _t in _jio_doc.DocTestFinder().find(_jio_fn, name=_jio_fn.__name__)
+            if _t.examples
+        ]
+        for _t in _jio_tests2:
+            _jio_runner2.run(_t, out=_jio_buf2.append)
+        if not _jio_runner2.failures:
+            raise AssertionError(
+                "[RESERVE] %d exemple(s) de docstring : le type d'exception leve est bien "
+                "celui annonce, seul le nom QUALIFIE du module differe (le bac a sable "
+                "execute l'artefact sous un nom synthetique) : %s"
+                % (_jio_runner.failures, _jio_tail)
+            )
+
+    # Quatrieme cas, meme famille : l'exemple ecrit dans un flux LIE A L'IMPORT.
+    # `def f(file=sys.stdout)` capture la sortie standard d'AVANT le test ; doctest la
+    # remplace pendant l'execution, ne voit rien, et annonce « Got nothing » alors que
+    # l'artefact fait exactement ce que sa docstring promet. Mesure sur
+    # `pyparsing.show_best_practices`. On ne peut pas capturer ce que le code a deja lie :
+    # c'est notre facon de mesurer qui est en cause, donc reserve et non accusation.
+    if _jio_stdout_defaut and "Got nothing" in _jio_brut:
+        raise AssertionError(
+            "[RESERVE] %d exemple(s) de docstring : la sortie attendue passe par un flux "
+            "lie a l'import (`file=sys.stdout` par defaut), que le bac a sable ne peut pas "
+            "capter : %s" % (_jio_runner.failures, _jio_tail)
+        )
+
     _jio_decisif = "Expected:" in _jio_brut and "Got:" in _jio_brut
     if "NameError" in _jio_brut:
         # L'exemple suppose un objet fourni par l'environnement de test (console,
@@ -991,7 +1118,9 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
                 kind=RuleKind.TEST,
             )
         )
-        checks[r3] = _CHECK_DOCTESTS.format(name=chosen)
+        checks[r3] = _CHECK_DOCTESTS.format(
+            name=chosen, stdout_defaut=repr(_lie_la_sortie_standard(node))
+        )
         notes.append(
             "docstring : les exemples ecrits par l'auteur servent de specification executable"
         )
@@ -1049,7 +1178,9 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
                 kind=RuleKind.TEST,
             )
         )
-        checks[code_doc] = _CHECK_DOCTESTS.format(name=name)
+        checks[code_doc] = _CHECK_DOCTESTS.format(
+            name=name, stdout_defaut=repr(_lie_la_sortie_standard(defs[name]))
+        )
 
     if len(audited) > 1:
         notes.append(
@@ -1214,7 +1345,9 @@ def _class_spec(
                 kind=RuleKind.TEST,
             )
         )
-        checks[rid] = _CHECK_DOCTESTS.format(name=name)
+        checks[rid] = _CHECK_DOCTESTS.format(
+            name=name, stdout_defaut=repr(_lie_la_sortie_standard(node))
+        )
         notes.append(
             "docstring : les exemples ecrits par l'auteur servent de specification executable"
         )

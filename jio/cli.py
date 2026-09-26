@@ -2288,8 +2288,15 @@ def cmd_scan(args: argparse.Namespace) -> int:
             target = finding.path if (root / finding.path).exists() else root.parent / finding.path
             if finding.path in broken or target in broken:
                 continue  # deja signale comme incompilable : pas de doublon
-            problems.append((target if target.exists() else finding.path,
-                             finding.rule, finding.label[:160]))
+            cible = target if target.exists() else finding.path
+            # Un constat qui DECLARE une limite de l'analyseur n'accuse pas le code : il est
+            # affiche en reserve, avec sa raison. Le message de `pyparsing` (« unable to
+            # detect undefined names ») le disait deja ; c'est nous qui l'accusions.
+            limite = finding.limite_de_l_analyse
+            if limite:
+                reserves.append((cible, finding.rule, limite[:160]))
+            else:
+                problems.append((cible, finding.rule, finding.label[:160]))
         if report.truncated:
             linter_note = (linter_note + " " if linter_note else "") + (
                 f"{report.truncated} constat(s) au-dela du plafond d'affichage"

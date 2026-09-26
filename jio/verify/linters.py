@@ -83,6 +83,28 @@ def plain_french(code: str) -> str:
             }[prefix]
     return ""
 
+#: Regles qui expriment une LIMITE DE L'ANALYSEUR, et non un defaut du code.
+#:
+#: Mesure sur du code public : `pyparsing` (3.3.3) etait declare fautif cinq fois, uniquement
+#: sur `F403` — des `from .x import *` dans son `__init__.py`, qui est precisement l'idiome
+#: standard de reexport d'un paquet. Le message le dit lui-meme : « unable to detect undefined
+#: names ». Accuser un projet parce que l'ANALYSEUR n'a pas su suivre les noms est un faux
+#: positif, et un faux positif de cette farine detruit la confiance dans le garde.
+#:
+#: Ces constats ne sont pas perdus pour autant : ils restent affiches, en RESERVE, avec leur
+#: raison. Une capacite limitee se declare ; elle ne s'accuse pas — et elle ne se taise pas
+#: non plus, sinon `import *` deviendrait une zone ou plus personne ne regarde.
+LIMITES_DE_L_ANALYSE: dict[str, str] = {
+    "F403": (
+        "`import *` : l'analyseur ne peut pas suivre les noms, donc il ne peut rien prouver "
+        "sur ce fichier — limite de l'outil, pas du code"
+    ),
+    "F405": (
+        "nom peut-etre indefini : l'analyseur n'a pas pu trancher a cause d'un `import *` — "
+        "limite de l'outil, pas une preuve de defaut"
+    ),
+}
+
 #: Plafond de constats remontes pour un meme outil : au-dela, on resume au lieu de
 #: noyer le rapport. Un fichier peut legitimement produire des centaines de lignes.
 MAX_FINDINGS = 200
@@ -96,11 +118,24 @@ class LintFinding:
     message: str
 
     @property
+    def code(self) -> str:
+        """Code de la regle, sans le nom de l'outil (`ruff:F403` -> `F403`)."""
+        return self.rule.split(":")[-1]
+
+    @property
     def label(self) -> str:
         """Constat pret a afficher : explication francaise + message d'origine."""
-        code = self.rule.split(":")[-1]
-        plain = plain_french(code)
+        plain = plain_french(self.code)
         return f"{plain} — {self.message}" if plain else self.message
+
+    @property
+    def limite_de_l_analyse(self) -> str:
+        """Raison pour laquelle ce constat DECLARE une limite au lieu d'accuser.
+
+        Chaine vide quand le constat est une preuve de defaut : l'appelant n'a qu'un test a
+        faire, et la raison voyage avec le constat.
+        """
+        return LIMITES_DE_L_ANALYSE.get(self.code, "")
 
 
 @dataclass

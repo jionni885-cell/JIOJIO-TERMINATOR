@@ -56,6 +56,11 @@ class ModuleInfo:
     attributes: list[tuple[str, int]] = field(default_factory=list)  # ("pkg.a.helper", ligne)
     parses: bool = True
     error: str = ""
+    #: Le module contient un `from X import *`. Ses noms exportables ne sont donc PAS
+    #: tous visibles dans son code : une partie vient d'ailleurs, et l'analyse statique
+    #: ne peut pas les suivre. Accuser un consommateur parce que le nom est introuvable
+    #: dans un module qui importe tout serait accuser l'analyseur, pas le code.
+    etoile: bool = False
 
 
 def _toplevel_names(tree: ast.Module) -> set[str]:
@@ -185,8 +190,15 @@ def analyse(path: Path, root: Path) -> ModuleInfo:
             racine = raw.split(".")[0]
             if racine in bound and racine not in shadows:
                 attributes.append((raw, node.lineno))
+    # Import etoile, cherche PARTOUT : un `from .core import *` ecrit dans un `try` ou
+    # un `if` fournit tout autant de noms au module. Le doute profite a l'artefact.
+    etoile = any(
+        isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names)
+        for node in ast.walk(tree)
+    )
     return ModuleInfo(
-        path, dotted, package, _toplevel_names(tree), imports, relative, attributes
+        path, dotted, package, _toplevel_names(tree), imports, relative, attributes,
+        etoile=etoile,
     )
 
 
@@ -271,6 +283,13 @@ def check_project(paths: list[Path], root: Path) -> list[ImportProblem]:
             for name in names:
                 if name == "*" or name in target.defines:
                     continue
+                if target.etoile:
+                    # `from .helpers import X` ou helpers fait `from .core import *` :
+                    # X existe a l'execution mais reste invisible ici. Mesure sur du code
+                    # public : pyparsing accusait `DelimitedList` et `ParseException`, deux
+                    # symboles bien presents (verifie a l'import). Le nom peut venir de
+                    # l'etoile : on ne peut pas conclure, donc on n'accuse pas.
+                    continue
                 # `from pkg import a` ou `a` est le SOUS-MODULE pkg/a.py : forme
                 # parfaitement valide en Python, et courante dans le code reel.
                 # L'ignorer produisait une fausse alerte sur chaque projet.
@@ -306,6 +325,8 @@ def check_project(paths: list[Path], root: Path) -> list[ImportProblem]:
             for name in names:
                 if name == "*" or name in target.defines:
                     continue
+                if target.etoile:
+                    continue  # voir le commentaire des imports absolus
                 if _resolve(f"{wanted}.{name}", table) is not None:
                     continue
                 problems.append(
@@ -349,6 +370,10 @@ def _check_attribute(info: ModuleInfo, chain: str, table: dict[str, ModuleInfo])
         current = target
         for segment in parts[cut:]:
             if segment in current.defines:
+                return None
+            if current.etoile:
+                # Le nom peut venir d'un `from X import *` : invisible ici, mais bien
+                # present a l'execution. On ne peut pas conclure — donc on n'accuse pas.
                 return None
             deeper = _resolve(f"{current.dotted}.{segment}", table)
             if deeper is not None and deeper.parses:

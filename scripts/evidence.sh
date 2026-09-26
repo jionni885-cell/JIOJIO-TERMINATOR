@@ -937,6 +937,70 @@ with tempfile.TemporaryDirectory() as temporaire:
     )
 PYEOF
 
+titre "24. La mesure sur du code public : combien de faux positifs ?"
+
+# Le chiffre qui decidetout : une regle qui accuse a tort detruit la confiance dans le
+# rapport ENTIER, y compris ses vraies trouvailles. Le seul juge est du code ecrit par
+# d'autres. Les paquets ne sont PAS installes par la preuve : sans reseau, l'etape le DIT
+# au lieu de faire semblant.
+PAQUETS_PUBLICS=0
+for paquet in click packaging pyparsing attrs; do
+    if "$PYTHON" -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('$paquet') else 1)" 2>/dev/null; then
+        PAQUETS_PUBLICS=$((PAQUETS_PUBLICS + 1))
+    fi
+done
+
+if [ "$PAQUETS_PUBLICS" -lt 2 ]; then
+    sauter "moins de deux paquets publics installes (reseau non requis pour la preuve)"
+else
+    SORTIE_MESURE="$(bash "$RACINE/scripts/mesure-code-public.sh" 2>&1)"
+    printf '%s\n' "$SORTIE_MESURE" | sed -n '/MESURE/,/total/p' | head -12
+
+    # Le controle du controle : les formes REELLES qui accusaient a tort sont verifiees une
+    # par une, sur des artefacts fabriques. Sans cela, l'etape prouverait seulement que les
+    # paquets sont propres aujourd'hui — pas que le scan sait rester juste.
+    "$PYTHON" - "$RACINE" <<'PYEOF'
+import ast
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from jio.verify.autocheck import derive, _lie_la_sortie_standard
+from jio.verify.imports import check_project
+
+# 1. une classe a fabriques n'est pas instanciee de force
+fabriques = derive(
+    "class VersionRange:\n"
+    "    def __new__(cls, *args, **kwargs):\n"
+    "        raise TypeError('cannot create directly')\n",
+    entrypoint="VersionRange",
+)
+assert not any("s'instancie" in r.statement for r in fabriques.spec.rules), "classe a fabriques"
+assert "fabriques" in " ".join(fabriques.spec.under_specified)
+
+# 2. une sortie liee a l'import est reconnue (doctest ne peut pas la capturer)
+arbre = ast.parse("import sys\ndef f(file=sys.stdout):\n    print('x', file=file)\n")
+fonction = next(n for n in arbre.body if isinstance(n, ast.FunctionDef))
+assert _lie_la_sortie_standard(fonction)
+
+# 3. un nom venu d'un `from X import *` n'est pas un nom absent
+with tempfile.TemporaryDirectory() as temporaire:
+    racine = Path(temporaire)
+    (racine / "pkg").mkdir()
+    (racine / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (racine / "pkg" / "core.py").write_text("class Chose:\n    pass\n", encoding="utf-8")
+    (racine / "pkg" / "aide.py").write_text("from .core import *\n", encoding="utf-8")
+    (racine / "pkg" / "client.py").write_text(
+        "from .aide import Chose\n\nx = Chose\n", encoding="utf-8"
+    )
+    trouves = check_project(sorted(racine.rglob("*.py")), racine)
+    assert not trouves, f"etoile : {[p.message for p in trouves]}"
+
+print("    contrefacons : 3 formes reelles verifiees (fabriques, flux lie, import etoile)")
+PYEOF
+fi
+
 titre "Termine"
 
 # Le controle qui compte : les etapes DECLAREES dans ce fichier doivent toutes avoir ete

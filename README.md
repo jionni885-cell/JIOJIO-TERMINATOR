@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 665 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 675 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1713,6 +1713,105 @@ Et le filtre ne doit pas devenir un trou : un `@lru_cache` ou un décorateur mai
 rien, et un test l'exige. Un fichier qui ne déclarerait **que** des fixtures le dit aussi —
 « aucune fonction ni classe publique » aurait été un message faux, puisque le fichier déclare
 bien des fonctions, simplement pas auditables ainsi.
+
+## La mesure qui manquait : `jio scan` sur du code écrit par d'autres
+
+Le README annonçait ce chiffre manquant, noir sur blanc : *« de nouvelles règles dans
+`jio scan` sans mesure sur le corpus de paquets publics — qui est ce qui décide si une règle
+accuse à tort »*. Le voici.
+
+Protocole : quatre bibliothèques publiées sur PyPI (`click` 8.5.0, `packaging` 26.3,
+`pyparsing` 3.3.3, `attrs` 26.1.0), installées puis passées à `jio scan`, sans aucune
+adaptation.
+
+**Avant : trois paquets sur quatre déclarés fautifs.** Douze problèmes au total, et pas un
+seul n'était un défaut du code.
+
+| Cause réelle | Ce qui était rapporté |
+|---|---|
+| Une fixture pytest n'est pas appelable directement | 1 problème `[A-002]` — l'audit appelait `mesures()` |
+| Une classe à fabriques refuse la construction | **5 problèmes** `[C-001..005]` — `VersionRange.__new__` lève `TypeError` volontairement |
+| Un exemple attend une traceback, dont le nom de module diffère | 2 problèmes `[A-003]`, `[C-001]` |
+| Un exemple écrit dans un flux **lié à l'import** (`file=sys.stdout`) | 1 problème `[A-003]` |
+| `import *` : l'analyseur ne peut pas suivre les noms | **5 problèmes** `[ruff:F403]` |
+| Un nom vient d'un `from .core import *` chez le voisin | 2 problèmes `[IMPORT]` |
+
+Toutes de la même famille : **l'analyseur ne pouvait pas conclure, et il accusait.**
+
+### Après, et ce qu'il reste
+
+```
+    click        0 probleme(s)  ·  code de sortie 0
+    packaging    0 probleme(s)  ·  code de sortie 0
+    pyparsing    1 probleme(s)  ·  code de sortie 1
+                [ruff:F401] import inutilise — `.unicode.UnicodeRangeList` imported but unused
+    attrs        0 probleme(s)  ·  code de sortie 0
+```
+
+Le seul problème restant est **vrai**, vérifié à la main : `UnicodeRangeList` est un alias de
+type public de `pyparsing.unicode`, importé dans `__init__.py`, et absent des **171** noms de
+`__all__`. Le nom est donc visible (`pyparsing.UnicodeRangeList`) sans être réexporté — soit
+l'import est mort, soit l'alias a été oublié dans `__all__`.
+
+Un audit qui trouve peu de lignes et que des vraies vaut mieux qu'un audit qui en trouve
+douze et se trompe onze fois.
+
+```bash
+scripts/mesure-code-public.sh          # rejoue la mesure (n'installe rien)
+scripts/mesure-code-public.sh rich     # n'importe quel paquet déjà installé
+```
+
+### Quatre corrections, une seule doctrine
+
+Chaque correction suit la même règle, écrite dans le code depuis le début : *une capacité qui
+n'a pas pu conclure se **déclare**, elle ne s'**accuse** pas*. Et, comme toujours, l'exclusion
+est **dite** :
+
+```
+    test_chiffres_documentes.py : 1 fixture(s) hors audit (mesures) : une fixture pytest n'est
+    pas appelable directement par construction [...]. Ce n'est pas un defaut du fichier.
+
+    specifiers.py [C-001] le type d'exception leve est bien celui annonce, seul le nom QUALIFIE
+    du module differe (le bac a sable execute l'artefact sous un nom synthetique)
+
+    __init__.py [A-003] la sortie attendue passe par un flux lie a l'import
+    (`file=sys.stdout` par defaut), que le bac a sable ne peut pas capter
+
+    __init__.py [ruff:F403] `import *` : l'analyseur ne peut pas suivre les noms [...] —
+    limite de l'outil, pas du code
+```
+
+Et deux gardes pour que ces filtres ne deviennent pas des trous :
+
+* un `@lru_cache` ou un décorateur maison n'exclut rien de l'audit (un test l'exige) ; un
+  `raise` **conditionnel** dans un constructeur non plus — seul un `raise` au premier niveau
+  du corps est un refus par construction ;
+* `F821` (nom non défini) reste une **preuve de défaut**, pas une limite. Le jeu
+  `LIMITES_DE_L_ANALYSE` ne contient que `F403` et `F405`, et un test l'exige : un jeu de
+  limites qui s'élargit transforme l'audit en décor.
+
+### Le bug dans le bug
+
+En corrigeant la comparaison des tracebacks, la reprise rejouait les **mêmes** objets
+`DocTest`. Rejouer un `DocTest` n'est pas idempotent : le second passage levait
+
+```
+NameError: name 'Specifier' is not defined
+```
+
+et la correction échouait pour une raison qui n'avait **rien à voir** avec ce qu'elle
+vérifiait. Les objets de test sont maintenant reconstruits (`DocTestFinder` neuf) à chaque
+passe — mesuré, pas supposé.
+
+Et une régression attrapée par la mesure elle-même, deux minutes après avoir été écrite : le
+nouveau contrôle acceptait une fonction mais recevait parfois une **classe**, ce qui faisait
+échouer l'audit du fichier entier sur
+
+```
+[SCAN] analyse impossible : 'ClassDef' object has no attribute 'args'
+```
+
+Un contrôle doit accepter ce que ses appelants lui donnent.
 
 ## Toutes les commandes répondent, et c'est testé
 
