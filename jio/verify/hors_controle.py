@@ -79,7 +79,11 @@ def zones(texte: str) -> tuple[set[int], list[str]]:
     Deux fonctions separees auraient fini par diverger — et une reparation qui ecrit la ou le
     controle ne regarde pas est un trou invisible.
     """
-    lignes = texte.splitlines(keepends=True)
+    # Sans `keepends` : ici on ne lit que le CONTENU des lignes. La version precedente
+    # demandait les fins de ligne sans jamais les utiliser ; `jio mutants` l'a designee comme
+    # survivante, et un mutant equivalent n'apprend rien — la bonne reponse est de supprimer
+    # la ligne inutile, pas d'ecrire un test de theatre pour la defendre.
+    lignes = texte.splitlines()
     masquees: set[int] = set()
     raisons: list[str] = []
     dedans = False
