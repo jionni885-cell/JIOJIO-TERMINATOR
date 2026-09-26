@@ -43,3 +43,16 @@
   files: \.(md|markdown|rst|txt|org|adoc)$
   # Les noms de fichiers sont passes a `jio claims --hook` : c'est le mode ou
   # « rien a verifier » ne bloque pas, et ou seule une refutation fait echouer.
+
+- id: jio-artifacts-audit
+  name: JIO — instructions des competences et des agents
+  description: >
+    Verifie que ce qui sera EXECUTE par un agent (competences Hermes, agents opencode,
+    prompts) ne contient pas d'ordre dangereux : contournement d'un garde-fou, commande
+    destructrice, execution de code telecharge, exfiltration de secret, invitation a taire
+    une erreur. Une ligne qui INTERDIT le motif est comptee comme mise en garde, jamais
+    condamnee : un controle qui accuse les fichiers qui le protegent se fait desactiver.
+  entry: jio artifacts --audit
+  language: python
+  pass_filenames: false
+  always_run: true

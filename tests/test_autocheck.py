@@ -283,3 +283,94 @@ def test_echec_dur_condamne_toujours():
     )
     assert not res.passed
     assert len(res.hard_failures) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Les fixtures pytest ne sont pas des cibles d'audit
+# --------------------------------------------------------------------------- #
+
+
+def test_une_fixture_pytest_est_hors_audit_et_dite_comme_telle() -> None:
+    """Une fixture n'est pas appelable directement : ce n'est pas un defaut du fichier.
+
+    Defaut reel, trouve en lancant `jio scan .` sur ce depot apres reconstruction de
+    l'environnement : `tests/test_chiffres_documentes.py` rapportait un PROBLEME
+
+        [A-002] https://docs.pytest.org/en/stable/deprecations.html#calling-fixtures-directly
+
+    L'audit avait choisi la fixture `mesures` comme cible (premiere fonction publique du
+    fichier), lui avait applique la regle de reproductibilite, et l'appel direct avait leve
+
+        Failed: Fixture "mesures" called directly.
+
+    Un faux positif de cette farine detruit la confiance dans le garde. La fixture sort
+    donc de l'audit — et surtout, l'exclusion est DITE : un fichier ou l'on n'a rien
+    verifie ne doit pas ressembler a un fichier ou tout va bien.
+    """
+    source = (
+        "import pytest\n"
+        "\n"
+        "@pytest.fixture\n"
+        "def mesures():\n"
+        "    return {'tests': 1}\n"
+        "\n"
+        "\n"
+        "def utilite() -> int:\n"
+        "    return 1\n"
+    )
+    derived = derive(source)
+
+    assert "mesures" not in derived.functions, "une fixture a ete retenue comme cible"
+    assert "utilite" in derived.functions
+    assert derived.entrypoint != "mesures", "l'audit vise encore la fixture"
+    limites = " ".join(derived.spec.under_specified)
+    assert "fixture" in limites and "mesures" in limites, (
+        "l'exclusion n'est pas declaree : " + limites
+    )
+
+
+def test_un_fichier_de_fixtures_seulement_le_dit_au_lieu_de_se_taire() -> None:
+    """Cas limite : plus rien a auditer, mais une RAISON a donner.
+
+    Le message par defaut (« aucune fonction ni classe publique ») serait faux : le
+    fichier declare bien des fonctions, elles ne sont simplement pas auditables ainsi.
+    """
+    source = (
+        "import pytest\n"
+        "\n"
+        "@pytest.fixture\n"
+        "def a():\n"
+        "    return 1\n"
+        "\n"
+        "@pytest.fixture(scope='module')\n"
+        "def b():\n"
+        "    return 2\n"
+    )
+    derived = derive(source)
+
+    assert not derived.verifiable
+    motif = " ".join(derived.spec.under_specified)
+    assert "fixture" in motif
+    assert "a" in motif and "b" in motif
+    assert "pas un defaut" in motif
+
+
+def test_une_fonction_decorée_autrement_reste_auditee() -> None:
+    """Le filtre ne doit pas devenir un trou : un decorateur ordinaire n'exclut rien.
+
+    Sinon il suffirait d'un `@lru_cache` ou d'un decorateur maison pour sortir de l'audit
+    sans que personne ne le voie.
+    """
+    source = (
+        "from functools import lru_cache\n"
+        "\n"
+        "\n"
+        "@lru_cache(maxsize=None)\n"
+        "def compte(n: int = 1) -> int:\n"
+        "    return n + 1\n"
+    )
+    derived = derive(source)
+
+    assert "compte" in derived.functions
+    assert derived.entrypoint == "compte"
+    assert derived.verifiable

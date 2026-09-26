@@ -125,3 +125,39 @@ def test_sans_distant_le_message_dit_quoi_faire(depot_reinitialise: Path, capsys
 
     # Et la simulation doit vraiment n'avoir rien ecrit.
     assert main(["recover", "--dry-run", "--root", str(depot_reinitialise)]) == 1
+
+
+def test_doctor_peut_diagnostiquer_un_AUTRE_depot(
+    depot_reinitialise: Path, tmp_path_factory, monkeypatch, capsys
+) -> None:
+    """`--root` : diagnostiquer un depot sans s'y deplacer.
+
+    Toutes les commandes du projet l'acceptent (`recover`, `scan`, `claims`, `sync`...)
+    sauf `doctor` — il refusait l'argument et sortait en 2. Consequence concrete : un
+    script qui diagnostique puis repare plusieurs depots devait changer de dossier entre
+    les deux, ce qui rend la comparaison et l'enchainement fragiles.
+
+    Pire qu'une option absente : une option qui ne fait rien. Le controle porte donc sur
+    un depot qui n'est PAS le dossier courant, et sur les deux sens — il accuse celui qui
+    est casse, et il se tait sur celui qui ne l'est pas.
+    """
+    # HORS du depot casse, et pas dedans : un depot cree dans le depot suspect lui ajoute
+    # un fichier non suivi et change le compte annonce (26 au lieu de 25). Mesure faite —
+    # le diagnostic etait juste, c'est le montage du test qui ne decrivait pas la fixture.
+    sain = tmp_path_factory.mktemp("sain")
+    _git("init", "-q", cwd=sain)
+    (sain / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _git("add", "-A", cwd=sain)
+    _git("commit", "-q", "-m", "vrai travail", cwd=sain)
+    for i in range(25):
+        _git("commit", "-q", "--allow-empty", "-m", f"etape {i}", cwd=sain)
+
+    # Le dossier courant reste le depot casse : c'est bien `--root` qui decide.
+    assert main(["doctor", "--root", str(sain)]) == 0
+    sortie_saine = capsys.readouterr().out
+    assert "DEPOT SUSPECT" not in sortie_saine, "faux positif sur un depot sain"
+
+    assert main(["doctor", "--root", str(depot_reinitialise)]) == 0
+    sortie = capsys.readouterr().out
+    assert "DEPOT SUSPECT" in sortie, "l'accident n'est pas vu quand le depot est vise"
+    assert "25 fichier(s) NON SUIVIS" in sortie

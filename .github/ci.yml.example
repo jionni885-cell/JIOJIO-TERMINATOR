@@ -51,9 +51,13 @@ jobs:
       - name: Installer les outils de verification
         run: |
           python -m pip install --upgrade pip
-          # pytest : la suite du projet. ruff : l'analyseur standard des vrais bugs,
-          # branche sur `jio scan`. Aucune autre dependance n'est necessaire.
-          python -m pip install pytest ruff
+          # On installe l'EXTRA, pas une liste recopiee a la main : une liste recopiee
+          # diverge. Celle-ci affirmait « aucune autre dependance n'est necessaire » alors
+          # que les tests importent `yaml` (via `pyyaml`) : sur un clone neuf, deux tests
+          # echouaient. `jio scan` verifie desormais ce lien, mais l'installation doit
+          # d'abord partir de la source unique — `pyproject.toml`.
+          # ruff : l'analyseur standard des vrais bugs, branche sur `jio scan`.
+          python -m pip install -e '.[dev]' ruff
 
       - name: Suite de tests
         run: python -m pytest -q
@@ -69,6 +73,12 @@ jobs:
         # coute aucun modele. 0 refutation attendue sur tous les documents du depot.
         run: |
           python -m jio claims --hook $(git ls-files '*.md' '*.rst' '*.txt' | grep -v '^evidence/')
+
+      - name: Les competences et les agents ne commandent rien de dangereux
+        # Une competence n'est pas un document : c'est une consigne pour un agent qui peut
+        # ecrire des fichiers et lancer des commandes. Une competence hostile s'execute
+        # avec ses droits (arXiv 2608.29381 en donne un exemple complet).
+        run: python -m jio artifacts --audit
 
       - name: Les chiffres annonces sont ceux mesures
         # 187 tests verts pour 520 reels : ce controle a mordu trois fois. Il ne se

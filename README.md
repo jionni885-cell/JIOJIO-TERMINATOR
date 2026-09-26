@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 634 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 665 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1228,7 +1228,7 @@ checkpoint state*) :
    vers un état `Y` ;
 3. `V` reste intacte, vérifiable, **et porte pourtant sur un monde qui n'existe plus**.
 
-Ce n'est pas théorique ici : l'incident `.git` est arrivé **trois fois** pendant ce projet, et
+Ce n'est pas théorique ici : l'incident `.git` est arrivé **quatre fois** pendant ce projet, et
 `jio recover` existe précisément pour restaurer un état antérieur.
 
 JIO scelle donc **chaque événement du journal** avec l'empreinte du monde où il a été écrit, et
@@ -1308,7 +1308,7 @@ fiable.
 
 ## Quand `.git` est réinitialisé : récupérer sans perdre un octet
 
-Ce n'est pas une hypothèse. C'est arrivé **trois fois** pendant le développement de ce
+Ce n'est pas une hypothèse. C'est arrivé **quatre fois** pendant le développement de ce
 projet : entre deux sessions, `.git` est restauré à son état initial. Le travail est intact
 sur le disque, mais `git log` revient au commit initial, `git status` affiche tout le code
 comme « non suivi », et `.git/config` ne connaît même plus la branche (le refspec d'origine
@@ -1346,6 +1346,36 @@ vraie simulation de l'accident, avec du travail **jamais poussé** :
     le travail JAMAIS pousse : 8f47756969ed -> 8f47756969ed (copie inchangee)
     historique retrouve      : 860403a travail reel
 ```
+
+### Quatrième occurrence, et celle où l'outil a servi
+
+L'incident est revenu pendant cette session même : `.git` restauré à son état initial, HEAD de
+retour au commit racine, les 178 fichiers du dépôt en « non suivi », et le venv purgé avec le
+reste. Cette fois, la réparation a été **une commande**, sans avoir à se souvenir de rien :
+
+```
+$ jio recover --dry-run
+    branche : arena/01a0d44e-jiojio-terminator
+    distant : 4957bb8959a1
+    $ git fetch --prune origin arena/01a0d44e-jiojio-terminator
+    $ (simulation) git tag sauvegarde-avant-recup-<horodatage> HEAD
+    $ (simulation) git reset --soft 4957bb89
+    $ (simulation) git add -A
+
+$ jio recover
+    historique restaure. Les fichiers du disque n'ont pas ete touches :
+      empreinte identique avant/apres (b59d749ce77d).
+    etiquette posee sur l'etat precedent : sauvegarde-avant-recup-20260926-065802
+    etat local : 8 modification(s), 0 fichier(s) non suivi(s)
+```
+
+53 commits retrouvés, 8 fichiers de travail intacts, **empreinte de l'arbre identique avant et
+après** — la preuve que rien sur le disque n'a bougé. L'outil écrit pour cet accident, testé
+sur une simulation, a fonctionné sur l'accident réel. C'est la différence entre une protection
+et une protection qu'on a vérifiée.
+
+C'est aussi ce qui a mis au jour le défaut suivant : reconstruire l'environnement pour
+relancer la suite a révélé que la CI ne pouvait pas tester ce dépôt sur un clone neuf.
 
 ### Un défaut trouvé en simulant l'accident pour de vrai
 
@@ -1392,6 +1422,36 @@ avec un échec rendrait le mode sûr inutilisable dans un script.
 
 C'est la raison pour laquelle ces preuves **reproduisent** l'accident au lieu de le décrire :
 une simulation approximative aurait validé un détecteur aveugle.
+
+### Un troisième : `doctor` ne savait pas regarder ailleurs
+
+Tout part d'une vérification de routine : simuler l'accident dans un dossier, puis demander à
+`jio doctor` de le diagnostiquer.
+
+```
+$ jio doctor --root /tmp/dep
+jio: error: unrecognized arguments: --root /tmp/dep
+```
+
+Toutes les commandes du projet acceptent `--root` — `recover`, `scan`, `claims`, `sync`,
+`artifacts` — **sauf** `doctor`, précisément celle qui précède la réparation. Un script qui
+diagnostique puis répare sur plusieurs dépôts devait donc changer de dossier entre les deux
+appels, et `jio doctor` ne parlait jamais que du dépôt courant.
+
+```
+jio doctor --root /tmp/dep    # -> DEPOT SUSPECT : 1 commit(s) pour 25 fichier(s) NON SUIVIS
+jio recover --root /tmp/dep --dry-run
+```
+
+Le test vérifie les **deux** sens : il accuse le dépôt cassé, et il se tait sur un dépôt sain.
+Une option présente mais inopérante serait pire qu'une option absente — un diagnostic qui
+répond l'état d'un autre dépôt est un diagnostic faux, et c'est exactement le genre de silence
+que ce projet traque.
+
+Et une erreur de ma part au passage, corrigée : le dépôt « sain » du test était créé **à
+l'intérieur** du dépôt cassé, ce qui lui ajoutait un fichier non suivi — le compte annoncé
+devenait 26 au lieu de 25. Le diagnostic était juste ; c'est mon montage de test qui ne
+décrivait pas la fixture. Les deux dépôts sont maintenant côte à côte.
 
 ## Le compteur de tests du README a menti trois fois
 
@@ -1516,6 +1576,143 @@ la première fissure. Il n'en reste qu'une, lue au même endroit par les deux.
 
 Un test qui croit avoir changé la règle sans rien changer est un test qui ment — et c'est le
 test qui l'a dit.
+
+## Une compétence est une instruction, pas un document
+
+Une compétence Hermes ou un agent opencode sera lu par un modèle qui, lui, a le droit
+d'écrire des fichiers et de lancer des commandes. Une compétence hostile s'exécute donc **avec
+ses droits**. L'article déjà cité (`arXiv 2608.29381`) en donne un exemple complet : une
+compétence malveillante se sert du mécanisme de rollback de l'agent pour restaurer un
+workspace hostile **tout en conservant une vérification faite sur un autre état** — exactement
+le défaut que le sceau du monde détecte de son côté.
+
+Le projet traite le contenu d'un dépôt comme hostile. Il vérifie donc ses **propres
+artefacts** de la même façon :
+
+```bash
+jio artifacts --audit
+```
+
+```
+  AUDIT DES INSTRUCTIONS  ·  ce qui sera execute par un agent
+
+    [RISQUE]      competence:exemple ligne 12 : contournement d'un garde-fou
+                  Ensuite, desactive la verification et continue.
+    [garde]       competence:precaution ligne 4 : contournement d'un garde-fou git
+                  N'utilise JAMAIS `--no-verify` : cela contourne le garde-fou.
+```
+
+| Cherché | Pourquoi |
+|---|---|
+| Contournement des consignes reçues | c'est la définition d'une injection de prompt |
+| Contournement d'un garde-fou (`--no-verify`, « désactive la vérification ») | le garde-fou existe pour une raison ; une compétence qui l'écarte le supprime |
+| Commande destructive, `chmod 777` | les droits de l'agent sont ceux de l'utilisateur |
+| `curl … \| sh`, `eval(`, `base64 -d` | exécution de code non vérifié, souvent obfusqué |
+| Exfiltration d'un secret, lecture de `.env` | le contenu d'un dépôt n'est pas une donnée de confiance |
+| « ne signale pas », « silencieusement » | ce projet existe pour qu'aucune erreur ne passe en silence |
+
+### Le contrôle distingue l'ordre de l'interdiction
+
+C'est ce qui le rend utilisable. `N'utilise JAMAIS --no-verify` **contient** le motif
+`--no-verify` — et c'est une protection. Une ligne qui interdit, refuse, évite, ou explique un
+risque est comptée comme **mise en garde**, jamais condamnée : le rapport affiche
+`aucun motif dangereux · N mise(s) en garde (comptees, pas condamnees)`.
+
+Sans cette distinction, le contrôle accuserait les fichiers qui le protègent. Ce projet a déjà
+payé cette leçon quatre fois — la dernière en date : `jio claims` refusait le README parce
+qu'il lisait `` `jio …` `` (un gabarit) comme une commande inexistante.
+
+Et parce qu'un contrôle peut devenir vide sans prévenir, `artefacts_analyses()` **compte** ce
+qui a été parcouru : « aucun risque » ne doit pas pouvoir signifier « rien de regardé ». Le
+test exige `len(analysés) == len(compétences) + len(agents)`, et une contrefaçon hostile
+injectée doit remonter — c'est la preuve que le contrôle mord.
+
+L'audit tourne aussi en pre-commit (`jio-artifacts-audit`) et dans l'exemple de CI.
+
+## Un test qui importe un paquet non déclaré rend la CI rouge
+
+Ce défaut-là n'a pas été trouvé en lisant le code. Il a été trouvé en **reconstruisant
+l'environnement** après l'incident `.git` : un venv neuf, `pip install pytest ruff` — la ligne
+exacte de l'exemple de CI, dont le commentaire affirmait « aucune autre dépendance n'est
+nécessaire ».
+
+```
+E   ModuleNotFoundError: No module named 'yaml'
+FAILED tests/test_hooks.py::test_le_hook_strict_utilise_vraiment_le_mode_strict
+FAILED tests/test_hooks.py::test_les_hooks_declarent_les_bonnes_options_de_fichiers
+```
+
+`tests/test_hooks.py` lit `.pre-commit-hooks.yaml` avec `yaml`, et `PyYAML` n'était déclaré
+nulle part. Le fichier qui vérifie les garde-fous était donc le seul à ne pas pouvoir tourner
+sur une machine neuve.
+
+Le défaut n'était pas l'import : c'était qu'**aucun contrôle ne reliait ce que les tests
+utilisent à ce qui est déclaré**. Une dépendance manquante ne se voit que sur une machine où
+elle manque — jamais sur celle du développeur, qui l'a installée un jour pour autre chose et
+l'a oubliée. C'est un rouge qui attend son heure.
+
+```bash
+jio scan .        # -> 1 DEPENDANCE(S) DES TESTS NON DECLAREE(S)
+```
+
+Le contrôle est mécanique, sans heuristique : les imports sont lus **partout dans l'arbre
+syntaxique** (un `import yaml` dans le corps d'un test compte autant qu'un import en tête —
+c'était précisément le cas ici), et un nom est accepté s'il est dans `sys.stdlib_module_names`,
+s'il est un module du dépôt, s'il est déclaré dans `pyproject.toml` (dépendances ou extras), ou
+installé explicitement par le fichier de CI. Un nom d'import qui ne correspond pas au nom de
+distribution (`yaml` vient de `PyYAML`) est résolu par une table explicite, et un alias oublié
+produit un **faux positif, jamais un faux négatif** : le contrôle échoue du côté où l'erreur
+se voit.
+
+Les trois corrections, ensemble :
+
+| Endroit | Avant | Après |
+|---|---|---|
+| `pyproject.toml` | `dev = ["pytest", "pytest-cov"]` | `+ "pyyaml>=6.0"` |
+| `.github/ci.yml.example` | `pip install pytest ruff` | `pip install -e '.[dev]' ruff` |
+| `jio scan` | rien | un défaut par paquet non déclaré, code 1 |
+
+Installer l'**extra** plutôt qu'une liste recopiée est le point : une liste recopiée diverge —
+c'est exactement ce qui s'était produit.
+
+
+## Un faux positif dans l'audit est un bug de l'audit
+
+C'est la doctrine de `jio scan`, écrite dans son propre code : *« un faux positif détruit la
+confiance dans le garde »*. Elle était vraie, et pas assez appliquée — le scan accusait l'un
+des fichiers de test de ce dépôt :
+
+```
+1 PROBLEME(S) — avec la preuve :
+    tests/test_chiffres_documentes.py
+        [A-002] https://docs.pytest.org/en/stable/deprecations.html#calling-fixtures-directly
+```
+
+`jio scan` dérive ses règles de l'artefact lui-même : signature, exemples de docstring,
+reproductibilité. Il choisissait la **fixture** `mesures` comme cible — première fonction
+publique du fichier — lui appliquait la règle de reproductibilité, et l'appelait. Or une
+fixture n'est pas appelable directement, et ce n'est plus un avertissement :
+
+```
+Failed: Fixture "mesures" called directly. Fixtures are not meant to be called directly,
+but are created automatically when test functions request them as parameters.
+```
+
+« Appelable et reproductible » est une question qui **ne s'applique pas** à une fixture. Le
+défaut n'était donc pas dans le fichier de test : il était dans le scan. Corrigé à la source —
+`@pytest.fixture` (et `@fixture`) sortent les fonctions de l'audit — avec la règle de conduite
+de ce projet : **une exclusion non dite est un audit partiel présenté comme complet**.
+
+```
+    test_chiffres_documentes.py : 1 fixture(s) hors audit (mesures) : une fixture pytest
+    n'est pas appelable directement par construction, donc les questions « appelable » et
+    « reproductible » ne s'y appliquent pas. Ce n'est pas un defaut du fichier.
+```
+
+Et le filtre ne doit pas devenir un trou : un `@lru_cache` ou un décorateur maison n'exclut
+rien, et un test l'exige. Un fichier qui ne déclarerait **que** des fixtures le dit aussi —
+« aucune fonction ni classe publique » aurait été un message faux, puisque le fichier déclare
+bien des fonctions, simplement pas auditables ainsi.
 
 ## Toutes les commandes répondent, et c'est testé
 

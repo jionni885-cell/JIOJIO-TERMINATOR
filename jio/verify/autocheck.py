@@ -125,6 +125,43 @@ def _public_functions(tree: ast.Module) -> tuple[str, ...]:
     return tuple(n.name for n in _top_level_defs(tree) if not n.name.startswith("_"))
 
 
+def _decorateurs(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[str, ...]:
+    """Noms des decorateurs d'une fonction, sous forme pointee (`pytest.fixture`)."""
+    noms = []
+    for decorateur in node.decorator_list:
+        cible = decorateur.func if isinstance(decorateur, ast.Call) else decorateur
+        morceaux: list[str] = []
+        while isinstance(cible, ast.Attribute):
+            morceaux.append(cible.attr)
+            cible = cible.value
+        if isinstance(cible, ast.Name):
+            morceaux.append(cible.id)
+        if morceaux:
+            noms.append(".".join(reversed(morceaux)))
+    return tuple(noms)
+
+
+def _est_une_fixture(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Vrai si la fonction est une fixture (`@pytest.fixture`, `@fixture`).
+
+    Une fixture n'est PAS appelable directement : c'est une erreur, pas un avertissement.
+    Mesure faite sur pytest 9.1.1, sur une fixture de ce depot :
+
+        Failed: Fixture "mesures" called directly. Fixtures are not meant to be called
+        directly, but are created automatically when test functions request them as
+        parameters.
+
+    L'audit la choisissait comme cible (c'est la premiere fonction publique du fichier),
+    lui appliquait la regle de reproductibilite, et rapportait un PROBLEME : « appelable
+    et reproductible » est une question qui ne s'applique pas a une fixture. Un faux
+    positif de cette farine detruit la confiance dans le garde — c'est la doctrine de ce
+    module, et elle vaut aussi pour lui.
+    """
+    return any(
+        nom == "fixture" or nom.endswith(".fixture") for nom in _decorateurs(node)
+    )
+
+
 def _class_defs(tree: ast.Module) -> dict[str, ast.ClassDef]:
     return {
         n.name: n for n in tree.body if isinstance(n, ast.ClassDef) and not n.name.startswith("_")
@@ -814,6 +851,12 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
     defs = {n.name: n for n in _top_level_defs(tree)}
     classes = _class_defs(tree)
     names = _public_functions(tree)
+    # Les fixtures sortent de l'audit : voir `_est_une_fixture`. On les COMPTE pour
+    # pouvoir le DIRE : un fichier ou l'on n'a rien verifie ne doit pas ressembler a un
+    # fichier ou tout va bien.
+    fixtures = tuple(nom for nom in names if _est_une_fixture(defs[nom]))
+    if fixtures:
+        names = tuple(nom for nom in names if nom not in fixtures)
     env_risk = _module_touches_environment(tree)
 
     if entrypoint and entrypoint in classes:
@@ -838,6 +881,21 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
     if not names:
         if classes:
             return _best_class_spec(classes, names, preamble, env_risk)
+        if fixtures:
+            return DerivedSpec(
+                spec=Spec(
+                    mission="audit d'un artefact Python",
+                    rules=(),
+                    under_specified=(
+                        "ce fichier ne declare que des fixture(s) "
+                        f"({', '.join(fixtures)}) : une fixture n'est pas appelable "
+                        "directement par construction, donc il n'y a rien d'executable a "
+                        "verifier ici. Ce n'est pas un defaut du fichier.",
+                    ),
+                ),
+                notes=(f"{len(fixtures)} fixture(s) exclue(s) de l'audit",),
+                preamble=preamble,
+            )
         return DerivedSpec(
             spec=Spec(
                 mission="audit d'un artefact Python",
@@ -863,6 +921,16 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
     notes: list[str] = []
     under: list[str] = []
     derived: list[str] = []
+
+    # Une exclusion non dite est un audit partiel presente comme complet. Les fixtures sont
+    # hors du champ de ces regles — on l'ECRIT, avec la raison et les noms.
+    if fixtures:
+        under.append(
+            f"{len(fixtures)} fixture(s) hors audit ({', '.join(fixtures)}) : une fixture "
+            "pytest n'est pas appelable directement par construction, donc les questions "
+            "« appelable » et « reproductible » ne s'y appliquent pas. Ce n'est pas un "
+            "defaut du fichier."
+        )
 
     r1 = "A-001"
     rules.append(

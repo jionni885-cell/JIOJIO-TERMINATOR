@@ -360,6 +360,12 @@ def render_report(report: MissionReport, *, verbose: bool = False, color: bool =
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
+    # Sans `--root`, `doctor` ne savait diagnostiquer que le depot COURANT : toutes les
+    # autres commandes (`recover`, `scan`, `claims`, `sync`...) acceptent `--root`, et un
+    # script qui enchaine « diagnostic puis reparation » sur plusieurs depots devait
+    # changer de dossier entre les deux. Une option manquante n'est pas un detail :
+    # `jio doctor --root <chemin>` sortait en 2, en refusant l'argument.
+    racine = getattr(args, "root", ".") or "."
     print(BANNER)
     print(f"  version {__version__}  ·  python {sys.version.split()[0]}")
     print()
@@ -427,7 +433,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # Un outil dont l'etat peut reculer SANS LE DIRE n'est pas un outil de confiance.
     # On le dit, avec la commande exacte pour reparer.
     # ---------------------------------------------------------------- #
-    suspect = _depot_suspect()
+    suspect = _depot_suspect(racine)
     if suspect is not None:
         commits, non_suivis = suspect
         print("  /!\\ DEPOT SUSPECT : l'historique local a peut-etre ete reinitialise.")
@@ -441,7 +447,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print("      Detail de ce qui sera fait, sans rien faire :  jio recover --dry-run")
         print()
 
-    etat = _git_state()
+    etat = _git_state(racine)
     print("  Etat du depot :")
     if etat is None:
         print("    pas un depot git (ou git absent) — tracabilite NON disponible")
@@ -480,7 +486,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
-def _git_state() -> tuple[str, int, int, bool, bool] | None:
+def _git_state(racine: str = ".") -> tuple[str, int, int, bool, bool] | None:
     """`(branche, en avance, en retard, distant_connu, distant_existe)`.
 
     Les deux derniers champs ne sont PAS la meme question, et les confondre a produit
@@ -518,8 +524,11 @@ def _git_state() -> tuple[str, int, int, bool, bool] | None:
             # travaille. Un `jio doctor` lance depuis son projet doit parler de son
             # projet ; fixer le chemin sur l'installation de JIO repondait toujours
             # l'etat de JIO, quel que soit l'endroit d'ou on appelait.
+            # `--root` permet de viser un AUTRE depot sans changer de dossier : c'est ce
+            # qui rend possible un script « diagnostic puis reparation » sur plusieurs
+            # depots, `doctor` et `recover` acceptant alors le meme argument.
             proc = subprocess.run(
-                ["git", *argv], capture_output=True, text=True, timeout=10,
+                ["git", *argv], capture_output=True, text=True, timeout=10, cwd=racine,
             )
         except Exception:
             return 1, ""
@@ -552,7 +561,7 @@ def _git_state() -> tuple[str, int, int, bool, bool] | None:
     return branche, avance, retard, True, True
 
 
-def _depot_suspect() -> tuple[int, int] | None:
+def _depot_suspect(racine: str = ".") -> tuple[int, int] | None:
     """`(commit(s) locaux, fichiers non suivis)` quand le depot a l'air reinitialise.
 
     Incident reel, vecu DEUX fois par ce projet : l'environnement d'execution restaure
@@ -573,7 +582,9 @@ def _depot_suspect() -> tuple[int, int] | None:
 
     def git(*argv: str) -> tuple[int, str]:
         try:
-            proc = subprocess.run(["git", *argv], capture_output=True, text=True, timeout=10)
+            proc = subprocess.run(
+                ["git", *argv], capture_output=True, text=True, timeout=10, cwd=racine
+            )
         except Exception:
             return 1, ""
         return proc.returncode, proc.stdout.strip()
@@ -1739,12 +1750,56 @@ def _budget_contexte(args: argparse.Namespace) -> int:
     return 0
 
 
+def _auditer_artefacts() -> int:
+    """`jio artifacts --audit` : les competences et les agents sont-ils surs a executer ?
+
+    Une competence n'est pas un document : c'est une INSTRUCTION pour un agent qui, lui, a
+    le droit d'ecrire et de lancer des commandes. Une competence hostile s'execute donc avec
+    ses droits — l'article arXiv 2608.29381 en donne un exemple complet, ou une competence
+    malveillante se sert du rollback de l'agent pour restaurer un workspace hostile tout en
+    gardant une verification faite sur un autre etat.
+
+    Le controle distingue ce qui ORDONNE une action dangereuse de ce qui l'INTERDIT : une
+    ligne qui dit « n'utilise jamais --no-verify » est une protection. Sans cette
+    distinction, le controle accuserait les fichiers qui le protegent.
+    """
+    from .artifacts.audit_skills import analyser_artefacts
+
+    print(BANNER)
+    risques = analyser_artefacts()
+    dangereux = [risque for risque in risques if not risque.mise_en_garde]
+    gardes = [risque for risque in risques if risque.mise_en_garde]
+
+    print("  AUDIT DES INSTRUCTIONS  ·  ce qui sera execute par un agent")
+    print()
+    for risque in dangereux:
+        print(f"    [RISQUE]      {risque.artefact} ligne {risque.ligne} : {risque.nature}")
+        print(f"                  {risque.extrait}")
+    for garde in gardes:
+        print(f"    [garde]       {garde.artefact} ligne {garde.ligne} : {garde.nature}")
+        print(f"                  {garde.extrait}")
+    print()
+    if dangereux:
+        print(f"    {len(dangereux)} motif(s) a instruire. Une competence sera EXECUTEE par un")
+        print("    agent qui peut ecrire : ce qui y est ordonne compte autant que ce qui y est")
+        print("    explique. Corriger, ou justifier dans le texte.")
+        print()
+        return 1
+    print(f"    aucun motif dangereux · {len(gardes)} mise(s) en garde (comptees, pas condamnees)")
+    print("    -> les interdictions et les explications sont reconnues comme telles : un")
+    print("       controle qui accuse les fichiers qui le protegent se fait desactiver.")
+    print()
+    return 0
+
+
 def cmd_artifacts(args: argparse.Namespace) -> int:
     """Emet les artefacts natifs. `--mcp` route vers le branchement du serveur MCP."""
     if getattr(args, "budget", False):
         return _budget_contexte(args)
     if getattr(args, "mcp", None):
         return _brancher_mcp(args)
+    if getattr(args, "audit", False):
+        return _auditer_artefacts()
     from .artifacts import TARGETS, manifest
 
     targets = tuple(args.target) if args.target else TARGETS
@@ -2250,6 +2305,18 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"  corpus de fautes VOLONTAIRES : {len(corpus_volontaire)} fichier(s) "
               f"exclu(s) sur leur propre declaration ({MARQUEUR_CORPUS})")
     print()
+    # --- les DEPENDANCES du projet : un rouge qui attend son heure ---------------- #
+    # Un test qui importe un paquet non declare passe chez celui qui l'a installe un jour
+    # pour autre chose, et echoue sur un clone neuf. Mesure sur CE depot : la CI
+    # installait `pytest ruff` et son commentaire affirmait qu'aucune autre dependance
+    # n'etait necessaire ; `tests/test_hooks.py` importe `yaml`, donc deux tests rouges.
+    # Un defaut qui ne se voit que sur la machine des autres doit etre cherche ici.
+    dependances: list[str] = []
+    if root.is_dir():
+        from .verify.dependances import manquants
+
+        dependances = [str(manque) for manque in manquants(root)]
+
     if problems:
         print(f"  {len(problems)} PROBLEME(S) — avec la preuve :")
         print()
@@ -2335,12 +2402,23 @@ def cmd_scan(args: argparse.Namespace) -> int:
     print(f"    {with_rules} fichier(s) verifiable(s) · {len(unverifiable)} sans regle"
           f" · {len(environment)} non testable(s) ici · {len(reserves)} reserve(s)"
           f" · {len(partial)} a audit partiel")
+    if dependances:
+        print(f"    {len(dependances)} dependance(s) de test NON declaree(s) — un clone neuf")
     if remembered:
         print(f"    {remembered} probleme(s) memorise(s) : la prochaine execution saura quoi")
         print(f"    eviter, et pourquoi. Consulter : jio memory --state {args.state}")
     print("    Lecture du resultat : code 0 = rien trouve ; code 1 = au moins un defaut")
     print("    reel avec sa preuve. Un fichier sans regle executable n'est PAS un")
     print("    fichier correct : c'est un fichier que ces regles-la ne savent pas juger.")
+
+    if dependances:
+        print(f"  {len(dependances)} DEPENDANCE(S) DES TESTS NON DECLAREE(S) :")
+        for detail in dependances:
+            print(f"    {detail}")
+        print("    un test qui importe un paquet non declare passe sur la machine ou il est")
+        print("    installe, et echoue sur un clone neuf. Declarer dans `pyproject.toml`")
+        print("    (dependances ou extras) ou installer explicitement dans la CI.")
+        print()
 
     # --- mode strict : une porte de CI n'a pas les memes exigences qu'un humain ----- #
     # `.pre-commit-hooks.yaml` annoncait `jio-scan-strict` comme « echoue aussi si le
@@ -2364,7 +2442,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print()
         return 1 if (problems or reserves or environment) else 0
     print()
-    return 1 if problems else 0
+    return 1 if (problems or dependances) else 0
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
@@ -2539,7 +2617,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"jio {__version__}")
     sub = p.add_subparsers(dest="command")
 
-    sub.add_parser("doctor", help="etat du systeme").set_defaults(func=cmd_doctor)
+    doc = sub.add_parser("doctor", help="etat du systeme")
+    doc.set_defaults(func=cmd_doctor)
+    doc.add_argument(
+        "--root", default=".", metavar="CHEMIN",
+        help="depot a diagnostiquer (defaut : le dossier courant)",
+    )
     sub.add_parser("tasks", help="liste le banc d'essai").set_defaults(func=cmd_tasks)
     p_rec = sub.add_parser(
         "recover", help="restaure l'historique d'un depot reinitialise, sans rien detruire"
@@ -2737,6 +2820,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--budget",
         action="store_true",
         help="mesure le cout en contexte des artefacts (demarrage vs a la demande)",
+    )
+    # Les artefacts sont des INSTRUCTIONS executees par un agent. Les auditer est un acte de
+    # securite, pas de qualite : une competence hostile s'execute avec les droits de l'agent.
+    ar.add_argument(
+        "--audit",
+        action="store_true",
+        help="verifie que les competences et les agents ne contiennent pas d'ordre dangereux",
     )
     # Le CABLAGE du serveur MCP, distinct de son emission : `.mcp.json` est le dialecte de
     # Claude Code, opencode lit `opencode.json`, Hermes lit `~/.hermes/config.yaml`. Sans
