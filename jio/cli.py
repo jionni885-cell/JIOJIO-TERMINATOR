@@ -434,10 +434,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"      {commits} commit(s) local(aux) pour {non_suivis} fichier(s) NON SUIVIS.")
         print("      Le travail est sur le disque, mais git ne le suit plus : un commit")
         print("      maintenant fabriquerait un historique absurde.")
-        print("      Reparation SANS perte (recupere l'historique distant) :")
-        print("        git fetch origin <branche>")
-        print("        git reset --soft FETCH_HEAD   # HEAD suit le distant, vos fichiers restent")
-        print("        git status                    # vos modifications redeviennent visibles")
+        print("      Reparation SANS perte, en UNE commande :")
+        print("        jio recover")
+        print("      Elle restaure l'historique distant, indexe le travail retrouve, et ne")
+        print("      touche a aucun fichier du disque (ni --hard, ni checkout, ni clean).")
+        print("      Detail de ce qui sera fait, sans rien faire :  jio recover --dry-run")
         print()
 
     etat = _git_state()
@@ -583,7 +584,10 @@ def _depot_suspect() -> tuple[int, int] | None:
     code, commits = git("rev-list", "--count", "HEAD")
     if code != 0 or not commits.isdigit():
         return None
-    code, statut = git("status", "--porcelain")
+    # `--untracked-files=all` : sans lui, git regroupe un dossier non suivi en UNE ligne
+    # (`?? jio/`). Un projet organise en dossiers n'afficherait que 2 ou 3 entrees, et
+    # l'accident — celui pour lequel ce controle existe — passerait inapercu.
+    code, statut = git("status", "--porcelain", "--untracked-files=all")
     if code != 0:
         return None
     non_suivis = sum(1 for ligne in statut.splitlines() if ligne.startswith("??"))
@@ -593,6 +597,88 @@ def _depot_suspect() -> tuple[int, int] | None:
     if int(commits) <= 3 and non_suivis >= 20:
         return int(commits), non_suivis
     return None
+
+
+def cmd_recover(args: argparse.Namespace) -> int:
+    """`jio recover` : restaurer l'historique d'un depot reinitialise, sans perdre un octet.
+
+    Complete la boucle de `jio doctor` : le diagnostic DIT ce qui s'est passe, `recover`
+    le REPARE. Sans elle, le seul chemin documente etait `scripts/sync.sh` — qui refuse de
+    travailler quand `git status` n'est pas vide, c'est-a-dire exactement dans cet accident.
+    """
+    from .recover import recuperer
+
+    print(BANNER)
+    racine = Path(getattr(args, "root", ".") or ".").expanduser()
+    resultat = recuperer(
+        racine,
+        remote=getattr(args, "remote", "origin") or "origin",
+        branche=getattr(args, "branch", "") or "",
+        dry_run=bool(getattr(args, "dry_run", False)),
+    )
+
+    print(f"  RECUPERATION  ·  {racine.resolve()}")
+    print()
+    if resultat.branche:
+        print(f"    branche : {resultat.branche}")
+    if resultat.distant:
+        print(f"    distant : {resultat.distant[:12]}")
+    for operation in resultat.operations:
+        print(f"    $ {operation}")
+    print()
+    print(f"    {resultat.motif}")
+    if resultat.fait:
+        print()
+        print(f"    contenu de l'arbre : {resultat.avant[:12]} (avant) == "
+              f"{resultat.apres[:12]} (apres)  ->  "
+              f"{'INTACT' if resultat.contenu_intact else 'MODIFIE'}")
+        if resultat.etiquette:
+            print(f"    etiquette posee sur l'etat precedent : {resultat.etiquette}")
+        print(f"    etat local : {resultat.fichiers_modifies} modification(s), "
+              f"{resultat.fichiers_non_suivis} fichier(s) non suivi(s)")
+        print()
+        print("    Aucune commande n'a touche aux fichiers du disque (ni `--hard`, ni")
+        print("    `checkout`, ni `clean`). Verifiez avec `git status`, puis commitez.")
+    print()
+    # 0 = « plan etabli » (ou repare). 1 = rien n'a pu etre etabli : a examiner.
+    # Une simulation reussie est une inspection reussie, donc 0 : sans cela, un
+    # script confondrait « voici ce que je ferais » avec « j'ai echoue ».
+    return 0 if (resultat.fait or resultat.simulation) else 1
+
+
+def cmd_chiffres(args: argparse.Namespace) -> int:
+    """`jio chiffres` : les chiffres de la documentation sont-ils encore vrais ?
+
+    Le controle existait deja, en test. Il a mordu trois fois et trois fois la reparation
+    s'est faite a la main : un controle qui punit sans reparer finit par etre contourne.
+    Ici, le meme controle, avec la reparation a cote (`--appliquer`).
+    """
+    from .chiffres import mesurer, reparer
+
+    print(BANNER)
+    racine = Path(getattr(args, "root", ".") or ".").expanduser()
+    cibles = [Path(c) for c in (getattr(args, "fichiers", None) or ["README.md"])]
+    mesures = mesurer(racine)
+    print("  CHIFFRES  ·  mesures reelles")
+    print()
+    for nom in sorted(mesures):
+        print(f"    {nom:12s} : {mesures[nom]:5d}")
+    print()
+
+    code = 0
+    for cible in cibles:
+        chemin = cible if cible.is_absolute() else racine / cible
+        resultat, trouves, message = reparer(
+            chemin, mesures, ecrire=bool(getattr(args, "appliquer", False))
+        )
+        for ecart in trouves:
+            marque = "ECART" if ecart.reparable else "SIGNAL"
+            print(f"    {marque}  {chemin.name} ligne {ecart.ligne} : {ecart.ancien}"
+                  f"  ->  {ecart.nouveau}")
+        print(f"    {message}")
+        print()
+        code = max(code, resultat)
+    return code
 
 
 def cmd_tasks(args: argparse.Namespace) -> int:
@@ -2418,6 +2504,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="etat du systeme").set_defaults(func=cmd_doctor)
     sub.add_parser("tasks", help="liste le banc d'essai").set_defaults(func=cmd_tasks)
+    p_rec = sub.add_parser(
+        "recover", help="restaure l'historique d'un depot reinitialise, sans rien detruire"
+    )
+    p_rec.add_argument("--root", default=".", help="racine du depot (defaut : dossier courant)")
+    p_rec.add_argument("--remote", default="origin", help="depot distant (defaut : origin)")
+    p_rec.add_argument("--branch", default="", help="branche a recuperer (defaut : la courante)")
+    p_rec.add_argument(
+        "--dry-run", dest="dry_run", action="store_true",
+        help="montrer ce qui serait fait, sans rien faire",
+    )
+    p_rec.set_defaults(func=cmd_recover)
+
+    p_chiffres = sub.add_parser(
+        "chiffres",
+        help="verifier (et reparer) les chiffres annonces dans la documentation",
+    )
+    p_chiffres.add_argument("fichiers", nargs="*", help="fichiers a verifier (defaut : README.md)")
+    p_chiffres.add_argument("--root", default=".", help="racine (defaut : dossier courant)")
+    p_chiffres.add_argument(
+        "--appliquer", action="store_true",
+        help="ecrire les valeurs mesurees (une sauvegarde .avant-jio est creee)",
+    )
+    p_chiffres.set_defaults(func=cmd_chiffres)
+
     p_sync = sub.add_parser(
         "sync", help="propage le cerveau anti-erreur : artefacts natifs + MCP"
     )

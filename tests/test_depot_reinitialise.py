@@ -87,15 +87,41 @@ def test_doctor_dit_la_REPARATION_et_pas_seulement_le_probleme(
 ) -> None:
     """Un diagnostic sans commande a lancer laisse l'utilisateur sans prise.
 
-    Les deux lignes essentielles sont imprimees : `git fetch` puis `git reset --soft`,
-    qui Recupere l'historique distant sans toucher aux fichiers sur le disque (c'est
-    exactement la reparation qui a servi deux fois dans ce projet).
+    L'essentiel : la sortie doit nommer `jio recover`, la commande qui restaure
+    l'historique distant SANS toucher aux fichiers du disque — et elle doit exister.
+    Conseiller une commande inexistante serait pire que ne rien conseiller, donc on
+    l'execute ici pour de vrai (en simulation) : le conseil du diagnostic est verifie.
     """
     assert main(["doctor"]) == 0
     sortie = capsys.readouterr().out
 
     assert "DEPOT SUSPECT" in sortie
-    assert "git fetch origin" in sortie
-    assert "git reset --soft FETCH_HEAD" in sortie
-    # Et pas de conseil dangereux : un `--hard` detruirait le travail non suivi.
-    assert "--hard" not in sortie
+    assert "jio recover" in sortie
+    assert "jio recover --dry-run" in sortie
+    # Et pas de conseil dangereux. Le controle porte sur les LIGNES DE COMMANDE, pas sur
+    # le mot : la sortie dit elle-meme « ni --hard, ni checkout, ni clean » pour rassurer,
+    # et un test qui interdit la chaine quelque part punirait cette phrase honnete.
+    conseils = [
+        ligne.strip() for ligne in sortie.splitlines()
+        if ligne.strip().startswith(("$ git", "git ", "$ jio", "jio "))
+    ]
+    dangereux = [c for c in conseils if "--hard" in c or "clean -" in c or "checkout --" in c]
+    assert not dangereux, f"conseil destructeur dans le diagnostic : {dangereux}"
+
+
+def test_sans_distant_le_message_dit_quoi_faire(depot_reinitialise: Path, capsys) -> None:
+    """Apres une reinitialisation, `.git/config` est efface AVEC le reste.
+
+    Le message disait « verifiez l'acces au depot distant » — un mauvais conseil quand il
+    n'existe aucun distant a joindre : on envoie chercher une panne reseau inexistante.
+    Il doit nommer la cause exacte et la commande qui la corrige.
+    """
+    assert main(["recover", "--dry-run", "--root", str(depot_reinitialise)]) == 1
+    sortie = capsys.readouterr().out
+
+    assert "aucun depot distant nomme `origin`" in sortie
+    assert "git remote add origin" in sortie
+    assert "Verifiez l'acces" not in sortie, "panne reseau inexistante : mauvais conseil"
+
+    # Et la simulation doit vraiment n'avoir rien ecrit.
+    assert main(["recover", "--dry-run", "--root", str(depot_reinitialise)]) == 1

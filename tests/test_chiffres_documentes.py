@@ -1,100 +1,257 @@
 """Un chiffre annonce dans la documentation doit etre VRAI, ou ne pas y etre.
 
-Le README annoncait « 187 tests verts » alors que la suite en comptait 520. Personne ne
+Le README a annonce « 187 tests verts » alors que la suite en comptait 520. Personne ne
 recalcule un compteur en lisant une page — et c'est exactement le genre d'affirmation qui
-detruit la confiance dans tout le reste du document. `jio claims` ne peut pas l'attraper :
-un compteur de tests n'est ni un calcul, ni un bloc de code, ni un chemin.
+detruit la confiance dans tout le reste du document.
 
-Ce fichier est la version verifiable de ces chiffres. Il ne fait pas confiance a la
-documentation, il la CONFRONTE a la realite :
+Ce controle a mordu **trois fois**. Les trois fois, la reparation s'est faite a la main :
+ouvrir le README, retrouver la ligne, retaper le nombre. Un controle qui punit sans reparer
+se fait desactiver — ou pire, contourner. Il vit donc desormais dans `jio/chiffres.py`, avec
+sa reparation (`jio chiffres --appliquer`), et ce fichier verifie **les deux** :
 
-  * le nombre de tests est collecte par un vrai `pytest --collect-only` (aucun test n'est
-    execute dans le sous-processus, donc pas de recursion) ;
-  * le nombre de competences et d'agents vient des definitions qui les generent.
+  * que la documentation dit vrai (le controle, sur le vrai README) ;
+  * que la reparation est sure (sur des documents fabriques, y compris ceux qui piegent).
 
-La regle appliquee est celle du projet : soit le chiffre est verifiable, soit il n'est pas
-ecrit. Un test qui echoue ici dit exactement quoi corriger dans le README.
+Le point le plus important est le dernier test : la premiere version de la reparation
+reecrivait aussi les mentions **deja justes**, et un garde a refuse l'ecriture (« 5
+remplacements pour 1 ecart »). Une reparation qui touche du texte qu'elle n'a pas mesure
+abime des phrases saines.
 """
 
 from __future__ import annotations
 
-import re
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-from jio.artifacts.definitions import AGENTS, SKILLS
+from jio.chiffres import CHIFFRES, ecarts, mesurer, reparer
 
 REPO = Path(__file__).resolve().parents[1]
 README = REPO / "README.md"
 
 
-def _collecte() -> int:
-    """Le nombre de tests reellement collectes, mesure par pytest lui-meme.
+@pytest.fixture(scope="module")
+def mesures() -> dict[str, int]:
+    """Les valeurs reelles, mesurees UNE fois pour tout le fichier (~2 s de collecte)."""
+    return mesurer(REPO)
 
-    Deux formes de sortie, et il faut les deux : `pytest -q --collect-only` affiche un
-    TOTAL (« N tests collected ») sur certaines versions, et un compte PAR FICHIER
-    (`tests/test_x.py: 8`) sur d'autres. Le premier jet ne lisait que la premiere forme et
-    echouait ici — un test qui ne sait pas lire sa propre mesure n'en est pas une.
-    """
-    resultat = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q"],
-        cwd=REPO, capture_output=True, text=True, timeout=300,
+
+# --------------------------------------------------------------------------- #
+# Le controle, sur la vraie documentation
+# --------------------------------------------------------------------------- #
+
+
+def test_la_documentation_dit_vrai(mesures: dict[str, int]) -> None:
+    """Le chiffre publie est confronte a la suite reelle, pas a une memoire."""
+    trouves = ecarts(README.read_text(encoding="utf-8"), mesures)
+    assert not trouves, "\n".join(str(ecart) for ecart in trouves) + (
+        "\n\nCorrection :  jio chiffres --appliquer   (ou retirer le chiffre : un chiffre "
+        "faux coute plus cher qu'une absence de chiffre)"
     )
-    texte = resultat.stdout
-
-    for ligne in reversed(texte.splitlines()):
-        correspondance = re.search(r"(\d+) tests? collected", ligne)
-        if correspondance:
-            return int(correspondance.group(1))
-
-    # Forme « par fichier » : on somme, et on verifie qu'on a bien trouve quelque chose.
-    par_fichier = re.findall(r"^\S+\.py: (\d+)$", texte, re.MULTILINE)
-    if par_fichier:
-        return sum(int(x) for x in par_fichier)
-
-    pytest.fail(f"impossible de lire le nombre de tests :\n{texte[-500:]}")
 
 
-def test_le_nombre_de_tests_annonce_est_le_vrai() -> None:
-    """Le compteur du README est confronte a la suite reelle, pas a une memoire."""
-    texte = README.read_text(encoding="utf-8")
-    annonces = re.findall(r"(\d+) tests? verts?", texte)
-    assert annonces, "le README n'annonce plus de nombre de tests : supprimer ce test ou l'ecrire"
+def test_les_mesures_sont_des_entiers_positifs(mesures: dict[str, int]) -> None:
+    """Une mesure nulle signalerait que le controle ne mesure plus rien.
 
-    reel = _collecte()
-    for annonce in annonces:
-        assert int(annonce) == reel, (
-            f"le README annonce {annonce} tests verts, la suite en collecte {reel}. "
-            f"Ecrire {reel} dans README.md (ou retirer le chiffre : un chiffre faux coute "
-            "plus cher qu'une absence de chiffre)."
-        )
-
-
-def test_le_nombre_de_competences_et_d_agents_annonce_est_le_vrai() -> None:
-    """Memes chiffres verifies pour la bibliotheque de competences et les agents.
-
-    Ils sont ecrits en clair a deux endroits du README (le budget de contexte et le
-    paragraphe de l'ecosysteme), parce qu'un lecteur a besoin de les voir la ou il lit.
+    Le cas s'est produit : `pytest --collect-only` peut afficher son total sous deux
+    formes, et une lecture trop stricte rendait « 0 test ». Un controle qui vaut zero
+    passerait pour vert sur un document qui ne dit rien.
     """
-    texte = README.read_text(encoding="utf-8")
-    attendu_competences = len(SKILLS)
-    attendu_agents = len(AGENTS)
+    for nom, valeur in mesures.items():
+        assert valeur > 0, f"mesure absente ou nulle pour {nom}"
 
-    # Motif ANCRE : « les N competences » / « les N agents ». Sans l'ancre, la phrase
-    # « | 2 agents | » d'un tableau (la taille d'un panel, pas la bibliotheque d'agents)
-    # etait prise pour une annonce — un faux positif dans un controle de documentation,
-    # c'est-a-dire exactement ce que ce projet passe son temps a retirer.
-    for motif, attendu, quoi in (
-        (r"[Ll]es (\d+) compétences", attendu_competences, "competences"),
-        (r"[Ll]es (\d+) agents", attendu_agents, "agents"),
-    ):
-        trouvees = re.findall(motif, texte)
-        assert trouvees, f"le README n'annonce plus le nombre de {quoi}"
-        for annonce in trouvees:
-            assert int(annonce) == attendu, (
-                f"le README annonce {annonce} {quoi}, il y en a {attendu} "
-                "(jio/artifacts/definitions.py)"
-            )
+
+# --------------------------------------------------------------------------- #
+# Le controle, sur des documents fabriques
+# --------------------------------------------------------------------------- #
+
+
+def test_un_chiffre_faux_est_localise_avec_sa_ligne() -> None:
+    texte = "Titre\n\n**Statut :** 187 tests verts.\n\nLes 11 compétences et les 7 agents.\n"
+    trouves = ecarts(texte, {"tests": 533, "competences": 11, "agents": 7})
+
+    assert len(trouves) == 1
+    ecart = trouves[0]
+    assert ecart.ligne == 3
+    assert ecart.ancien == "187 tests verts"
+    assert ecart.nouveau == "533 tests verts"
+
+
+def test_un_motif_non_ancre_serait_un_faux_positif() -> None:
+    """« | 2 agents | » est la taille d'un panel, pas la bibliotheque d'agents.
+
+    Le motif doit donc etre ANCRE (« les N agents »). Sans cela, ce controle signalerait
+    une erreur qui n'existe pas — et un faux positif dans un controle de documentation,
+    c'est un bug du controle, pas du document.
+    """
+    texte = "| Panel | 2 agents |\n| Bibliotheque | les 7 agents |\n1 test vert\n"
+    trouves = ecarts(texte, {"tests": 1, "competences": 1, "agents": 7})
+    sur_les_agents = [ecart for ecart in trouves if ecart.nom == "agents"]
+    assert not sur_les_agents, (
+        "la taille d'un panel a ete prise pour la bibliotheque d'agents : "
+        f"{sur_les_agents}"
+    )
+
+
+def test_un_chiffre_qui_disparait_est_signale(mesures: dict[str, int]) -> None:
+    """Un document qui n'annonce plus rien ne doit pas rendre le controle vert.
+
+    Sinon il suffirait d'effacer la phrase pour faire disparaitre le probleme — et le
+    controle deviendrait vert en ne verifiant plus rien.
+    """
+    trouves = ecarts("Un document sans aucun chiffre.\n", mesures)
+    assert any(ecart.ligne == 0 for ecart in trouves)
+    assert any("ne trouve plus rien a verifier" in str(ecart.contexte) for ecart in trouves)
+
+
+# --------------------------------------------------------------------------- #
+# La reparation
+# --------------------------------------------------------------------------- #
+
+
+def test_la_reparation_corrige_et_sauvegarde(tmp_path: Path) -> None:
+    cible = tmp_path / "doc.md"
+    original = "**Statut :** 187 tests verts, et les 3 compétences.\n"
+    cible.write_text(original, encoding="utf-8")
+    mesures = {"tests": 533, "competences": 11, "agents": 7}
+
+    code, restants, message = reparer(cible, mesures, ecrire=True)
+
+    assert code == 0, message
+    assert not restants
+    assert "533 tests verts" in cible.read_text(encoding="utf-8")
+    assert "les 11 compétences" in cible.read_text(encoding="utf-8")
+    sauvegarde = tmp_path / "doc.md.avant-jio"
+    assert sauvegarde.read_text(encoding="utf-8") == original
+
+
+def test_la_reparation_ne_touche_pas_ce_qui_est_deja_vrai(tmp_path: Path) -> None:
+    """Le cas qui a fait refuser une ecriture : corriger du vrai n'est pas neutre."""
+    cible = tmp_path / "doc.md"
+    # Une seule chose est fausse ici : le compteur de tests.
+    cible.write_text("Les 11 compétences et les 7 agents.\n187 tests verts\n", encoding="utf-8")
+    mesures = {"tests": 533, "competences": 11, "agents": 7}
+
+    code, _, message = reparer(cible, mesures, ecrire=True)
+
+    assert code == 0, message
+    resultat = cible.read_text(encoding="utf-8")
+    assert "Les 11 compétences et les 7 agents." in resultat, "du texte deja juste a bouge"
+    assert "533 tests verts" in resultat
+
+
+def test_la_simulation_n_ecrit_rien(tmp_path: Path) -> None:
+    cible = tmp_path / "doc.md"
+    original = "187 tests verts\n"
+    cible.write_text(original, encoding="utf-8")
+
+    code, trouves, message = reparer(cible, {"tests": 533, "competences": 11, "agents": 7})
+
+    assert code == 1, "un ecart non corrige doit se signaler"
+    assert trouves and "appliquer" in message
+    assert cible.read_text(encoding="utf-8") == original
+    assert not (tmp_path / "doc.md.avant-jio").exists()
+
+
+def test_la_reparation_d_un_document_juste_ne_cree_rien(tmp_path: Path) -> None:
+    """Rien a faire n'est pas un echec, et ne doit pas laisser de sauvegarde inutile."""
+    cible = tmp_path / "doc.md"
+    cible.write_text(
+        "533 tests verts, les 11 compétences, les 7 agents.\n", encoding="utf-8"
+    )
+
+    code, trouves, message = reparer(cible, {"tests": 533, "competences": 11, "agents": 7},
+                                     ecrire=True)
+
+    assert code == 0, message
+    assert not trouves
+    assert "dit vrai" in message or "aucun ecart" in message
+    assert not (tmp_path / "doc.md.avant-jio").exists()
+
+
+def test_la_reparation_refuse_ce_qu_elle_ne_comprend_pas(tmp_path: Path) -> None:
+    """Le garde qui a sauve la mise : le compte des remplacements doit coller aux ecarts.
+
+    Verifie ici sur un document ou le meme motif apparait de nombreuses fois : si la
+    reparation en corrigeait plus qu'elle n'en a annonce, elle ecrirait dans des phrases
+    qu'elle n'a pas mesurees.
+    """
+    cible = tmp_path / "doc.md"
+    cible.write_text(
+        "Les 11 compétences et les 7 agents.\n" * 20 + "187 tests verts\n",
+        encoding="utf-8",
+    )
+    mesures = {"tests": 533, "competences": 11, "agents": 7}
+
+    code, _, message = reparer(cible, mesures, ecrire=True)
+    assert code == 0, message
+    # Les 20 lignes deja justes sont intactes, seule la derniere a change.
+    assert cible.read_text(encoding="utf-8").count("Les 11 compétences et les 7 agents.") == 20
+
+
+def test_les_motifs_portent_exactement_un_groupe() -> None:
+    """La reparation remplace UNIQUEMENT le groupe capte : le reste de la phrase survit.
+
+    Un motif a deux groupes ferait dependre la reecriture d'une convention non ecrite.
+    """
+    import re
+
+    for chiffre in CHIFFRES:
+        assert re.compile(chiffre.motif).groups == 1, f"motif ambigu : {chiffre.motif}"
+
+
+# --------------------------------------------------------------------------- #
+# Les zones declarees hors controle
+# --------------------------------------------------------------------------- #
+
+
+def test_une_zone_declaree_est_hors_controle(tmp_path: Path) -> None:
+    """Un document doit pouvoir RACONTER une erreur passee.
+
+    Sans issue de secours, ce controle interdisait de documenter ses propres defauts : la
+    phrase « il annoncait 187 tests verts pour 520 » etait prise pour une affirmation du
+    jour. L'exemption est declaree, et elle porte sa raison.
+    """
+    from jio.chiffres import zones_hors_controle
+
+    texte = (
+        "<!-- chiffres:hors-controle: recit d'un defaut passe -->\n"
+        "187 tests verts autrefois\n"
+        "<!-- /chiffres:hors-controle -->\n"
+        "533 tests verts aujourd'hui\n"
+    )
+    mesures = {"tests": 533, "competences": 11, "agents": 7}
+    lignes_masquees, raisons = zones_hors_controle(texte)
+
+    assert lignes_masquees == {1, 2, 3}
+    assert raisons and "recit d'un defaut passe" in raisons[0]
+
+    # Le recit echappe au controle, l'affirmation du jour non.
+    trouves = [e for e in ecarts(texte, mesures) if e.reparable]
+    assert not trouves, [str(e) for e in trouves]
+
+
+def test_la_reparation_n_ecrit_jamais_dans_une_zone(tmp_path: Path) -> None:
+    """Si le controle ne regarde pas une ligne, la reparation ne doit pas y ecrire.
+
+    Deux implementations separees auraient fini par diverger : l'ecriture se serait glissee
+    la ou la verification ne regardait plus — un trou invisible dans le controle.
+    """
+    cible = tmp_path / "doc.md"
+    cible.write_text(
+        "<!-- chiffres:hors-controle: histoire -->\n"
+        "187 tests verts (autrefois)\n"
+        "<!-- /chiffres:hors-controle -->\n"
+        "530 tests verts\n"
+        "les 11 compétences, les 7 agents\n",
+        encoding="utf-8",
+    )
+    mesures = {"tests": 533, "competences": 11, "agents": 7}
+
+    code, _, message = reparer(cible, mesures, ecrire=True)
+
+    assert code == 0, message
+    resultat = cible.read_text(encoding="utf-8")
+    assert "187 tests verts (autrefois)" in resultat, "le recit a ete reecrit"
+    assert "533 tests verts\n" in resultat, "l'affirmation du jour n'a pas ete corrigee"
+    assert "zone(s) hors controle" in message, "l'exemption n'est pas citee dans le rapport"

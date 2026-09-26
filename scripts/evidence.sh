@@ -159,7 +159,7 @@ print(f"    -> livrables corriges par la comparaison : {gains}/3 ; et le desacco
       "avoue dans tous les cas.")
 PYE
 
-    titre "3 bis. Sans oracle : les regles deviennent des temoins executables"
+    titre "4. Sans oracle : les regles deviennent des temoins executables"
     "$PYTHON" - <<'PYE'
 import sys
 sys.path.insert(0, ".")
@@ -206,7 +206,7 @@ print("       prouve rien sur eux (il peut etre faux), donc la regle est declare
 print("       PROUVEE — et il fait s'abstenir au lieu de faire rejeter.")
 PYE
 
-    titre "3 ter. La memoire des temoins : une traduction validee n'est pas repayee"
+    titre "5. La memoire des temoins : une traduction validee n'est pas repayee"
     "$PYTHON" - <<'PYE'
 import pathlib, sys, tempfile
 sys.path.insert(0, ".")
@@ -265,7 +265,7 @@ print("       Et le fichier est verifie par chaine de hachage : edite a la main,
 print("       mis en quarantaine — renomme, jamais supprime — et jamais applique.")
 PYE
 
-    titre "3 quater. Un fournisseur REEL est sonde avant la premiere mission"
+    titre "6. Un fournisseur REEL est sonde avant la premiere mission"
     "$PYTHON" - <<'PYE'
 import os, pathlib, sys, tempfile
 sys.path.insert(0, ".")
@@ -310,17 +310,17 @@ print("       prouver quelque chose — et elle refuse les tests hostiles avec l
 print("       porte de securite que la mission.")
 PYE
 
-    titre "4. Le chemin reel (3 agents externes -> livraison auditee)"
+    titre "7. Le chemin reel (3 agents externes -> livraison auditee)"
     "$PYTHON" -m pytest -q tests/test_real_path.py 2>&1 | tail -2
 
-    titre "5. Le banc : le harness a budget d'appels egal"
+    titre "8. Le banc : le harness a budget d'appels egal"
     # On n'affiche pas des taux, on affiche ce qui les rend lisibles : le tableau AVEC
     # leurs intervalles de confiance, puis l'ECART et son verdict. Un ecart dont
     # l'intervalle contient zero est indéterminé a ce nombre d'essais — c'est la seule
     # conclusion que ces chiffres portent, et elle doit figurer dans la preuve.
     "$PYTHON" -m jio bench --rounds 1 2>&1 | sed -n '/RESULTATS/,/^  QUAND LA MISSION/p' | head -30
 
-    titre "6. Le projet s'audite lui-meme"
+    titre "9. Le projet s'audite lui-meme"
     "$PYTHON" -m jio scan jio --exclude-tests --no-learn 2>&1 | tail -5
     echo
     # Le balayage ENTIER du depot, code ET documents. Deux proprietes y sont
@@ -344,7 +344,7 @@ PYE
 fi
 
 if [ "$FAIRE_TIERS" -eq 1 ]; then
-    titre "7. Zero fausse accusation sur des paquets publies"
+    titre "10. Zero fausse accusation sur des paquets publies"
     echo "    (telechargement temporaire : more-itertools, click, rich, jinja2, attrs)"
     TEMP=$(mktemp -d)
     trap 'rm -rf "$TEMP"' EXIT
@@ -368,7 +368,92 @@ if [ "$FAIRE_TIERS" -eq 1 ]; then
     fi
 fi
 
-titre "7. Le banc mesure VOTRE modele, et refuse de faire semblant"
+titre "11. Un depot reinitialise se repare sans perdre un octet"
+
+# L'accident est arrive TROIS fois : `.git` restaure a son etat initial, le travail intact
+# sur le disque, plus rien de suivi. On le reproduit POUR DE VRAI (depot distant, travail
+# pousse, puis destruction de l'historique local) au lieu de le decrire.
+SIM=$(mktemp -d)
+(
+    cd "$SIM"
+    git init -q --bare --initial-branch=main distant.git
+    git init -q -b main travail
+    cd travail
+    git config user.email a@b && git config user.name preuve
+    mkdir -p jio/docs
+    for i in $(seq 1 25); do printf 'x = %d\n' "$i" > "jio/m$i.py"; done
+    for i in $(seq 1 8); do printf '# doc\n' > "jio/docs/d$i.md"; done
+    printf 'def sante():\n    return "intact"\n' > jio/sante.py
+    git add -A && git commit -q -m "travail reel"
+    git remote add origin ../distant.git && git push -q -u origin main
+    # le travail JAMAIS pousse : c'est lui qu'une reparation maladroite effacerait
+    printf 'def local():\n    return "pas pousse"\n' > travail_local.py
+
+    rm -rf .git
+    git init -q -b main
+    git config user.email a@b && git config user.name preuve
+    git remote add origin ../distant.git
+    git commit -q --allow-empty -m "Initial commit"
+) > /dev/null 2>&1
+
+TRAVAIL="$SIM/travail"
+AVANT_LOCAL=$(sha256sum "$TRAVAIL/travail_local.py" | cut -c1-12)
+AVANT_CONTENU=$("$PYTHON" -c "
+import sys; sys.path.insert(0, '$RACINE')
+from pathlib import Path
+from jio.recover import empreinte_arbre
+print(empreinte_arbre(Path('$TRAVAIL'))[:12])")
+
+echo "    depot reinitialise : $(cd "$TRAVAIL" && git rev-list --count HEAD) commit(s), \
+$(cd "$TRAVAIL" && git status --porcelain -uall | grep -c '^??') fichier(s) non suivi(s)"
+# On lance sync.sh DEPUIS le depot reinitialise : sans cela, il observe le depot de JIO
+# (qui est sain) et la mesure ne dit rien du cas qu'on veut prouver.
+MENTIONS=$({ cd "$TRAVAIL" && bash "$RACINE/scripts/sync.sh"; } 2>&1 | grep -c 'jio recover' || true)
+echo "    sync.sh refuse ce cas et oriente vers la bonne commande : $MENTIONS mention(s)"
+if [ "$MENTIONS" -lt 1 ]; then
+    echo "    ECHEC : sync.sh doit nommer `jio recover` quand le depot est reinitialise" >&2
+    rm -rf "$SIM"; exit 1
+fi
+
+( cd "$TRAVAIL" && PYTHONPATH="$RACINE" "$PYTHON" -m jio recover ) \
+    > /tmp/jio_recover.txt 2>&1 || CODE_RECOVER=$?
+CODE_RECOVER=${CODE_RECOVER:-0}
+sed -n 's/^    \(historique restaure.*\)/    \1/p' /tmp/jio_recover.txt
+grep -E "contenu de l'arbre" /tmp/jio_recover.txt | sed 's/^/  /'
+if ! grep -q "INTACT" /tmp/jio_recover.txt; then
+    echo "    ECHEC : la recuperation a modifie le contenu de l'arbre" >&2
+    rm -rf "$SIM"; exit 1
+fi
+
+APRES_LOCAL=$(sha256sum "$TRAVAIL/travail_local.py" | cut -c1-12)
+APRES_CONTENU=$("$PYTHON" -c "
+import sys; sys.path.insert(0, '$RACINE')
+from pathlib import Path
+from jio.recover import empreinte_arbre
+print(empreinte_arbre(Path('$TRAVAIL'))[:12])")
+echo "    le travail JAMAIS pousse : $AVANT_LOCAL -> $APRES_LOCAL (copie inchangee)"
+echo "    contenu de tout l'arbre  : $AVANT_CONTENU -> $APRES_CONTENU"
+echo "    historique retrouve      : $(cd "$TRAVAIL" && git log --oneline | head -1)"
+echo "    (le fichier non pousse est desormais INDEXE : suivi par git status)"
+if [ "$AVANT_LOCAL" != "$APRES_LOCAL" ] || [ "$AVANT_CONTENU" != "$APRES_CONTENU" ]; then
+    echo "    ECHEC : un fichier a change — la recuperation a perdu du travail" >&2
+    rm -rf "$SIM"; exit 1
+fi
+rm -rf "$SIM"
+
+titre "12. La documentation est confrontee a ses propres chiffres"
+
+echo "    $(cd "$RACINE" && "$PYTHON" -m jio chiffres 2>&1 | grep -E 'tests|competences|agents' | tr '\n' ' ')"
+cd "$RACINE" && "$PYTHON" -m jio chiffres > /tmp/jio_chiffres.txt 2>&1
+CODE_CHIFFRES=$?
+echo "    jio chiffres -> code $CODE_CHIFFRES (0 = la documentation dit vrai)"
+if [ "$CODE_CHIFFRES" -ne 0 ]; then
+    echo "    ECHEC : un chiffre annonce dans la documentation est faux" >&2
+    cat /tmp/jio_chiffres.txt | tail -4 >&2
+    exit 1
+fi
+
+titre "13. Le banc mesure VOTRE modele, et refuse de faire semblant"
 
 # Un CLI externe est appele par subprocess : un faux modele sert de temoin, et il prouve
 # aussi la regle la plus importante — un modele demande et indisponible ARRETE la mesure.
@@ -401,7 +486,7 @@ assert isinstance(f.provider, CliProvider), f
 print('      binaire resolu :', f.provider.binary, '—', f.instances, 'instances pour le panel')
 "
 
-titre "8. Les commandes citees par les documents existent"
+titre "14. Les commandes citees par les documents existent"
 
 # L'oracle est le parseur de la CLI elle-meme : aucune interpretation possible. Ce controle
 # a deja trouve deux defauts reels dans ce depot (jio sync promis et inexistant, jio
@@ -423,7 +508,7 @@ else
     echo "    aucun document a verifier"
 fi
 
-titre "9. Ecrire des artefacts ne detruit rien"
+titre "15. Ecrire des artefacts ne detruit rien"
 
 # Un fichier de l'utilisateur n'est jamais ecrase : sa version reste, la notre va a cote.
 # Le registre .jio/generated.json signe en plus les fichiers que le format empeche de
@@ -462,7 +547,7 @@ if [ "$ENTREES" -lt 20 ]; then
 fi
 rm -rf "$TMP_ECRITURE"
 
-titre "3 bis ter. Le budget de contexte : ce que la configuration coute"
+titre "16. Le budget de contexte : ce que la configuration coute"
 
 # Un fichier de contexte trop long est SURVOLE : il occupe la fenetre et n'apporte rien.
 # On mesure donc ce qui est livre, et pas seulement ce qu'un test interne suppose.
@@ -492,7 +577,7 @@ print(f"    competences : {len(mesures)} fichier(s), ~{total} jetons au total "
 print("    cote d'une session reelle : un seul fichier de contexte, pas la somme.")
 FIN
 
-titre "3 ter bis. Les hooks pre-commit : une promesse ecrite doit avoir une implementation"
+titre "17. Les hooks pre-commit : une promesse ecrite doit avoir une implementation"
 
 # Le defaut trouve dans ce depot : `jio-scan-strict` annoncait « echoue aussi si le projet
 # est incoherent a l'import » avec EXACTEMENT la meme commande que le hook normal. On
@@ -534,7 +619,7 @@ else
 fi
 rm -rf "$TMP_HOOK"
 
-titre "3 quater bis. Le serveur MCP : ecrit ne veut pas dire BRANCHE"
+titre "18. Le serveur MCP : ecrit ne veut pas dire BRANCHE"
 
 # Deux faits, tous deux verifiables sans cle API :
 #   1. les fragments de configuration respectent le format de chaque outil ;
@@ -569,7 +654,7 @@ else
     echo "PROBLEME : le serveur ne sert pas ses outils."
 fi
 
-titre "3 quinquies. La PROSE : un document a des affirmations vraies ou fausses"
+titre "19. La PROSE : un document a des affirmations vraies ou fausses"
 # Tout le harness prouvait du CODE. Sur une mission generaliste (rapport, analyse,
 # note) il n'y avait rien a executer, donc JIO s'abstenait. Ce temoin verifie ce qui,
 # dans un texte, se PROUVE au lieu de se relire : un calcul annonce, un bloc presente
@@ -634,7 +719,7 @@ else
 fi
 rm -rf "$TMP_CLAIMS"
 
-titre "3 sexies. Une MISSION de document : la prose entre dans la boucle"
+titre "20. Une MISSION de document : la prose entre dans la boucle"
 # Les temoins de prose (3 quinquies) verifient UN document. Il manquait la mission
 # complete : generer, prouver, panel, consensus, porte. Sans cela, une mission
 # generaliste n'avait aucune preuve executable et JIO s'abstenait.

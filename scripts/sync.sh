@@ -10,6 +10,13 @@
 # historique absurde et perdu toute la tracabilite, qui est la promesse centrale de
 # JIO.
 #
+# ATTENTION : ce script ne repare PAS cet incident — et c'est mesure. Sa premiere regle
+# refuse de travailler quand `git status` n'est pas vide, or dans l'accident tout est
+# precisement « non suivi » : l'outil de secours refuse le sinistre pour lequel il a ete
+# ecrit. La reparation est `jio recover` (voir jio/recover.py) : il restaure l'historique
+# distant, indexe le travail retrouve, et ne touche a AUCUN fichier du disque. Ce script,
+# lui, reste ce qu'il est : la synchronisation ordinaire d'un depot sain.
+#
 # Regle de surete, dans cet ordre :
 #   1. une copie de travail MODIFIEE n'est jamais touchee (on refuse et on explique);
 #   2. un local en RETARD se met a jour en avance rapide (`--ff-only`) : aucun commit
@@ -53,6 +60,22 @@ echo
 
 # --- 1. travail non valide : on ne touche a RIEN ---------------------------- #
 if [ -n "$(git status --porcelain)" ]; then
+    # L'empreinte de l'accident : presque aucun commit, et une masse de fichiers non
+    # suivis. Dans ce cas precis, ce script n'est PAS l'outil — et le dire vaut mieux que
+    # de le laisser echouer sans piste.
+    COMMITS=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+    NON_SUIVIS=$(git status --porcelain --untracked-files=all | grep -c '^??' || true)
+    if [ "$COMMITS" -le 3 ] && [ "$NON_SUIVIS" -ge 20 ]; then
+        echo "ATTENTION : ce depot ressemble a un depot REINITIALISE"
+        echo "            ($COMMITS commit(s) local(aux), $NON_SUIVIS fichier(s) non suivi(s))."
+        echo "            Ce script ne sait pas reparer ce cas : sa regle de surete le lui"
+        echo "            interdit, puisque tout le travail est justement « non suivi »."
+        echo
+        echo "            L'outil est :  jio recover"
+        echo "            Il restaure l'historique distant, indexe le travail retrouve, et ne"
+        echo "            touche a aucun fichier du disque."
+        exit 1
+    fi
     echo "REFUS : des modifications ne sont pas validees (commit ou remisage)."
     echo "        Ce script ne detruit JAMAIS du travail non enregistre."
     echo "        Apercu :"

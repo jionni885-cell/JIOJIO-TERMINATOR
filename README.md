@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 522 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 546 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -638,7 +638,7 @@ preuve du calcul faux  7 x 6 vaut 42, le texte annonce 43
 sans affirmation       code != 0 — rien a verifier n'est pas un quitus, et c'est DIT.
 ```
 
-Rejouable : `bash scripts/evidence.sh`, étape **3 quinquies** (corpus versionné dans
+Rejouable : `bash scripts/evidence.sh`, étape **19** (corpus versionné dans
 `evidence/claims/`).
 
 ### Quatre bugs, tous du même genre : une vérification qui ne vérifiait rien
@@ -1215,6 +1215,162 @@ le déclarer conforme), et `AGENTS.md` reste **sous 150 lignes** — au-delà, u
 de contexte est survolé, pas lu.
 
 ---
+
+## Quand `.git` est réinitialisé : récupérer sans perdre un octet
+
+Ce n'est pas une hypothèse. C'est arrivé **trois fois** pendant le développement de ce
+projet : entre deux sessions, `.git` est restauré à son état initial. Le travail est intact
+sur le disque, mais `git log` revient au commit initial, `git status` affiche tout le code
+comme « non suivi », et `.git/config` ne connaît même plus la branche (le refspec d'origine
+ne récupérait que `main` — d'où un `git push` sans référence de suivi).
+
+Et le script écrit pour cet accident **ne pouvait pas le réparer** : `scripts/sync.sh`
+refuse de travailler dès que `git status` n'est pas vide — or dans cet accident, tout est
+précisément « non suivi ». *L'outil de secours refusait le sinistre pour lequel il avait été
+écrit.*
+
+```bash
+jio doctor          # détecte l'empreinte de l'accident, hors ligne
+jio recover --dry-run   # montre ce qui serait fait
+jio recover         # restaure l'historique, SANS toucher aux fichiers
+```
+
+Ce que `jio recover` fait, et pourquoi c'est sans perte **par construction** :
+
+| Commande | Effet |
+|---|---|
+| `git fetch --prune origin <branche>` | n'écrit que dans `.git` : ni l'arbre, ni l'index |
+| `git tag sauvegarde-avant-recup-<date> HEAD` | **avant tout** : l'ancien état reste joignable |
+| `git reset --soft <distant>` | déplace le pointeur de branche, **pas un fichier** |
+| `git add -A` | indexe le travail retrouvé, pour que `git status` soit lisible |
+
+Aucune commande destructive n'est utilisée — ni `--hard`, ni `checkout`, ni `clean` — et un
+test **inspecte les commandes réellement listées** pour l'exiger. La preuve est faite sur une
+vraie simulation de l'accident, avec du travail **jamais poussé** :
+
+```
+    depot reinitialise : 1 commit(s), 35 fichier(s) non suivi(s)
+    sync.sh refuse ce cas et oriente vers la bonne commande : 1 mention(s)
+    historique restaure. Les fichiers du disque n'ont pas ete touches.
+      contenu de l'arbre : 1e7b5acc2e9f (avant) == 1e7b5acc2e9f (apres)  ->  INTACT
+    le travail JAMAIS pousse : 8f47756969ed -> 8f47756969ed (copie inchangee)
+    historique retrouve      : 860403a travail reel
+```
+
+### Un défaut trouvé en simulant l'accident pour de vrai
+
+Le détecteur comptait les lignes de `git status --porcelain` qui commencent par `??`. Or
+**git regroupe un dossier non suivi en une seule ligne** (`?? jio/`) : un projet de 34
+fichiers organisés en dossiers n'affichait que **2** entrées, très en dessous du seuil de 20.
+Le détecteur aurait donc laissé passer l'accident réel — celui pour lequel il existe. Mesure
+faite : 2 lignes sans l'option, 34 avec `--untracked-files=all`. Corrigé aux deux endroits
+(`jio doctor` et `jio recover`), et verrouillé par un test.
+
+### Un second défaut, trouvé en se méfiant du succès
+
+`--branch <nom>` devait restaurer la branche demandée. Sur une branche inexistante, la
+commande **réussissait** — en restaurant `main` à sa place. Cause : `FETCH_HEAD` désigne la
+dernière référence récupérée ; le fetch de la branche nommée échouait, le fetch global
+réussissait, et la cible était lue dans `FETCH_HEAD` — donc une *autre* branche que celle
+demandée, annoncée comme un succès.
+
+C'est le pire mode d'échec possible : **une commande qui ment sur ce qu'elle a fait**.
+Désormais la cible doit être celle qui a été demandée (fetch direct, ou référence distante du
+nom exact, ou `FETCH_HEAD` **après avoir vérifié** que ce nom existe bien sur le distant) —
+sinon :
+
+```
+    aucune reference distante pour `fantome` : rien a recuperer.
+    Branches presentes sur le distant : main. Relancez avec `--branch <nom>` ...
+```
+
+### Le cas le plus probable : `.git/config` a perdu le distant
+
+Une réinitialisation efface aussi le distant. Le message disait alors « vérifiez l'accès au
+dépôt distant » — un mauvais conseil : il n'y a aucun accès à vérifier, il n'y a plus
+d'adresse. Le message nomme maintenant la cause et la correction :
+
+```
+    aucun depot distant nomme `origin` : `.git/config` ne le connait plus (frequent
+    apres une reinitialisation). Rien n'a ete modifie. Donnez son adresse, puis relancez :
+        git remote add origin <url-du-depot>
+        jio recover
+```
+
+Et `--dry-run` rend **0** : une simulation réussie est une inspection réussie. La confondre
+avec un échec rendrait le mode sûr inutilisable dans un script.
+
+C'est la raison pour laquelle ces preuves **reproduisent** l'accident au lieu de le décrire :
+une simulation approximative aurait validé un détecteur aveugle.
+
+## Le compteur de tests du README a menti trois fois
+
+<!-- chiffres:hors-controle: recit d'un defaut passe, chiffres historiques -->
+Il a annoncé **187 tests verts** quand la suite en comptait 520. Personne ne recalcule un
+compteur en lisant une page — et c'est précisément le genre d'affirmation qui fait douter de
+tout le reste du document.
+<!-- /chiffres:hors-controle -->
+
+Le contrôle a donc été écrit, et il a **mordu trois fois**. Les trois fois, la réaction a été
+la même : ouvrir le README, trouver la ligne, retaper le nombre. C'est le signe qu'un
+contrôle est mal conçu. Pas parce qu'il a tort — il a raison — mais parce qu'**il punit sans
+réparer** : un contrôle dont la réparation est manuelle finit par être désactivé, ou
+contourné par un `--no-verify`.
+
+La règle du projet s'applique donc à lui aussi : *un refus doit dire quoi faire — et le
+faire quand c'est possible.*
+
+```bash
+jio chiffres               # la documentation dit-elle vrai ?            (0 / 1)
+jio chiffres --appliquer   # écrire les valeurs mesurées, avec sauvegarde
+```
+
+<!-- chiffres:hors-controle: exemple de sortie d'outil, enregistrement d'ecran -->
+```
+  CHIFFRES  ·  mesures reelles
+
+    agents       :     7
+    competences  :    11
+    tests        :   542
+
+    ECART  README.md ligne 15 : 530 tests verts  ->  533 tests verts
+    1 chiffre(s) corrige(s) dans README.md · sauvegarde : README.md.avant-jio
+```
+<!-- /chiffres:hors-controle -->
+
+Aucune valeur n'est saisie à la main : le nombre de tests vient d'un vrai
+`pytest --collect-only` lancé dans un sous-processus (aucun test n'y est exécuté, donc pas de
+récursion), celui des compétences et des agents des définitions qui les génèrent. Le contrôle
+et la réparation vivent dans le même module — `jio/chiffres.py` — pour qu'il n'existe jamais
+deux vérités sur un même chiffre.
+
+### Trois gardes, parce qu'une écriture automatique peut abîmer
+
+| Garde | Ce qu'il empêche |
+|---|---|
+| **Sauvegarde** `README.md.avant-jio` avant toute écriture | perdre l'état d'avant, même si la suite se passe mal |
+| **Compte exact** : si le nombre de remplacements calculés ne colle pas au nombre d'écarts localisés, la commande **renonce** | corriger « à peu près » du texte qu'elle n'a pas mesuré |
+| **Relecture depuis le disque** après écriture ; s'il reste un écart, le fichier est restauré | écrire un document encore faux en croyant l'avoir corrigé |
+
+Le garde du milieu a servi **au premier essai**. La réparation réécrivait aussi les mentions
+*déjà justes* (« les 11 compétences » → « les 11 compétences ») : cinq remplacements calculés
+pour un seul écart, refus d'écrire. Sans ce garde, elle aurait réécrit du texte sain — et une
+réparation qui touche des phrases qu'elle n'a pas mesurées finit par en abîmer une.
+
+### Un écart réparable n'est pas un chiffre absent
+
+Si le document n'annonce **plus du tout** un chiffre, il n'y a rien à remplacer : la
+réparation ne peut pas inventer la phrase où ce chiffre devrait vivre. Cette situation est
+donc un **signalement**, pas une faute :
+
+| Situation | Traitement |
+|---|---|
+| Affirmation localisée et fausse | écart **réparable** → corrigé par `--appliquer` |
+| Chiffre plus mentionné sous la forme surveillée | **signalement** → listé, jamais « réparé » en silence |
+
+L'auto-vérification ne juge que les écarts réparables. Exiger zéro écart *de tout genre*
+revenait à refuser **toutes** les corrections dès qu'un document ne parlait pas de tests —
+c'est-à-dire à rendre l'outil inutilisable sur n'importe quel document partiel.
 
 ## Documentation
 

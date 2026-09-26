@@ -6,3 +6,9 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Sauvegardes locales creees avant une reecriture automatique (garde d'ecriture des
+# artefacts, et `jio chiffres --appliquer`). Elles servent a revenir en arriere ; elles
+# n'ont pas leur place dans l'historique.
+*.avant-jio
+*.jio

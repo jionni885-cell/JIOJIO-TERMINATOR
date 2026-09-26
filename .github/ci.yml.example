@@ -70,6 +70,13 @@ jobs:
         run: |
           python -m jio claims --hook $(git ls-files '*.md' '*.rst' '*.txt' | grep -v '^evidence/')
 
+      - name: Les chiffres annonces sont ceux mesures
+        # 187 tests verts pour 520 reels : ce controle a mordu trois fois. Il ne se
+        # contente plus de refuser — `jio chiffres --appliquer` ecrit la valeur mesuree.
+        # En CI, on refuse : un chiffre faux dans la documentation coute plus cher qu'une
+        # absence de chiffre.
+        run: python -m jio chiffres
+
       - name: Le depot passe sa propre porte
         # `jio scan .` (depot entier) sort en 1 : les tests contiennent du code fautif,
         # c'est leur sujet. Le paquet `jio/` doit etre propre sans reserve, et c'est ce
