@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 685 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 695 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1714,115 +1714,187 @@ rien, et un test l'exige. Un fichier qui ne déclarerait **que** des fixtures le
 « aucune fonction ni classe publique » aurait été un message faux, puisque le fichier déclare
 bien des fonctions, simplement pas auditables ainsi.
 
-## La mesure qui manquait : `jio scan` sur du code écrit par d'autres
+## La mesure qui manquait : `jio scan` sur vingt bibliothèques publiées
 
 Le README annonçait ce chiffre manquant, noir sur blanc : *« de nouvelles règles dans
 `jio scan` sans mesure sur le corpus de paquets publics — qui est ce qui décide si une règle
-accuse à tort »*. Le voici, et il a changé le code.
+accuse à tort »*. Le voici. Il a changé le code **vingt-neuf fois**.
 
-Protocole : **douze** bibliothèques publiées sur PyPI (`click`, `packaging`, `pyparsing`,
+Protocole : **vingt** bibliothèques publiées sur PyPI (`click`, `packaging`, `pyparsing`,
 `attrs`, `jinja2`, `tqdm`, `tabulate`, `wcwidth`, `idna`, `more_itertools`, `filelock`,
-`platformdirs`), installées puis passées à `jio scan`, sans aucune adaptation.
+`platformdirs`, `rich`, `httpx`, `urllib3`, `requests`, `pygments`, `tomlkit`, `anyio`,
+`sniffio`), installées puis passées à `jio scan`, sans aucune adaptation.
 
-**Avant : trois paquets sur quatre déclarés fautifs au premier essai.** Douze problèmes, aucun
-n'était un défaut du code — huit familles, toutes de la même nature : **l'analyseur ne pouvait
-pas conclure, et il accusait.**
-
-| Cause réelle | Ce qui était rapporté |
-|---|---|
-| Une fixture pytest n'est pas appelable directement | 1 problème `[A-002]` — l'audit appelait `mesures()` |
-| Une classe à fabriques refuse la construction | **5 problèmes** `[C-001..005]` — `VersionRange.__new__` lève `TypeError` volontairement |
-| Un exemple attend une traceback, dont le nom de module diffère | 2 problèmes `[A-003]`, `[C-001]` |
-| Un exemple écrit dans un flux **lié à l'import** (`file=sys.stdout`) | 1 problème `[A-003]` |
-| Un exemple **abrégé** par `...` (style courant, `ELLIPSIS` absent) | 1 problème `[C-001]` — `wcwidth.hyperlink` |
-| `import *` : l'analyseur ne peut pas suivre les noms | **5 problèmes** `[ruff:F403]` |
-| Un nom vient d'un `from .core import *` chez le voisin | 2 problèmes `[IMPORT]` |
-| Un module local masque un paquet externe (`tqdm/utils.py` contre `requests.utils`) | 3 problèmes `[IMPORT]` |
-| Une dataclass dérivée : les champs obligatoires vivent dans la base | 1 problème `[C-001]` — `filelock.AsyncFileLockContext` |
-| `ruff` juge avec sa version de Python par défaut, pas la nôtre | 1 problème `[ruff:F821]` — `BaseExceptionGroup` |
-| Un import mort dans un module qui réexporte | 41 problèmes `[ruff:F401]` — `wcwidth` à lui seul en avait 38 |
-
-### Après : 12 paquets, 3 problèmes, et les trois sont vrais
+### Le résultat, et sa lecture
 
 ```
-    jinja2       0 probleme(s)  ·  code de sortie 0
-    tqdm         3 probleme(s)  ·  code de sortie 1
-                [IMPORT] `_screen_shape_linux` est importe de `utils` (relatif) mais n'y existe pas
-                [IMPORT] `_screen_shape_tput` est importe de `utils` (relatif) mais n'y existe pas
-                [IMPORT] `_screen_shape_windows` est importe de `utils` (relatif) mais n'y existe pas
-    wcwidth      0 probleme(s)  ·  code de sortie 0
-    filelock     0 probleme(s)  ·  code de sortie 0
-    ... click, packaging, pyparsing, attrs, idna, tabulate, platformdirs, more_itertools : 0
+    tomlkit      5 probleme(s)  ·  code de sortie 1     <- docstrings non mises a jour
+    tqdm         3 probleme(s)  ·  code de sortie 1     <- import casse (bug amont)
+    requests     1 probleme(s)  ·  code de sortie 1     <- aller-retour qui perd l'info
+    les 17 autres                   0 probleme(s)  ·  code de sortie 0
 ```
 
-**Les trois sont un vrai défaut, et il est reproductible en une ligne :**
+**Neuf constats, les neuf sont vrais, et chacun est vérifié à la source.** Les trois de `tqdm`
+sont un `ImportError` reproductible en une ligne :
 
 ```console
 $ python -c "import tqdm._utils"
 ImportError: cannot import name '_screen_shape_linux' from 'tqdm.utils'
 ```
 
-`tqdm/_utils.py` importe trois fonctions que `tqdm/utils.py` ne déclare plus. C'est exactement
-la classe de bug pour laquelle le contrôle d'imports a été écrit — *renommé sans mettre à jour
-les appelants* —, celle qui casse chez le consommateur et jamais dans le fichier modifié. Le
-dépôt tarball officiel de `tqdm 4.70.1` le confirme : `utils.py` n'a qu'un `_screen_shape_wrapper`,
-et `_utils.py` en importe trois autres. `jio scan` l'a vu **en lisant les imports, sans jamais
-exécuter le module** — c'est le but : voir sans lancer le code douteux.
+`tqdm/_utils.py` importe trois fonctions que `tqdm/utils.py` ne déclare plus — exactement la
+classe de bug pour laquelle le contrôle d'imports a été écrit, *renommé sans mettre à jour les
+appelants* — et `jio scan` l'a vu **en lisant les imports, sans exécuter le module**.
 
-```bash
-scripts/mesure-code-public.sh          # rejoue la mesure (n'installe rien)
-scripts/mesure-code-public.sh rich     # n'importe quel paquet déjà installé
+Les cinq de `tomlkit` sont des exemples de docstring qui ne concordent plus avec le code. La
+preuve n'est pas notre outil, c'est `doctest` **nu**, qui échoue sur les mêmes exemples
+(`Echecs doctest reels (sans nous) : 9`) :
+
+```console
+Failed example:
+    print(doc.as_string())
+Expected:
+    [foo.bar]
+    x = 1
+Got:
+    [foo.bar]
+    x = 1
+    <BLANKLINE>
 ```
 
-### Onze corrections, une seule doctrine
+Et le constat de `requests` vient d'une propriété **dérivée du code, sans exemple fourni** :
 
-Une capacité qui n'a pas pu conclure se **déclare**, elle ne s'**accuse** pas. Et l'exclusion
-est **dite** :
+```
+[P-003:to_key_val_list] 'from_key_val_list(to_key_val_list(x))' ne rend pas x :
+    plus petit contre-exemple ([],)
+```
+
+`to_key_val_list([])` rend `[]`, `from_key_val_list([])` rend `OrderedDict()` : l'aller-retour
+perd l'information, et le plus petit cas qui le montre est la liste vide. Personne n'avait
+écrit cette propriété dans le fichier : elle a été déduite de la paire de fonctions.
+
+```bash
+scripts/mesure-code-public.sh                    # les douze paquets du socle
+scripts/mesure-code-public.sh urllib3 tomlkit    # n'importe quel paquet installe
+bash scripts/evidence.sh                         # etape 24 : rejoue la mesure + le doctest nu
+```
+
+### Avant : 49 constats, zéro vrai
+
+Le premier essai sur douze paquets a produit **49 problèmes dont aucun n'était un défaut du
+code audité**. Chacun a été instruit à la main, jusqu'à la cause, et chaque cause a reçu une
+règle, un test et un contre-test. Instruire, c'est-à-dire refuser l'excuse facile : *« c'est
+un faux positif de l'outil »* n'est pas une conclusion, c'est le début du travail.
+
+| Cause réelle | Ce qui était rapporté |
+|---|---|
+| Une fixture pytest n'est pas appelable directement | 1 `[A-002]` |
+| Une classe à fabriques refuse la construction (`__new__` qui lève) | **5** `[C-001..005]` |
+| Une traceback attendue, dont le nom de module diffère | 2 `[A-003]`, `[C-001]` |
+| Un exemple écrit dans un flux **lié à l'import** (`file=sys.stdout`) | 1 `[A-003]` |
+| Un exemple **abrégé** par `...` (style répandu, `ELLIPSIS` absent) | 1 `[C-001]` |
+| Un `import *` : les noms ne sont pas suivables | **5** `[ruff:F403]` |
+| Un nom venu d'un `from .core import *` chez le voisin | 2 `[IMPORT]` |
+| Un module local masque un paquet externe (`tqdm/utils.py` contre `requests.utils`) | 3 `[IMPORT]` |
+| Le **sous-paquet** d'un fichier : trois segments abandonnés, `utils` n'importe où | 3 `[IMPORT]` |
+| Une dataclass dérivée : les champs obligatoires vivent dans la base | 1 `[C-001]` |
+| `ruff` juge avec sa version de Python par défaut, pas la nôtre | 1 `[ruff:F821]` |
+| Un import mort dans un module qui réexporte | **41** `[ruff:F401]` |
+| Un module qui **fabrique ses noms** (`__getattr__`, `sys.modules[__name__] = …`) | 1 `[IMPORT]` |
+| Une chaîne d'attributs vers un paquet **non installé** (`trio.abc.Instrument`) | **12** `[IMPORT]` |
+| Une classe **abstraite sans base** (`metaclass=ABCMeta`) ou `async def` abstraite | 2 `[C-001]` |
+| Un **constructeur repris de la base** (`*args, **kwds` → `super().__init__`) | 1 `[C-001]` |
+| Un nom **testé** avant usage (`try: get_ipython` / `except NameError`) | 2 `[ruff:F821]` |
+| Un nom **local** à une fonction (`zed = {…}` de démonstration) | 2 `[ruff:F841]` |
+| Une redefinition **volontaire** par `global` (choix d'implémentation au 1er appel) | 1 `[ruff:F811]` |
+| Un `f` de trop dans une f-string (constat vrai, mais rien ne casse) | 2 `[ruff:F541]` |
+
+### Huit d'entre elles étaient des défauts de l'outil, pas du corpus
+
+1. **La résolution par suffixe d'un import absolu.** `tqdm/contrib/discord.py` fait
+   `from requests.utils import default_user_agent` : le suffixe `utils` tombait sur le
+   `tqdm/utils.py` voisin, et la bibliothèque était accusée. La règle qui tient : les segments
+   abandonnés doivent former **exactement** le nom d'un paquet **ancêtre du fichier** — lu sur
+   le disque (`_espaces_d_import`), pas sur la racine de scan. Conséquence : le verdict ne
+   dépend plus de l'endroit d'où l'on regarde (un renommage est vu depuis la racine du dépôt
+   **et** depuis le dossier du paquet).
+2. **Le compte des segments compte.** Premier correctif, premier trou, attrapé par la mesure :
+   `tqdm/contrib/discord.py` étant dans un sous-paquet, la résolution abandonnait `tqdm`, puis
+   `tqdm.contrib`, puis `requests` — le faux positif historique revenait sous une autre forme.
+3. **Les chaînes d'attributs n'avaient aucune discipline.** `trio.abc.Instrument` (où `trio`
+   n'est pas installé) se résolvait sur le `anyio.abc` local, douze fois. La même règle
+   s'applique maintenant, et le repli vers le paquet du fichier exige une correspondance
+   **exacte** au lieu de chercher « au plus proche ».
+4. **Le bac à sable exécutait la source dans les globales du script.** Or Python fait vivre les
+   globales d'un module dans **son** dictionnaire. `pygments/lexers/__init__.py`, qui recopie
+   son propre dictionnaire de module dans un module de remplacement, voyait un dictionnaire
+   **vide** : `del newmod.newmod` levait `AttributeError` et la bibliothèque était déclarée
+   fautive quatre fois. La source s'exécute maintenant dans le dictionnaire du module, avec
+   `__file__` et `__package__` posés, et `__name__` rendu au script à la fin.
+5. **Le bac à sable n'était pas fermé.** Le doctest de `urllib3.connectionpool` fait un vrai
+   `GET` sur google.com : l'audit dépendait donc du réseau. Le réseau est désormais **refusé**
+   (`[JIO-RESEAU]`), et un exemple qui l'utilise est déclaré en réserve : *un audit ne dépend
+   jamais du réseau*, et un dépôt hostile ne peut pas s'en servir pour exfiltrer.
+6. **`ABCMeta` est un mot-clé, pas une base**, et `ast.AsyncFunctionDef` est une classe
+   différente de `ast.FunctionDef` : deux classes abstraites d'`anyio` étaient déclarées
+   instanciables, et le bac à sable répondait
+   `TypeError: Can't instantiate abstract class ... with abstract method aclose`.
+7. **Un constructeur peut déléguer** : `def __init__(self, *args, **kwds)` puis
+   `super().__init__(*args, **kwds)` a la signature de sa base (`LexerContext(text, pos)`), et
+   la classe ne dit rien de ses arguments obligatoires. La déclarer « instanciable à vide »
+   était une règle fausse **par construction**, donc une accusation à tort.
+8. **Un constat d'outil externe est une allégation, pas un verdict.** Trois familles ont été
+   réfutées par la **lecture du fichier** : un nom sondé juste avant usage (`try: get_ipython` /
+   `except NameError`), un nom local à une fonction (`zed`, `foos`), une redefinition
+   volontaire par `global` (`wait_for_socket`, dont le choix d'implémentation est repoussé au
+   premier appel). Le périmètre de ces réfutations est **étroit et testé** : un nom jamais
+   défini dans une fonction reste une preuve (faute de frappe), une fonction redefinie au
+   niveau du module reste vue, et un nom local au **module** reste un code mort.
+
+### Une capacité qui n'a pas conclu se déclare, elle ne s'accuse pas
+
+C'est la doctrine, et elle s'affiche. Exemples réels, tous produits par le scan :
 
 ```
     test_chiffres_documentes.py : 1 fixture(s) hors audit (mesures) : une fixture pytest n'est
     pas appelable directement par construction [...]. Ce n'est pas un defaut du fichier.
 
-    specifiers.py [C-001] le type d'exception leve est bien celui annonce, seul le nom QUALIFIE
-    du module differe (le bac a sable execute l'artefact sous un nom synthetique)
-
     __init__.py [A-003] la sortie attendue passe par un flux lie a l'import
     (`file=sys.stdout` par defaut), que le bac a sable ne peut pas capter
 
-    hyperlink.py [C-001] la sortie annoncee est ABREGEE par `...` ; les parties litterales
-    concordent, ce qui est abrege n'est pas verifie — jamais un succes
+    connectionpool.py [A-003] cet exemple fait un appel RESEAU : le bac a sable est ferme
+    (aucune requete sortante), donc l'exemple n'est pas verifiable ici
+
+    LexerContext [C-001] constructeur repris de LexerContext (`*args, **kwds`) : les arguments
+    obligatoires de la base sont hors de ce fichier
+
+    lexers/__init__.py [IMPORT] `lexers` fabrique ses noms a l'execution (__getattr__ de module
+    ou remplacement dans sys.modules) : les noms importes depuis ce module ne sont pas
+    verifiables ici
 
     __init__.py [ruff:F403] `import *` : l'analyseur ne peut pas suivre les noms [...] —
     limite de l'outil, pas du code
+
+    python.py [ruff:F541] f-string sans interpolation : le prefixe `f` ne sert a rien, et RIEN
+    ne casse [...] le doute a garder est celui d'une interpolation PERDUE par une refonte
+
+    rich/console.py:511 [ruff:F821] Undefined name `get_ipython` — ecarte : le nom n'est defini
+    nulle part ET son absence est TESTEE juste avant (`try: <nom>` / `except NameError:`)
 ```
 
 **Le cas `F401` mérite d'être raconté**, parce que c'est la mesure qui a tranché, pas une
-préférence. `ruff:F401` (« import inutilisé ») est un fait, et le projet le traitait comme un
-défaut. Sur les douze paquets, **41 des 44 constats étaient des `F401`** — `wcwidth` en avait
-38 à lui seul, dans un module dont le commentaire dit *« re-export ... even a few private ones ...
-for convenience and others for legacy »*. Le message de `ruff` lui-même propose trois
-intentions différentes (retirer, ajouter à `__all__`, réexporter sous un alias) : l'outil ne
-sait pas laquelle, et **rien ne casse**. Ces constats sont donc passés en **réserves** —
-affichés, comptés, jamais accusés — parce qu'un rapport qu'on ne peut pas lire est ignoré **en
-entier, y compris ses vrais défauts**. Les 38 `F401` de `wcwidth` noyaient l'`ImportError` de
-`tqdm`.
+préférence. Sur douze paquets, **41 des 44 constats étaient des `F401`** — `wcwidth` en avait
+38 à lui seul, dans un module dont le commentaire dit *« re-export … for convenience and others
+for legacy »*. Le message de `ruff` propose trois intentions différentes (retirer, ajouter à
+`__all__`, réexporter sous un alias), et **rien ne casse**. Ces constats sont donc passés en
+**réserves** : affichés, comptés, jamais accusés — parce qu'un rapport qu'on ne peut pas lire
+est ignoré **en entier, y compris ses vrais défauts**. Les 38 `F401` de `wcwidth` noyaient
+l'`ImportError` de `tqdm`.
 
-Ce qui reste une **preuve de défaut**, en revanche, n'a pas bougé : `F821` (nom non défini),
-`F811`, `F822`, `F823` et les erreurs de syntaxe. Un test l'exige — `LIMITES_DE_L_ANALYSE` ne
-contient que `F401`, `F403` et `F405`, chacun payé par une mesure, et un jeu de limites qui
+Ce qui reste une **preuve de défaut** n'a pas bougé : `F821` (nom non défini), `F811`, `F822`,
+`F823` et les erreurs de syntaxe. Un test l'exige : le jeu de limites ne contient que
+`F401`, `F403`, `F405` et `F541`, **chacune payée par une mesure**, et un jeu de limites qui
 s'élargit transforme l'audit en décor.
-
-### Les gardes, pour que ces filtres ne deviennent pas des trous
-
-* un `@lru_cache` ou un décorateur maison n'exclut rien de l'audit ; un `raise`
-  **conditionnel** dans un constructeur non plus — seul un `raise` au premier niveau du corps
-  est un refus par construction ;
-* la résolution par suffixe d'un import **absolu** n'est acceptée que si le préfixe abandonné
-  est le **nom du dossier audité** — et le contre-test exige qu'un vrai renommage reste vu ;
-* un fichier ne s'importe pas lui-même sous son nom absolu (`tqdm/keras.py` fait `import keras`,
-  le vrai Keras — pas `tqdm/keras.py`) ;
-* une dataclass dérivée d'une dataclass **du même fichier** reste auditée : la limite ne couvre
-  que les champs invisibles.
 
 ### Le bug dans le bug
 
@@ -1833,16 +1905,18 @@ En corrigeant la comparaison des tracebacks, la reprise rejouait les **mêmes** 
 NameError: name 'Specifier' is not defined
 ```
 
-et la correction échouait pour une raison qui n'avait **rien à voir** avec ce qu'elle vérifiait.
-Les objets de test sont maintenant reconstruits (`DocTestFinder` neuf) à chaque passe.
+et la correction échouait pour une raison qui n'avait **rien à voir** avec ce qu'elle
+vérifiait. Les objets de test sont reconstruits à chaque passe (`DocTestFinder` neuf).
 
-Deux régressions attrapées par la mesure elle-même, à quelques minutes d'intervalle : le
+Trois régressions attrapées par la mesure elle-même, à quelques minutes d'intervalle : le
 nouveau contrôle acceptait une fonction mais recevait parfois une **classe**
-(`[SCAN] analyse impossible : 'ClassDef' object has no attribute 'args'`), et la première
-version du filtre de suffixe cassait les imports **relatifs** (`from .utils import x`). Les deux
-ont un test dédié : *un contrôle doit accepter ce que ses appelants lui donnent*, et *un filtre
-ne doit pas emporter ce qu'il ne visait pas*.
+(`'ClassDef' object has no attribute 'args'`), la première version du filtre de suffixe cassait
+les imports **relatifs** (`from .utils import x`), et un ordre de reprise faisait passer pour
+« abrégé » un exemple qui ne l'était pas. Aujourd'hui l'ordre des causes est **du plus précis au
+plus général**, et chaque reprise n'est tentée que si le tampon parle de sa cause.
 
+Une exclusion **non dite** est un audit partiel présenté comme complet : les listes `hors
+audit`, `limites`, `reserves` et `ecartes` voyagent avec chaque rapport, avec leur raison.
 ## Toutes les commandes répondent, et c'est testé
 
 Un utilisateur n'utilise pas « le projet » : il utilise **une** commande, un jour, dans un

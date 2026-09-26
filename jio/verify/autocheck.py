@@ -304,8 +304,69 @@ def _refuse_la_construction(constructeur: ast.FunctionDef) -> bool:
     return any(isinstance(item, ast.Raise) for item in constructeur.body)
 
 
+def _delegue_a_la_base(node: ast.ClassDef, constructeur: ast.FunctionDef) -> str:
+    """Nom de la base dont le constructeur est REPRIS TEL QUEL, sinon "".
+
+    `def __init__(self, *args, **kwds): super().__init__(*args, **kwds)` : la signature
+    reelle de la classe est celle de sa base, et la classe ne dit rien de ses arguments
+    obligatoires. Mesure sur du code public : `pygments/lexers/data.py` declare
+    `class YamlLexerContext(LexerContext)` ainsi, et `LexerContext(text, pos)` exige deux
+    arguments. La classe etait declaree « ne s'instancie pas sans argument » — une regle
+    FAUSSE par construction, donc une accusation a tort.
+
+    Seule la reprise LITTERALE compte : un appel avec des arguments explicites
+    (`super().__init__("x")`) decrit la construction, il ne la delegue pas.
+    """
+    args = constructeur.args
+    if args.vararg is None and args.kwarg is None:
+        return ""
+    noms_bases = [ast.unparse(b).split(".")[-1] for b in node.bases]
+    for appel in ast.walk(constructeur):
+        if not isinstance(appel, ast.Call):
+            continue
+        cible = ""
+        if (
+            isinstance(appel.func, ast.Attribute)
+            and isinstance(appel.func.value, ast.Call)
+            and isinstance(appel.func.value.func, ast.Name)
+            and appel.func.value.func.id == "super"
+        ):
+            # `super().__init__(...)` : la base suivante dans l'ordre MRO. Sans le
+            # fichier complet on ne peut pas la nommer avec certitude : on prend la
+            # premiere base ecrite, qui est celle des cas reels.
+            cible = noms_bases[0] if noms_bases else ""
+        elif (
+            isinstance(appel.func, ast.Attribute)
+            and isinstance(appel.func.value, ast.Name)
+            and appel.func.value.id in noms_bases
+        ):
+            cible = appel.func.value.id
+        if not cible:
+            continue
+        passe_vararg = any(
+            isinstance(a, ast.Starred)
+            and isinstance(a.value, ast.Name)
+            and args.vararg is not None
+            and a.value.id == args.vararg.arg
+            for a in appel.args
+        )
+        passe_kwarg = any(
+            kw.arg is None
+            and isinstance(kw.value, ast.Name)
+            and args.kwarg is not None
+            and kw.value.id == args.kwarg.arg
+            for kw in appel.keywords
+        )
+        if passe_vararg or passe_kwarg:
+            return cible
+    return ""
+
+
 def _instantiable_without_args(
-    node: ast.ClassDef, classes: dict[str, ast.ClassDef] | None = None
+    node: ast.ClassDef,
+    classes: dict[str, ast.ClassDef] | None = None,
+    *,
+    _vus: frozenset[str] = frozenset(),
 ) -> tuple[bool, str]:
     """L'instanciation sans argument est-elle garantie possible ?
 
@@ -319,10 +380,22 @@ def _instantiable_without_args(
     # Un Protocol ou une classe abstraite n'est PAS instanciable par conception :
     # exiger l'instanciation serait un faux positif (constate sur Critic).
     bases = {ast.unparse(b).split(".")[-1] for b in node.bases}
-    if bases & {"Protocol", "ABC", "ABCMeta"}:
-        return False, f"classe non instanciable par conception ({', '.join(sorted(bases))})"
+    # `metaclass=ABCMeta` est une CLASSE ABSTRAITE sans en avoir l'air : `ABCMeta` n'est pas
+    # une base mais un mot-cle. Mesure sur `anyio` : `AsyncResource(metaclass=ABCMeta)` etait
+    # declare instanciable, et le bac a sable repondait
+    # `TypeError: Can't instantiate abstract class ... with abstract method aclose`.
+    meta = {
+        ast.unparse(kw.value).split(".")[-1]
+        for kw in node.keywords
+        if kw.arg == "metaclass"
+    }
+    if (bases | meta) & {"Protocol", "ABC", "ABCMeta"}:
+        noms = ", ".join(sorted(bases | meta))
+        return False, f"classe non instanciable par conception ({noms})"
+    # `ast.AsyncFunctionDef` est une CLASSE DIFFERENTE de `ast.FunctionDef` : une methode
+    # `async def` abstraite echappait au controle. Mesure sur anyio, deux classes.
     if any(
-        isinstance(item, ast.FunctionDef)
+        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
         and any(
             isinstance(d, ast.Name) and d.id == "abstractmethod"
             or isinstance(d, ast.Attribute) and d.attr == "abstractmethod"
@@ -391,8 +464,28 @@ def _instantiable_without_args(
                 "classe a fabriques, pas un defaut"
             )
 
-    args = constructeurs[next(iter(constructeurs))].args
     nom_constructeur = next(iter(constructeurs))
+    # Un constructeur qui reprend TEL QUEL celui de la base a la signature de la base.
+    # Sans cette verification, `YamlLexerContext.__init__(self, *args, **kwds)` passait
+    # pour « tous les arguments optionnels », alors que `LexerContext` exige `text` et
+    # `pos` : la classe etait declaree fautive a tort (mesure sur pygments).
+    base_reprise = _delegue_a_la_base(node, constructeurs[nom_constructeur])
+    if base_reprise:
+        if base_reprise in _vus:
+            return False, f"constructeur repris de {base_reprise} (heritage circulaire)"
+        base_node = (classes or {}).get(base_reprise)
+        if base_node is None:
+            return False, (
+                f"constructeur repris de {base_reprise} (`*args, **kwds`) : les arguments "
+                "obligatoires de la base sont hors de ce fichier, donc l'instanciation a "
+                "vide n'est pas verifiable ici"
+            )
+        possible, raison = _instantiable_without_args(
+            base_node, classes, _vus=_vus | {node.name}
+        )
+        if not possible:
+            return False, f"constructeur repris de {base_reprise} : {raison}"
+    args = constructeurs[nom_constructeur].args
     positional = list(args.posonlyargs) + list(args.args)
     required_positional = len(positional) - len(args.defaults)
     if required_positional > 1:  # `self`/`cls` est le seul argument tolere sans defaut
@@ -884,6 +977,45 @@ if _jio_runner.failures:
     # et ignore le chemin du module et le message). Si tout passe ainsi, l'exemple est
     # verifie quant au type : c'est une RESERVE, pas une accusation. Si un autre
     # desaccord subsiste, il est decisif et l'echec reste un echec.
+    # --- ORDRE DES CAUSES : du plus precis au plus general ----------------------- #
+    # Chaque reprise ci-dessous est une RAISON de ne pas conclure, et la premiere qui
+    # s'applique est la bonne. L'ordre precedent laissait la reprise `ELLIPSIS` capturer
+    # des cas qui n'ont rien d'abrege (une traceback contient souvent `...`) et masquer
+    # une raison plus juste. Mesure faite sur du code public, deux fois.
+    #
+    # Sixieme cas : l'exemple ouvre une CONNEXION RESEAU. Le bac a sable est FERME —
+    # aucune requete sortante — donc l'echec vient de notre facon de mesurer, jamais du
+    # fichier. Mesure sur `urllib3.connectionpool`, dont l'exemple fait un vrai GET sur
+    # google.com : sans ce cas, une bibliotheque saine passait pour fautive.
+    if _jio_runner.failures and "[JIO-RESEAU]" in _jio_brut:
+        raise AssertionError(
+            "[RESERVE] %d exemple(s) de docstring font un appel RESEAU : le bac a sable "
+            "est ferme (aucune requete sortante), donc l'exemple n'est pas verifiable "
+            "ici — et un audit ne depend jamais du reseau : %s"
+            % (_jio_runner.failures, _jio_tail)
+        )
+
+    if "NameError" in _jio_brut:
+        # L'exemple suppose un objet fourni par l'environnement de test (console,
+        # vi...). On ne peut rien conclure du tout : le code n'a meme pas tourne.
+        raise AssertionError(
+            "[RESERVE] %d exemple(s) de docstring non concluants pour nous "
+            "(l'exemple suppose un objet fourni par l'environnement de test) : %s"
+            % (_jio_runner.failures, _jio_tail)
+        )
+
+    # L'exemple ecrit dans un flux LIE A L'IMPORT. `def f(file=sys.stdout)` capture la
+    # sortie standard d'AVANT le test ; doctest la remplace pendant l'execution, ne voit
+    # rien, et annonce « Got nothing » alors que l'artefact fait exactement ce que sa
+    # docstring promet. Mesure sur `pyparsing.show_best_practices`. On ne peut pas
+    # capturer ce que le code a deja lie : c'est notre facon de mesurer qui est en cause.
+    if _jio_stdout_defaut and "Got nothing" in _jio_brut:
+        raise AssertionError(
+            "[RESERVE] %d exemple(s) de docstring : la sortie attendue passe par un flux "
+            "lie a l'import (`file=sys.stdout` par defaut), que le bac a sable ne peut pas "
+            "capter : %s" % (_jio_runner.failures, _jio_tail)
+        )
+
     if _jio_runner.failures and "Traceback (most recent call last)" in _jio_brut:
         _jio_buf2 = []
         _jio_runner2 = _jio_doc.DocTestRunner(
@@ -921,7 +1053,9 @@ if _jio_runner.failures:
     # On rejoue donc avec `ELLIPSIS` : les parties LITTERALES doivent toujours concorder,
     # seul ce qui est remplace par `...` echappe au controle. Si tout passe ainsi, l'exemple
     # est declare en RESERVE — jamais en succes : ce qui est abrege n'est pas verifie.
-    if _jio_runner.failures:
+    # La reprise ne s'applique QUE si le tampon parle d'abrege : sans cette garde, elle
+    # capturait les cas plus haut (qui contiennent `...` dans une traceback).
+    if _jio_runner.failures and "..." in _jio_brut:
         _jio_buf3 = []
         _jio_runner3 = _jio_doc.DocTestRunner(
             verbose=False, optionflags=_jio_doc.ELLIPSIS | _jio_doc.IGNORE_EXCEPTION_DETAIL
@@ -940,28 +1074,7 @@ if _jio_runner.failures:
                 % (_jio_runner.failures, _jio_tail)
             )
 
-    # Quatrieme cas, meme famille : l'exemple ecrit dans un flux LIE A L'IMPORT.
-    # `def f(file=sys.stdout)` capture la sortie standard d'AVANT le test ; doctest la
-    # remplace pendant l'execution, ne voit rien, et annonce « Got nothing » alors que
-    # l'artefact fait exactement ce que sa docstring promet. Mesure sur
-    # `pyparsing.show_best_practices`. On ne peut pas capturer ce que le code a deja lie :
-    # c'est notre facon de mesurer qui est en cause, donc reserve et non accusation.
-    if _jio_stdout_defaut and "Got nothing" in _jio_brut:
-        raise AssertionError(
-            "[RESERVE] %d exemple(s) de docstring : la sortie attendue passe par un flux "
-            "lie a l'import (`file=sys.stdout` par defaut), que le bac a sable ne peut pas "
-            "capter : %s" % (_jio_runner.failures, _jio_tail)
-        )
-
     _jio_decisif = "Expected:" in _jio_brut and "Got:" in _jio_brut
-    if "NameError" in _jio_brut:
-        # L'exemple suppose un objet fourni par l'environnement de test (console,
-        # vi...). On ne peut rien conclure du tout : le code n'a meme pas tourne.
-        raise AssertionError(
-            "[RESERVE] %d exemple(s) de docstring non concluants pour nous "
-            "(l'exemple suppose un objet fourni par l'environnement de test) : %s"
-            % (_jio_runner.failures, _jio_tail)
-        )
     if "Expected nothing" in _jio_brut and not _jio_decisif:
         # Exemple d'illustration, sans sortie annoncee, et RIEN de decisif a cote :
         # une docstring pedagogique, pas une specification. On ne l'accuse pas.

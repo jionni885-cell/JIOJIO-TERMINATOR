@@ -30,11 +30,12 @@ import json
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+import ast
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
-__all__ = ["LintFinding", "LinterReport", "analyse"]
+__all__ = ["LintFinding", "LinterReport", "analyse", "constat_a_tort"]
 
 #: Jeu de regles « vrais bugs ». Base : le jeu classique des integrations continues
 #: (`E9,F63,F7,F82`, avec `F811` deja inclus dans `F`). On l'a ELARGI a `F` en entier :
@@ -111,6 +112,12 @@ LIMITES_DE_L_ANALYSE: dict[str, str] = {
         "nom peut-etre indefini : l'analyseur n'a pas pu trancher a cause d'un `import *` — "
         "limite de l'outil, pas une preuve de defaut"
     ),
+    "F541": (
+        "f-string sans interpolation : le prefixe `f` ne sert a rien, et RIEN ne casse. "
+        "Mesure sur rich (2 occurrences, verifiees dans l'AST : la chaine n'est faite que "
+        "de parties constantes) : c'est un reste inoffensif. Le doute a garder est celui "
+        "d'une interpolation PERDUE par une refonte — mais ca, l'outil ne le prouve pas"
+    ),
 }
 
 def _version_cible() -> str:
@@ -170,6 +177,177 @@ class LinterReport:
     tool: str = ""       # l'outil reellement utilise, "" si aucun
     note: str = ""       # ce qu'il faut dire a l'utilisateur
     truncated: int = 0   # constats au-dela du plafond
+    #: Constats d'un outil EXTERNE ecartes apres lecture du fichier, avec leur raison.
+    #: Un ecart muet serait pire que le faux positif : l'utilisateur doit pouvoir
+    #: verifier que la lecture a bien eu lieu, et pourquoi.
+    exclusions: list[str] = field(default_factory=list)
+
+
+#: Regles d'un outil externe qu'une LECTURE du fichier peut refuter. Toutes les autres
+#: (F811 compris) restent des preuves : on ne desarme que ce qu'on a instruit.
+_ALLEGATIONS_REFUTABLES = frozenset({"F401", "F811", "F821", "F841"})
+
+
+def _noms_lies(arbre: ast.Module) -> set[str]:
+    """Noms LIES quelque part dans le fichier (affectation, def, classe, import, param.).
+
+    On ne compte pas les noms seulement LUS : c'est ce qui distingue « defini ailleurs »
+    de « jamais defini », la question que pose le constat F821.
+    """
+    noms: set[str] = set()
+
+    def _cibles(cible: ast.expr) -> None:
+        for noeud in ast.walk(cible):
+            if isinstance(noeud, ast.Name):
+                noms.add(noeud.id)
+
+    for node in ast.walk(arbre):
+        if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            cibles = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for cible in cibles:
+                _cibles(cible)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            noms.add(node.name)
+            for arg in getattr(getattr(node, "args", None), "posonlyargs", []):
+                noms.add(arg.arg)
+        elif isinstance(node, ast.Lambda):
+            for arg in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]:
+                noms.add(arg.arg)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                noms.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            _cibles(node.target)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    _cibles(item.optional_vars)
+        elif isinstance(node, ast.ExceptHandler):
+            if node.name:
+                noms.add(node.name)
+        elif isinstance(node, ast.NamedExpr):
+            _cibles(node.target)
+        elif isinstance(node, ast.arguments):
+            for arg in [*node.posonlyargs, *node.args, *node.kwonlyargs, node.vararg, node.kwarg]:
+                if arg is not None:
+                    noms.add(arg.arg)
+    return noms
+
+
+def _corps_de(fonction: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.Module:
+    """Un module SYNTHETIQUE reduit au corps d'une fonction.
+
+    Reutiliser `_noms_lies` (qui attend un `ast.Module`) evite d'ecrire une seconde
+    enumeration des formes de liaison : la duplication est exactement la ou les oublis se
+    logent, et une forme oubliee ferait accuser a tort.
+    """
+    return ast.Module(body=list(fonction.body), type_ignores=[])
+
+
+def _noms_de_la_ligne(arbre: ast.Module, ligne: int) -> set[str]:
+    """Noms LUS a cette ligne precise (le sujet du constat de l'outil)."""
+    return {
+        node.id
+        for node in ast.walk(arbre)
+        if isinstance(node, ast.Name) and getattr(node, "lineno", 0) == ligne
+    }
+
+
+def constat_a_tort(fichier: Path, code: str, ligne: int) -> str:
+    """Raison pour laquelle un constat d'outil externe est FAUX, sinon "".
+
+    Trois familles, toutes mesurees sur du code public. Le principe est constant :
+    l'outil regarde une LIGNE, le fichier se lit comme un TOUT — et c'est la lecture
+    du fichier qui tranche, pas l'autorite de l'outil.
+
+    * **F821 `get_ipython` chez rich** : le nom n'est defini nulle part, et c'est
+      TESTE juste avant (`try: get_ipython` puis `except NameError:`). Le try/except
+      EST la gestion de l'absence : il n'y a rien a corriger.
+    * **F821 `zed`, F841 `foos` chez rich** : le nom est LOCAL a une fonction. Il
+      disparait a la sortie de l'appel, donc ni un code mort ni un nom faussement
+      defini. Pyflakes nommait autrefois `__init__` ; ruff a corrige ce point, la
+      couverture reste necessaire et couvre aussi les autres methodes.
+    * **F811 `wait_for_socket` chez urllib3** : le nom est rebinde depuis une fonction
+      via `global` — le choix d'implementation est REPOUSSE au premier appel, et la
+      premiere definition reste la porte d'entree. Pyflakes y voit une redefinition
+      inutile ; c'est une technique d'implementation, pas un defaut.
+    """
+    if code not in _ALLEGATIONS_REFUTABLES:
+        return ""
+    try:
+        texte = fichier.read_text(encoding="utf-8", errors="replace")
+        arbre = ast.parse(texte)
+    except (OSError, SyntaxError):
+        return ""
+
+    if code == "F821":
+        # (a) le nom est sonde juste avant d'etre utilise : `try: <nom>` / `except NameError`
+        for node in ast.walk(arbre):
+            if not isinstance(node, ast.Try) or not node.body:
+                continue
+            premiere = node.body[0]
+            sonde = premiere.value if isinstance(premiere, ast.Expr) else None
+            if not (isinstance(sonde, ast.Name) and sonde.id not in _noms_lies(arbre)):
+                continue
+            if not any(
+                isinstance(h.type, ast.Name) and h.type.id == "NameError"
+                for h in node.handlers
+            ):
+                continue
+            if node.lineno <= ligne <= (node.end_lineno or node.lineno):
+                return (
+                    f"`{sonde.id}` n'est defini nulle part ET son absence est TESTEE juste "
+                    "avant (`try: <nom>` / `except NameError:`) : c'est la gestion de "
+                    "l'absence, pas un nom oublie"
+                )
+
+    # (c) F811 : redefinition VOLONTAIRE d'un nom global
+    if code == "F811":
+        for node in ast.walk(arbre):
+            if not isinstance(node, ast.Global):
+                continue
+            cibles = [
+                cible
+                for cible in ast.walk(arbre)
+                if isinstance(cible, ast.Assign)
+                and any(
+                    isinstance(t, ast.Name) and t.id in node.names for t in cible.targets
+                )
+            ]
+            if cibles:
+                return (
+                    f"liaison VOLONTAIRE de `{', '.join(node.names)}` depuis une fonction "
+                    "(`global`) : le choix d'implementation est repousse au premier appel, "
+                    "et la premiere definition reste la porte d'entree"
+                )
+
+    # (b) nom LOCAL a une fonction. Le perimetre est etroit, et c'est la mesure qui l'a
+    # fixe : un F821 sur un nom JAMAIS defini reste une preuve (c'est la faute de frappe la
+    # plus frequente du langage), et un F811 entre deux definitions ne doit pas etre avale.
+    #   * F841 : un nom local disparait a la sortie de l'appel — ni code mort, ni nom
+    #     faussement defini. Mesure sur rich (`zed`, `foos`).
+    #   * F821 : seulement si le nom est LIE dans cette fonction (il est donc local, et la
+    #     question de la portee est celle de l'appelant).
+    for node in ast.walk(arbre):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not (node.lineno <= ligne <= (node.end_lineno or node.lineno)):
+            continue
+        if code == "F841":
+            return (
+                f"le nom est LOCAL a `{node.name}` : il disparait a la sortie de l'appel, donc "
+                "il ne peut etre ni un code mort ni un nom faussement defini"
+            )
+        if code == "F821":
+            lies = _noms_lies(_corps_de(node))
+            for sonde in _noms_de_la_ligne(arbre, ligne):
+                if sonde not in lies:
+                    continue
+                return (
+                    f"`{sonde}` est LIE dans `{node.name}` : c'est une variable locale, sa "
+                    "portee est celle de l'appel"
+                )
+    return ""
 
 
 def _ruff_command() -> list[str] | None:
@@ -313,6 +491,32 @@ def analyse(
     else:
         findings = _parse_concise(stdout, tool)
 
+    # --- lecture du fichier : refutation des constats dits par l'outil --------- #
+    # Un constat d'outil externe est une ALLEGATION. Quand la lecture du fichier la
+    # refute (le nom est teste avant usage, il est local a une fonction, il est
+    # rebinde volontairement), l'ecarter est du travail d'audit, pas une complaisance :
+    # garder une alerte fausse detruit la confiance dans tout le rapport.
+    exclusions: list[str] = []
+    retenus: list[LintFinding] = []
+    cache: dict[Path, list[str]] = {}
+    for f in findings:
+        if f.code in _ALLEGATIONS_REFUTABLES:
+            if f.path not in cache:
+                try:
+                    contenu = f.path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    contenu = ""
+                cache[f.path] = contenu.splitlines()
+            if 1 <= f.line <= len(cache[f.path]):
+                raison = constat_a_tort(f.path, f.code, f.line)
+                if raison:
+                    exclusions.append(
+                        f"{f.path}:{f.line} [{f.rule}] {f.message[:80]} — ecarte : {raison}"
+                    )
+                    continue
+        retenus.append(f)
+    findings = retenus
+
     # Ruff renvoie les chemins tels qu'ils lui ont ete donnes (absolus) : on les
     # ramene a la racine scannee pour que le rapport reste aligne avec le reste.
     if root is not None:
@@ -332,4 +536,10 @@ def analyse(
             f"exploitable. {(proc.stderr or '').strip()[:160]}"
         )
     truncated = max(0, len(findings) - MAX_FINDINGS)
-    return LinterReport(findings[:MAX_FINDINGS], tool=tool, note=note, truncated=truncated)
+    return LinterReport(
+        findings[:MAX_FINDINGS],
+        tool=tool,
+        note=note,
+        truncated=truncated,
+        exclusions=exclusions[:MAX_FINDINGS],
+    )

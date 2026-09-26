@@ -210,11 +210,13 @@ def test_import_etoile_est_une_limite_et_non_une_accusation() -> None:
 def test_le_jeu_de_limites_reste_etroit() -> None:
     """Un jeu de limites qui s'elargit transforme l'audit en decor.
 
-    Trois entrees, chacune payee par une mesure sur du code public. Toute regle retiree de
+    Quatre entrees, chacune payee par une mesure sur du code public. Toute regle retiree de
     l'accusation doit l'etre pour un constat precis, jamais pour faire baisser un chiffre :
     ce test est la pour rendre ce choix visible et couteux.
     """
-    assert set(LIMITES_DE_L_ANALYSE) == {"F401", "F403", "F405"}, sorted(LIMITES_DE_L_ANALYSE)
+    assert set(LIMITES_DE_L_ANALYSE) == {"F401", "F403", "F405", "F541"}, sorted(
+        LIMITES_DE_L_ANALYSE
+    )
     # Aucune limite ne doit couvrir les regles qui PROUVENT une rupture.
     for preuve in ("F821", "F811", "F822", "F823", "F701", "F702", "F811"):
         assert preuve not in LIMITES_DE_L_ANALYSE, f"{preuve} ne peut pas etre une limite"
@@ -514,3 +516,324 @@ def test_un_exemple_abrege_par_des_points_n_est_pas_une_specification(
     assert code == 0, "un exemple abrege ne doit pas faire echouer le scan :\n" + sortie[-800:]
     assert "ABREGEE" in sortie, "la limite doit etre SIGNALEE, pas taisee"
     assert "RESERVE(S)" in sortie or "RESERVE" in sortie
+
+
+# --------------------------------------------------------------------------- #
+# 12. Le bac a sable est FERME, et la source s execute COMME un module
+# --------------------------------------------------------------------------- #
+
+
+def test_le_bac_a_sable_refuse_le_reseau() -> None:
+    """Un exemple qui ouvre une connexion ne doit pas produire de verdict.
+
+    Mesure sur `urllib3.connectionpool` : son doctest fait un vrai GET sur google.com. Le
+    bac a sable repond desormais par un refus EXPLICITE (marqueur `[JIO-RESEAU]`), ce qui
+    rend l'echec independant du reseau de la machine — et l'audit, herm tique.
+    """
+    from jio.verify.executable import _AUDIT_AS_MODULE, Sandbox
+
+    programme = _AUDIT_AS_MODULE + (
+        "import socket\n"
+        "try:\n"
+        "    socket.create_connection(('example.com', 80), 2)\n"
+        "except Exception as exc:\n"
+        "    print('REFUS:', type(exc).__name__)\n"
+    )
+    resultat = Sandbox(timeout=30).run_python(programme, tag="reseau")
+    assert resultat.exit_code == 0, resultat.stderr
+    assert "REFUS: JioReseauFerme" in resultat.stdout, resultat.stdout
+
+
+def test_un_exemple_qui_appelle_le_reseau_est_une_reserve(tmp_path) -> None:
+    """L'echec vient de NOTRE bac a sable ferme : c'est une reserve, jamais une accusation."""
+    (tmp_path / "client.py").write_text(
+        "import socket\n"
+        "\n"
+        "\n"
+        "class Service:\n"
+        '    """Un service joignable sur le reseau.\n'
+        "\n"
+        "    >>> Service().teste()\n"
+        "    True\n"
+        '    """\n'
+        "\n"
+        "    def teste(self) -> bool:\n"
+        "        socket.create_connection(('example.com', 80), 2)\n"
+        "        return True\n",
+        encoding="utf-8",
+    )
+    resultat = _pas_de_defaut(tmp_path / "client.py")
+    sorties = (resultat.stderr or "") + (resultat.stdout or "")
+    assert "[JIO-RESEAU]" in sorties or "RESEAU" in sorties, sorties[-400:]
+
+
+def _pas_de_defaut(fichier) -> object:
+    """Audite un fichier et renvoie le temoin le plus parlant (defaut ou reserve)."""
+    from jio.verify.autocheck import derive
+    from jio.verify.executable import ExecutableProver, Sandbox
+
+    source = fichier.read_text(encoding="utf-8")
+    derived = derive(source, path=str(fichier))
+    resultat = ExecutableProver(sandbox=Sandbox(timeout=60)).prove(
+        source, derived.spec, hidden_checks=derived.checks,
+        entrypoint=derived.entrypoint, preamble=derived.preamble,
+    )
+    temoins = list(resultat.hard_failures) + list(resultat.reservations)
+    assert temoins, "aucun temoin : le fichier a ete declare propre sans preuve"
+    return temoins[0]
+
+
+def test_la_source_s_execute_dans_le_module_pas_dans_le_script() -> None:
+    """`sys.modules[__name__].__dict__` doit contenir ce que la source declare.
+
+    Mesure sur `pygments/lexers/__init__.py`, qui RECOPIE son propre dictionnaire de module
+    dans un module de remplacement. La source etait executee dans les globales du script :
+    le dictionnaire du module etait donc VIDE, `del newmod.newmod` levait AttributeError, et
+    la bibliotheque etait declaree fautive quatre fois. Python fait vivre les globales d'un
+    module dans SON dictionnaire — le bac a sable doit faire pareil.
+    """
+    from jio.verify.autocheck import derive
+    from jio.verify.executable import ExecutableProver, Sandbox
+
+    source = (
+        "import sys, types\n"
+        "\n"
+        "\n"
+        "class _automodule(types.ModuleType):\n"
+        "    def __getattr__(self, name):\n"
+        "        return ('lexer', name)\n"
+        "\n"
+        "\n"
+        "def verifie() -> bool:\n"
+        '    """Le dictionnaire du module remplace contient-il ce que la source declare ?\n'
+        "\n"
+        "    >>> verifie()\n"
+        "    True\n"
+        '    """\n'
+        "    import sys as _sys\n"
+        "    return '_automodule' in _sys.modules['__jio_artefact__'].__dict__\n"
+        "\n"
+        "\n"
+        "oldmod = sys.modules[__name__]\n"
+        "newmod = _automodule(__name__)\n"
+        "newmod.__dict__.update(oldmod.__dict__)\n"
+        "sys.modules[__name__] = newmod\n"
+        "del newmod.newmod, newmod.oldmod\n"
+    )
+    derived = derive(source, entrypoint="verifie")
+    resultat = ExecutableProver(sandbox=Sandbox(timeout=60)).prove(
+        source, derived.spec, hidden_checks=derived.checks,
+        entrypoint=derived.entrypoint, preamble=derived.preamble,
+    )
+    assert not resultat.hard_failures, [
+        (w.rule_id, (w.stderr or "")[-200:]) for w in resultat.hard_failures
+    ]
+
+
+def test_un_module_qui_fabrique_ses_noms_est_une_limite(tmp_path) -> None:
+    """`pygments.lexers` publie ses classes a l'execution : « absent » n'est pas prouvable.
+
+    Deux mecanismes sont reconnus : `def __getattr__(name)` au niveau du module (PEP 562) et
+    le remplacement de l'entree du module dans `sys.modules`. Sans cela, l'audit declarait
+    `PrologLexer` absent du module qui le fournit.
+    """
+    from jio.verify.imports import check_project
+
+    fichiers, racine = _projet(tmp_path, {
+        "pkg/__init__.py": "import sys, types\n\n\nclass _auto(types.ModuleType):\n"
+                           "    def __getattr__(self, name):\n        return name\n\n\n"
+                           "newmod = _auto(__name__)\n"
+                           "newmod.__dict__.update(sys.modules[__name__].__dict__)\n"
+                           "sys.modules[__name__] = newmod\n",
+        "pkg/client.py": "from pkg import LexerInconnu\n\nx = LexerInconnu\n",
+    })
+    limites: list[str] = []
+    assert check_project(fichiers, racine, limites=limites) == []
+    assert limites and "fabrique ses noms" in limites[0], limites
+
+
+def test_un_nom_teste_par_try_except_NameError_n_est_pas_oublie(tmp_path) -> None:
+    """Mesure sur `rich` : `try: get_ipython` / `except NameError: return False`.
+
+    Le nom n'est defini nulle part ET son absence est TESTEE juste avant : le try/except EST
+    la gestion de l'absence. Ruff a raison sur la ligne, faux sur le fichier.
+    """
+    from jio.verify.linters import constat_a_tort
+
+    fichier = tmp_path / "console.py"
+    fichier.write_text(
+        "def _is_jupyter() -> bool:\n"
+        "    try:\n"
+        "        get_ipython\n"
+        "    except NameError:\n"
+        "        return False\n"
+        "    return True\n",
+        encoding="utf-8",
+    )
+    raison = constat_a_tort(fichier, "F821", 3)
+    assert "TESTEE" in raison or "testee" in raison, raison
+    # Contre-epreuve : le meme nom SANS le try/except reste une accusation.
+    (tmp_path / "autre.py").write_text("x = get_ipython()\n", encoding="utf-8")
+    assert constat_a_tort(tmp_path / "autre.py", "F821", 1) == ""
+
+
+def test_un_nom_local_a_une_fonction_n_est_pas_un_code_mort(tmp_path) -> None:
+    """Mesure sur `rich` : `zed = {...}` et `foos = [...]` dans une demonstration.
+
+    Un nom local disparait a la sortie de l'appel : il n'est ni un code mort, ni un nom
+    faussement defini. La lecture du fichier refute l'allegation de l'outil.
+    """
+    from jio.verify.linters import constat_a_tort
+
+    fichier = tmp_path / "traceback.py"
+    fichier.write_text(
+        "def demo() -> None:\n"
+        "    garde = True\n"
+        "    zed = {'cle': 1}\n"
+        "    print(garde, zed)\n",
+        encoding="utf-8",
+    )
+    assert "LOCAL" in constat_a_tort(fichier, "F841", 3)
+    # F821 sur un nom LIE dans la fonction : c'est une variable locale, sa portee est celle
+    # de l'appel. La raison differe, la conclusion est la meme : rien a corriger.
+    assert "LIE dans `demo`" in constat_a_tort(fichier, "F821", 3)
+    # Contre-epreuves. 1) Au niveau du module, l'allegation tient.
+    (tmp_path / "module.py").write_text("zed = {'cle': 1}\n", encoding="utf-8")
+    assert constat_a_tort(tmp_path / "module.py", "F841", 1) == ""
+    # 2) Un nom JAMAIS defini dans une fonction reste une preuve : c'est la faute de frappe
+    # la plus frequente du langage, et l'excuser rendrait l'audit aveugle.
+    (tmp_path / "faute.py").write_text(
+        "def f(v):\n    return v + inconnue\n", encoding="utf-8"
+    )
+    assert constat_a_tort(tmp_path / "faute.py", "F821", 2) == ""
+    # 3) Une FONCTION redefinie au niveau du module n'est pas avalee par la portee.
+    (tmp_path / "renomme.py").write_text(
+        "def marche(a):\n    return a\n\n\ndef marche(a):\n    return a * 2\n",
+        encoding="utf-8",
+    )
+    assert constat_a_tort(tmp_path / "renomme.py", "F811", 5) == ""
+
+
+def test_une_redefinition_volontaire_par_global_n_est_pas_un_defaut(tmp_path) -> None:
+    """Mesure sur `urllib3.util.wait` : le choix d'implementation est repousse au 1er appel.
+
+    `global wait_for_socket` puis un rebind conditionnel : pyflakes y voit une redefinition
+    inutile, c'est ici une technique d'implementation, et la premiere definition reste la
+    porte d'entree.
+    """
+    from jio.verify.linters import constat_a_tort
+
+    fichier = tmp_path / "wait.py"
+    fichier.write_text(
+        "def lent(sock):\n    return True\n"
+        "\n"
+        "\n"
+        "def rapide(sock):\n    return True\n"
+        "\n"
+        "\n"
+        "def wait_for_socket(sock):\n"
+        "    global wait_for_socket\n"
+        "    wait_for_socket = rapide\n"
+        "    return wait_for_socket(sock)\n",
+        encoding="utf-8",
+    )
+    raison = constat_a_tort(fichier, "F811", 9)
+    assert "global" in raison and "premier appel" in raison, raison
+
+
+def test_un_constructeur_repris_de_la_base_est_une_limite() -> None:
+    """Mesure sur `pygments/lexers/data.py` : `def __init__(self, *args, **kwds)` delegue.
+
+    La classe ne dit rien de ses arguments obligatoires : la signature reelle est celle de
+    `LexerContext(text, pos)`. La declarer « instanciable a vide » etait une regle FAUSSE par
+    construction, donc une accusation a tort.
+    """
+    from jio.verify.autocheck import _instantiable_without_args
+
+    source = (
+        "class Base:\n"
+        "    def __init__(self, text, pos):\n"
+        "        self.text = text\n"
+        "\n"
+        "\n"
+        "class Enfant(Base):\n"
+        "    def __init__(self, *args, **kwds):\n"
+        "        super().__init__(*args, **kwds)\n"
+    )
+    import ast as _ast
+
+    classes = {
+        n.name: n for n in _ast.parse(source).body if isinstance(n, _ast.ClassDef)
+    }
+    possible, raison = _instantiable_without_args(classes["Enfant"], classes)
+    assert not possible and "repris de Base" in raison, raison
+    # Contre-epreuve : une base qui, elle, s'instancie a vide ne limite rien.
+    source2 = (
+        "class Base:\n"
+        "    def __init__(self, text=None):\n"
+        "        self.text = text\n"
+        "\n"
+        "\n"
+        "class Enfant(Base):\n"
+        "    def __init__(self, *args, **kwds):\n"
+        "        super().__init__(*args, **kwds)\n"
+    )
+    classes2 = {
+        n.name: n for n in _ast.parse(source2).body if isinstance(n, _ast.ClassDef)
+    }
+    assert _instantiable_without_args(classes2["Enfant"], classes2)[0] is True
+
+
+def test_une_classe_abstraite_par_metaclass_ou_async_n_est_pas_instanciee() -> None:
+    """Mesure sur `anyio` : `metaclass=ABCMeta` et `async def` abstraites.
+
+    `ABCMeta` est un mot-cle, pas une base ; et `ast.AsyncFunctionDef` est une classe
+    DIFFERENTE de `ast.FunctionDef`. Les deux echappaient au controle : le bac a sable
+    repondait `TypeError: Can't instantiate abstract class ... with abstract method aclose`,
+    et la bibliotheque etait declaree fautive deux fois.
+    """
+    import ast as _ast
+
+    from jio.verify.autocheck import _instantiable_without_args
+
+    source = (
+        "from abc import ABCMeta, abstractmethod\n"
+        "\n"
+        "\n"
+        "class Ressource(metaclass=ABCMeta):\n"
+        "    @abstractmethod\n"
+        "    async def aclose(self) -> None:\n"
+        "        ...\n"
+    )
+    classes = {
+        n.name: n for n in _ast.parse(source).body if isinstance(n, _ast.ClassDef)
+    }
+    possible, raison = _instantiable_without_args(classes["Ressource"], classes)
+    assert not possible and "non instanciable par conception" in raison, raison
+
+
+def test_un_import_absolu_non_installe_ne_resout_pas_chez_le_voisin(tmp_path) -> None:
+    """Mesure sur `anyio` : `trio` n'est pas installe, et `trio.abc` se resolvait sur
+    `anyio.abc` par le suffixe `abc` — douze accusations fausses.
+
+    Un nom absolu dont le premier segment n'est pas un paquet ANCETRE du fichier designe un
+    paquet externe : on ne cherche pas « au plus proche » dans le projet.
+    """
+    from jio.verify.imports import check_project
+
+    fichiers, racine = _projet(tmp_path, {
+        "pkg/__init__.py": "",
+        "pkg/abc.py": "class Flux:\n    pass\n",
+        "pkg/sous/__init__.py": "",
+        "pkg/sous/client.py": (
+            "from pkg.abc import Flux\n"
+            "import trio\n"
+            "\n"
+            "\n"
+            "def f() -> None:\n"
+            "    trio.abc.Instrument()\n"
+            "    trio.lowlevel.start_guest_run()\n"
+            "    Flux()\n"
+        ),
+    })
+    assert check_project(fichiers, racine) == []

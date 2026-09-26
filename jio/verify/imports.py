@@ -61,6 +61,12 @@ class ModuleInfo:
     #: ne peut pas les suivre. Accuser un consommateur parce que le nom est introuvable
     #: dans un module qui importe tout serait accuser l'analyseur, pas le code.
     etoile: bool = False
+    #: Le module fabrique ses noms a l'execution : `def __getattr__(name)` (PEP 562) ou
+    #: remplacement de son entree dans `sys.modules` (`sys.modules[__name__] = newmod`).
+    #: `pygments.lexers` publie ainsi ses 500+ classes de lexers : aucune n'est ecrite
+    #: dans le fichier, toutes existent a l'import. Mesure sur du code public : le nom
+    #: `PrologLexer` etait declare absent du module qui le fournit.
+    dynamique: bool = False
 
 
 def _toplevel_names(tree: ast.Module) -> set[str]:
@@ -198,8 +204,47 @@ def analyse(path: Path, root: Path) -> ModuleInfo:
     )
     return ModuleInfo(
         path, dotted, package, _toplevel_names(tree), imports, relative, attributes,
-        etoile=etoile,
+        etoile=etoile, dynamique=_fabrique_ses_noms(tree),
     )
+
+
+def _fabrique_ses_noms(tree: ast.Module) -> bool:
+    """Le module peut-il exposer des noms ABSENTS de son code ?
+
+    Deux mecanismes, tous deux reels et mesures sur du code public :
+
+    * `def __getattr__(name)` au niveau du module (PEP 562) : Python l'appelle pour tout
+      attribut introuvable ;
+    * le remplacement de l'entree du module dans `sys.modules`
+      (`sys.modules[__name__] = newmod`), ou `newmod` est une instance d'une sous-classe
+      de `ModuleType` — c'est ainsi que `pygments.lexers` publie ses centaines de classes
+      de lexers sans en ecrire une seule.
+
+    Dans les deux cas, « le nom n'est pas declare ici » ne prouve RIEN : le module peut
+    le fournir a l'execution. Un doute qui ne peut pas etre leve se declare, il n'accuse
+    pas.
+    """
+    for node in tree.body:  # niveau MODULE uniquement : une methode __getattr__ de
+        if isinstance(node, ast.FunctionDef) and node.name == "__getattr__":
+            return True  # classe n'a rien a voir avec les attributs du module
+    for node in ast.walk(tree):
+        cibles: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            cibles = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            cibles = [node.target]
+        for cible in cibles:
+            if (
+                isinstance(cible, ast.Subscript)
+                and isinstance(cible.value, ast.Attribute)
+                and cible.value.attr == "modules"
+                and isinstance(cible.value.value, ast.Name)
+                and cible.value.value.id in {"sys", "_sys"}
+                and isinstance(cible.slice, ast.Name)
+                and cible.slice.id == "__name__"
+            ):
+                return True
+    return False
 
 
 def _index(infos: list[ModuleInfo]) -> dict[str, ModuleInfo]:
@@ -318,11 +363,31 @@ def _est_stdlib(module: str) -> bool:
     return bool(_STDLIB) and module.split(".")[0] in _STDLIB
 
 
-def check_project(paths: list[Path], root: Path) -> list[ImportProblem]:
-    """Verifie que chaque nom importe existe bien dans le module cible du projet."""
+def check_project(
+    paths: list[Path], root: Path, *, limites: list[str] | None = None
+) -> list[ImportProblem]:
+    """Verifie que chaque nom importe existe bien dans le module cible du projet.
+
+    ``limites`` recoit les cas ou l'analyse ne peut PAS conclure (module qui fabrique ses
+    noms a l'execution) : ils sont declares a l'appelant au lieu de disparaitre. Un audit
+    qui tait ce qu'il n'a pas pu verifier se presente comme complet sans l'etre.
+    """
     infos = [analyse(p, root) for p in paths]
     table = _index(infos)
     problems: list[ImportProblem] = []
+    declarees: set[str] = set()
+
+    def _limite(target: ModuleInfo, module: str) -> None:
+        """Note UNE fois par module dynamique : le doute porte sur le module, pas sur
+        chacun de ses centaines de consommateurs."""
+        if limites is None or target.dotted in declarees:
+            return
+        declarees.add(target.dotted)
+        limites.append(
+            f"`{module}` fabrique ses noms a l'execution (__getattr__ de module ou "
+            f"remplacement dans sys.modules) : les noms importes depuis ce module ne sont "
+            f"pas verifiables ici ({target.path.name}). Ce n'est pas un defaut du fichier."
+        )
     # Prefixes qu'un fichier peut abandonner dans un import absolu : les noms des paquets
     # ancetres, lus sur le disque (voir `_espaces_d_import`). C'est le SEUL ensemble
     # accepte (voir `_resolve`).
@@ -360,12 +425,14 @@ def check_project(paths: list[Path], root: Path) -> list[ImportProblem]:
             for name in names:
                 if name == "*" or name in target.defines:
                     continue
-                if target.etoile:
+                if target.etoile or target.dynamique:
                     # `from .helpers import X` ou helpers fait `from .core import *` :
                     # X existe a l'execution mais reste invisible ici. Mesure sur du code
                     # public : pyparsing accusait `DelimitedList` et `ParseException`, deux
                     # symboles bien presents (verifie a l'import). Le nom peut venir de
                     # l'etoile : on ne peut pas conclure, donc on n'accuse pas.
+                    if target.dynamique:
+                        _limite(target, module)
                     continue
                 # `from pkg import a` ou `a` est le SOUS-MODULE pkg/a.py : forme
                 # parfaitement valide en Python, et courante dans le code reel.
@@ -404,7 +471,9 @@ def check_project(paths: list[Path], root: Path) -> list[ImportProblem]:
             for name in names:
                 if name == "*" or name in target.defines:
                     continue
-                if target.etoile:
+                if target.etoile or target.dynamique:
+                    if target.dynamique:
+                        _limite(target, module)
                     continue  # voir le commentaire des imports absolus
                 if _resolve(f"{wanted}.{name}", table) is not None:
                     continue
@@ -417,14 +486,25 @@ def check_project(paths: list[Path], root: Path) -> list[ImportProblem]:
 
         # Usages par attribut : `a.helper()` avec `a` importe du projet.
         for chain, line in info.attributes:
-            problem = _check_attribute(info, chain, table)
+            module_vise = chain.split(".")[0]
+            cible = _resolve(module_vise, table, absolu=True, espaces=_prefixes(info))
+            if cible is not None and cible.dynamique:
+                _limite(cible, module_vise)
+                continue
+            problem = _check_attribute(info, chain, table, espaces=_prefixes(info))
             if problem is not None:
                 problems.append(ImportProblem(info.path, line, problem))
 
     return problems
 
 
-def _check_attribute(info: ModuleInfo, chain: str, table: dict[str, ModuleInfo]) -> str | None:
+def _check_attribute(
+    info: ModuleInfo,
+    chain: str,
+    table: dict[str, ModuleInfo],
+    *,
+    espaces: frozenset[str] = frozenset(),
+) -> str | None:
     """Verifie qu'un attribut utilise existe bien dans le module d'origine.
 
     On cherche le plus long prefixe qui designe un module DU PROJET ; si aucun
@@ -441,9 +521,25 @@ def _check_attribute(info: ModuleInfo, chain: str, table: dict[str, ModuleInfo])
             # `click/types.py`). Chercher dans l'homonyme local accusait des appels
             # parfaitement valides — mesure sur cinq paquets publies.
             return None
-        target = _resolve(module, table)
+        # Meme discipline que pour les imports : un nom ABSOLU ne se resout par suffixe
+        # que dans les paquets ancetres du fichier. Sans cela, `trio.abc.Instrument`
+        # (trio n'est pas installe) se resolvait sur le `anyio.abc` local — suffixe `abc` —
+        # et anyio etait accuse douze fois d'appeler un attribut inexistant. Mesure faite
+        # sur du code public, apres les memes douze alertes sur `trio.lowlevel`.
+        target = _resolve(module, table, absolu=True, espaces=espaces)
         if target is None and info.package:
-            target = _resolve(f"{info.package}.{module}", table)
+            # Repli : le nom est celui d'un module du paquet DU FICHIER (`from pkg import a`
+            # puis `a.helper()`). Ici pas de resolution par suffixe : chercher « au plus
+            # proche » ramenait `trio.abc` vers le `anyio.abc` local et accusait une
+            # bibliotheque saine douze fois. Le nom doit correspondre EXACTEMENT, ou
+            # designer un sous-module de l'exact.
+            voulu = f"{info.package}.{module}"
+            cible = table.get(voulu)
+            if cible is None:
+                prefixe = voulu + "."
+                sous = [i for n, i in table.items() if n.startswith(prefixe)]
+                cible = sous[0] if len(sous) == 1 else None
+            target = cible
         if target is None or not target.parses:
             continue
         if target.path == info.path:

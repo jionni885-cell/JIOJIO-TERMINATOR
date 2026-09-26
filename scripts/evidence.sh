@@ -52,8 +52,11 @@ titre() {
 }
 
 # Sauter est permis ; le taire ne l'est pas.
+#: Une raison absente ne doit pas faire PLANTER la preuve : `set -u` transformait un appel
+#: incomplet en arret brutal, et la preuve mourait la ou elle devait simplement dire qu'elle
+#: sautait. Le defaut etait reel : l'appel de l'etape 24 ne passait qu'un argument.
 sauter() {
-    printf '\n\033[1m== %s\033[0m  (SAUTEE : %s)\n' "$1" "$2"
+    printf '\n\033[1m== %s\033[0m  (SAUTEE : %s)\n' "$1" "${2:-raison non precisee}"
     ETAPES_SAUTEES=$((ETAPES_SAUTEES + 1))
 }
 
@@ -943,19 +946,25 @@ titre "24. La mesure sur du code public : combien de faux positifs ?"
 # rapport ENTIER, y compris ses vraies trouvailles. Le seul juge est du code ecrit par
 # d'autres. Les paquets ne sont PAS installes par la preuve : sans reseau, l'etape le DIT
 # au lieu de faire semblant.
+# LA liste, une seule : la garde et la mesure lisent le meme tableau. Deux listes, deux
+# verites — et c'est exactement ce qui est arrive (4 paquets verifies, 18 mesures).
+PAQUETS_MESURE=(
+    click packaging pyparsing attrs jinja2 tqdm tabulate wcwidth idna
+    more-itertools filelock platformdirs rich httpx urllib3 requests pygments
+    tomlkit anyio sniffio
+)
 PAQUETS_PUBLICS=0
-for paquet in click packaging pyparsing attrs; do
+for paquet in "${PAQUETS_MESURE[@]}"; do
     if "$PYTHON" -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('$paquet') else 1)" 2>/dev/null; then
         PAQUETS_PUBLICS=$((PAQUETS_PUBLICS + 1))
     fi
 done
 
 if [ "$PAQUETS_PUBLICS" -lt 2 ]; then
-    sauter "moins de deux paquets publics installes (reseau non requis pour la preuve)"
+    sauter "24. La mesure sur du code public" \
+        "moins de deux paquets publics installes (reseau non requis pour la preuve)"
 else
-    SORTIE_MESURE="$(bash "$RACINE/scripts/mesure-code-public.sh" \
-        jinja2 tqdm tabulate wcwidth idna more_itertools filelock platformdirs \
-        click packaging pyparsing attrs 2>&1)"
+    SORTIE_MESURE="$(bash "$RACINE/scripts/mesure-code-public.sh" "${PAQUETS_MESURE[@]}" 2>&1)"
     printf '%s\n' "$SORTIE_MESURE" | sed -n '/MESURE/,/total/p' | head -12
 
     # Le controle du controle : les formes REELLES qui accusaient a tort sont verifiees une
@@ -1014,6 +1023,30 @@ PYEOF
             MESSAGE="$("$PYTHON" -c "import tqdm._utils" 2>&1 | tail -1)"
             echo "    defaut REEL confirme : $MESSAGE"
             echo "      (jio scan l'a vu en lisant les imports, sans jamais executer le module)"
+        fi
+
+        # Deuxieme famille de constats REELS sur ce corpus : des docstrings qui ne concordent
+        # plus avec le code. La preuve n'est pas notre outil — c'est `doctest` NU, qui echoue
+        # sur les memes exemples. Un audit ne peut pas etre juge par lui-meme.
+        if "$PYTHON" -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('tomlkit') else 1)" 2>/dev/null; then
+            ECHECS_DOCTEST="$("$PYTHON" - <<'PYDOCTEST'
+import doctest, io
+import tomlkit.api as api
+runner = doctest.DocTestRunner(verbose=False)
+tampon = io.StringIO()
+for nom in ("table", "aot", "key", "key_value", "value"):
+    fonction = getattr(api, nom, None)
+    if fonction is None:
+        continue
+    for test in doctest.DocTestFinder().find(fonction, name=nom):
+        if test.examples:
+            runner.run(test, out=tampon.write)
+print(runner.failures)
+PYDOCTEST
+)"
+            echo "    doctest NU sur tomlkit.api : $ECHECS_DOCTEST exemple(s) en echec"
+            echo "      -> les constats de tomlkit ne viennent pas de notre mesure : le doctest"
+            echo "         de la bibliotheque echoue tout seul (docstrings non mises a jour)."
         fi
     else
         echo "    tqdm absent : la trouvaille reelle n'est pas re-verifiee ici"

@@ -206,12 +206,72 @@ _AUDIT_AS_MODULE = (
     '_jio_module = _jio_types.ModuleType("__jio_artefact__")\n'
     '_jio_sys.modules["__jio_artefact__"] = _jio_module\n'
     '__name__ = "__jio_artefact__"\n'
+    '# Le TYPE de l\'exception non rattrapee, ecrit AVANT le traceback habituel (qui\n'
+    '# reste intact). Un traceback n\'imprime que le nom de la classe : `PilNotAvailable`\n'
+    "# herite d'`ImportError` et signale une dependance absente, mais rien dans le texte\n"
+    "# ne le disait — la bibliotheque etait declaree fautive. La chaine d'heritage est\n"
+    '# un fait.\n'
+    'def _jio_hook(_jio_t, _jio_v, _jio_tb):\n'
+    '    try:\n'
+    '        _jio_noms = " <- ".join(c.__name__ for c in type(_jio_v).__mro__[:6])\n'
+    '    except Exception:\n'
+    '        _jio_noms = type(_jio_v).__name__\n'
+    '    _jio_sys.stderr.write("[JIO-TYPE] " + _jio_noms + "\\n")\n'
+    '    _jio_sys.__excepthook__(_jio_t, _jio_v, _jio_tb)\n'
+    '_jio_sys.excepthook = _jio_hook\n'
+    '# --- Bac a sable FERME : aucune connexion sortante. ---\n'
+    '#\n'
+    '# Un audit ne depend jamais du reseau : un exemple qui appelle une API ne dit rien du\n'
+    "# code, et un depot hostile pourrait s'en servir pour exfiltrer ce qu il lit. Mesure\n"
+    '# sur du code public : le doctest de `urllib3.connectionpool` fait un vrai GET sur\n'
+    '# google.com, et echouait donc pour une raison qui n appartient pas au fichier. Le\n'
+    '# refus est EXPLICITE (marqueur lisible dans le rapport) : la limite se declare au\n'
+    '# lieu de produire un verdict sur l environnement.\n'
+    'class JioReseauFerme(RuntimeError):\n'
+    '    """Le bac a sable est ferme : aucune connexion sortante."""\n'
+    'def _jio_refuse_le_reseau(*_a, **_k):\n'
+    '    raise JioReseauFerme(\n'
+    '        "[JIO-RESEAU] connexion reseau refusee : le bac a sable est ferme "\n'
+    '        "(aucune requete sortante). Cet exemple ne peut pas etre verifie ici, et un "\n'
+    '        "audit ne depend jamais du reseau."\n'
+    '    )\n'
+    'import socket as _jio_socket\n'
+    '_jio_socket.create_connection = _jio_refuse_le_reseau\n'
+    '_jio_socket.getaddrinfo = _jio_refuse_le_reseau\n'
+    '_jio_cnx = getattr(_jio_socket.socket, "connect", None)\n'
+    'if _jio_cnx is not None:\n'
+    '    _jio_socket.socket.connect = _jio_refuse_le_reseau\n'
+    '_jio_cnx_ex = getattr(_jio_socket.socket, "connect_ex", None)\n'
+    'if _jio_cnx_ex is not None:\n'
+    '    _jio_socket.socket.connect_ex = _jio_refuse_le_reseau\n'
 )
 
-#: A executer JUSTE APRES la source : le module declare ci-dessus recoit enfin les
-#: noms de l'artefact. Sans cette synchronisation, `typing.get_type_hints` et les
-#: dataclasses resolvent `cls.__module__` vers un module vide et echouent.
-_SYNC_MODULE = "_jio_module.__dict__.update(globals())\n"
+#: Preparation du module avant d'y executer la source : Python fait vivre les globales
+#: d'un module dans SON dictionnaire (`module.__dict__`). Un fichier qui lit
+#: `sys.modules[__name__].__dict__` — `pygments/lexers/__init__.py` le fait et se
+#: recopie dedans — voyait sinon un dictionnaire VIDE, et l'audit declarait la
+#: bibliotheque fautive. `__file__` et `__package__` viennent du script (le preambule
+#: peut les avoir poses) pour que les chemins relatifs continuent de resoudre.
+_PREPARE_MODULE = (
+    '_jio_module.__dict__["__file__"] = globals().get("__file__") or "<artefact>"\n'
+    '_jio_module.__dict__["__package__"] = globals().get("__package__") or ""\n'
+)
+
+#: La source est executee DANS le dictionnaire du module, pas dans celui du script.
+_EXEC_ARTEFACT = (
+    "exec(compile(_jio_source, '<artefact>', 'exec'), _jio_module.__dict__)\n"
+)
+
+#: A executer JUSTE APRES la source : le script de controle voit les noms de l'artefact.
+#: Sans cette synchronisation, `typing.get_type_hints` et les dataclasses resolvent
+#: `cls.__module__` vers un module vide et echouent. `__name__` est restaure : le script
+#: n'est pas le module, et un module qui remplace sa propre entree dans `sys.modules`
+#: (`sys.modules[__name__] = newmod`) ne doit pas renommer le controle.
+_SYNC_MODULE = (
+    "_jio_nom_du_script = globals()['__name__']\n"
+    "globals().update(_jio_module.__dict__)\n"
+    "globals()['__name__'] = _jio_nom_du_script\n"
+)
 
 
 @dataclass
@@ -316,31 +376,25 @@ class ExecutableProver:
             _jio_rule = {rule.id!r}
             """
         )
-        if preamble:
-            # Le preambule doit s'executer AVANT la source (imports relatifs,
-            # chemins). Or une ligne `from __future__ import ...` doit rester la
-            # premiere instruction de SON unite de compilation : la coller
-            # derriere le preambule provoque un SyntaxError et le verificateur
-            # accuserait l'artefact a tort (faux positif constate).
-            # On compile donc la source separement, via exec(), ce qui preserve
-            # a la fois ses imports `__future__` et ses numeros de ligne.
-            program = (
-                _AUDIT_AS_MODULE
-                + preamble
-                + "_jio_source = "
-                + repr(source)
-                + "\n"
-                + "exec(compile(_jio_source, '<artefact>', 'exec'), globals())\n"
-                + _SYNC_MODULE
-                + head
-                + "\n"
-                + textwrap.dedent(check_src)
-            )
-        else:
-            program = (
-                _AUDIT_AS_MODULE + source + "\n\n" + _SYNC_MODULE + head + "\n"
-                + textwrap.dedent(check_src)
-            )
+        # Le preambule doit s'executer AVANT la source (imports relatifs, chemins). Or
+        # une ligne `from __future__ import ...` doit rester la premiere instruction de
+        # SON unite de compilation : coller la source derriere autre chose provoque un
+        # SyntaxError et le verificateur accuserait l'artefact a tort (faux positif
+        # constate). La source est donc compilee SEPAREMENT, via exec() — ce qui
+        # preserve ses imports `__future__` et ses numeros de ligne.
+        program = (
+            _AUDIT_AS_MODULE
+            + preamble
+            + "_jio_source = "
+            + repr(source)
+            + "\n"
+            + _PREPARE_MODULE
+            + _EXEC_ARTEFACT
+            + _SYNC_MODULE
+            + head
+            + "\n"
+            + textwrap.dedent(check_src)
+        )
         res = self.sandbox.run_python(program, tag=f"rule-{rule.id}")
         detail = _extract_assertion(res.stderr)
         return Witness(
