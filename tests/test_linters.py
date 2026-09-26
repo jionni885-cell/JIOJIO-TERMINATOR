@@ -143,6 +143,29 @@ def test_un_code_inconnu_reste_affiche_brut() -> None:
     assert LintFinding(Path("a.py"), 1, "ruff:XYZ999", "bizarre").label == "bizarre"
 
 
+def test_la_table_francaise_est_bien_utilisee_et_les_familles_couvertes() -> None:
+    """Mesure par mutation : cette table pouvait devenir VIDE sans qu'aucun test ne bronche.
+
+    `jio mutants` a montre deux mutants survivants ici — la recherche dans la table et la
+    famille de prefixes. Un constat explique en francais est une promesse d'interface : si
+    la table se vide, l'utilisateur recoit du texte anglais brut sans que rien ne casse.
+    """
+    # (a) la table elle-meme : chaque code connu doit rendre un texte NON vide,
+    assert plain_french("F401") and plain_french("F821") and plain_french("F811")
+    assert "nom non defini" in plain_french("F821")
+    assert "import inutilise" in plain_french("F401")
+    # (b) la famille de prefixes : un code qui n'est PAS dans la table mais dont la famille
+    #     est connue doit quand meme etre explique — c'est la branche que rien ne testait.
+    #     Les trois familles sont couvertes, et chaque sonde est un code ABSENT de la table
+    #     (`E999` et `F702` y sont : les prendre pour sonde ne testait pas la branche).
+    assert plain_french("F824") == "nom non resolu a l'execution"
+    assert plain_french("F703") == "instruction hors contexte"
+    assert plain_french("E902") == "erreur de syntaxe"
+    # (c) et un code hors famille reste brut, jamais invente.
+    assert plain_french("F841") == "" or "jamais lue" in plain_french("F841")
+    assert plain_french("XYZ999") == ""
+
+
 def test_le_plafond_evite_de_noyer_le_rapport(tmp_path: Path) -> None:
     """Un fichier peut produire des centaines de constats : le rapport doit rester lisible."""
     source = "\n".join(f"valeur_{i} = inconnu_{i}" for i in range(MAX_FINDINGS + 20))

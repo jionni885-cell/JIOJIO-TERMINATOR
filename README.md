@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 695 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 708 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -77,6 +77,8 @@ python -m jio mcp --list                 # outils exposés via MCP
 python -m jio trust "<objectif>"         # combien de vérification dépenser (bandit UCB1)
 python -m jio memory --recall "<texte>"  # ce que le système a déjà payé comme erreurs
 python -m jio learn --skill 0.15         # l'auto-amélioration paie-t-elle ? (protocole A/B/C)
+python -m jio mutants                    # NOS tests attrapent-ils NOS erreurs ? (mutation)
+python -m jio scan jio                   # JIO s'audite lui-même : 0 problème attendu
 ```
 
 Installation dans vos outils (ne copie que des fichiers texte, rien d'autre) :
@@ -1917,6 +1919,55 @@ plus général**, et chaque reprise n'est tentée que si le tampon parle de sa c
 
 Une exclusion **non dite** est un audit partiel présenté comme complet : les listes `hors
 audit`, `limites`, `reserves` et `ecartes` voyagent avec chaque rapport, avec leur raison.
+## Nos tests attrapent-ils nos erreurs ? `jio mutants`
+
+Un test qui ne peut pas échouer ne tient rien. Le corpus public mesure l'outil sur du code
+écrit par d'autres ; `jio mutants` mesure **l'inverse** : la suite de tests de ce dépôt
+suffit-elle à détecter une erreur introduite dans son propre code ?
+
+Méthode : on mute le dépôt — comparaisons, bornes, booléens, retours anticipés — dans une
+**copie de travail** (rien n'est écrit dans le dépôt), puis on relance les tests qui visent le
+fichier muté. Un mutant qui **survit** est une ligne qu'aucun test ne protège. Ce n'est pas une
+accusation contre le code : c'est une **preuve manquante**, et le rapport le dit ainsi.
+
+```console
+$ python -m jio mutants --budget 1 --plafond-tests 4
+  SCORE DE MUTATION DE LA SUITE  ·  23/52 mutants tues  (44%)  ·  245 s
+    Lecture : un mutant SURVIVANT est une ligne du depot qu'aucun test ne protege.
+    SURVIVANT  jio/audit/blame.py  [constante 0 -> 1]
+    ...
+    par famille : autre 1/2 · booleen 1/3 · comparaison 2/2 · constante 0/3
+```
+
+Le premier passage a mesuré **44 %** sur tout `jio/`. Sur la logique d'audit (bissection,
+consensus, oscillation, résolution d'imports), il est passé de **40 % à 83 %**, puis à
+**100 %** — chaque survivant est devenu un test avec sa raison :
+
+| Survivant mesuré | Ce que le test ajouté vérifie |
+|---|---|
+| `frozen=True` → `False` sur deux enregistrements | `FrozenInstanceError` : ces traces servent de clés, une mutation en place rendrait un historique faux |
+| `if self.length <= 0` → `<= 1` (bissection) | taille 0 rend `None`, taille 1 rend `0` : les deux bornes de la recherche |
+| `errors: int = 0` → `1` (tour de boucle) | un tour sans erreur dit **zéro**, sinon la détection d'oscillation lit un état faux |
+| `effective_panel: int = 0` → `1` | un panel non calculé ne peut pas se déclarer décorrélé — le champ existe pour rendre cette faute **visible** |
+| table française vidée, famille de préfixes vidée | chaque famille de constat est expliquée, et un code inconnu reste brut |
+
+Trois détails qui font la différence entre une mesure et un chiffre :
+
+* **le score vide vaut 0, jamais 1** : zéro mutant mesuré est zéro preuve (un test l'exige) ;
+* **la famille est lue sur l'étiquette** : un score bas fait de plafonds (`5000 → 5001`) n'a pas
+  la même signification qu'un score bas fait de comparaisons ; le rapport donne les deux ;
+* **la sélection des tests est une heuristique DÉCLARÉE** — les fichiers de test qui
+  mentionnent le module visé, **classés par pertinence** (un test qui l'importe passe avant un
+  test qui cite son nom en passant), et `--tout` lance la suite entière pour lever le doute.
+  Les deux limites de cette heuristique ont été trouvées en la mesurant, pas en y pensant : un
+  seuil de taille caché (`> 200 octets`) faisait disparaître la mesure — une exclusion muette,
+  exactement ce que ce dépôt s'interdit — et l'ordre purement alphabétique laissait survivre un
+  mutant parce que le fichier de test qui le tuait arrivait **cinquième** dans la liste.
+
+La logique des garde-fous est elle-même dérivée de cette mesure : l'étape 25 de
+`scripts/evidence.sh` rejoue la mutation sur la logique d'audit, et `jio mutants` sort en **1**
+tant qu'un survivant subsiste.
+
 ## Toutes les commandes répondent, et c'est testé
 
 Un utilisateur n'utilise pas « le projet » : il utilise **une** commande, un jour, dans un

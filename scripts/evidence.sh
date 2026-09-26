@@ -1053,6 +1053,36 @@ PYDOCTEST
     fi
 fi
 
+titre "25. La suite attrape-t-elle ses propres mutations ?"
+
+# Une loi qui n'est pas testee n'est pas une loi. On MUTE le depot dans une copie de travail
+# et on relance les tests qui visent le fichier mute : un mutant qui SURVIT est une ligne
+# qu'aucun test ne protege. La selection est volontairement courte (fichiers de la logique
+# d'audit, un mutant par fichier) : le but de cette etape est de prouver que l'outil
+# fonctionne et de donner un chiffre VERIFIABLE, pas d'epuiser la mesure — `jio mutants`
+# sans argument le fait sur tout le depot, et l'etape 24 comme cette etape-ci rejouent ce
+# qu'elles affirment.
+MUTANTS_CIBLES="jio/audit/blame.py,jio/audit/oscillation.py,jio/audit/consensus.py,jio/verify/imports.py"
+if [ -d tests ]; then
+    # `jio mutants` sort en 1 tant qu'un survivant subsiste : c'est une INFORMATION, pas une
+    # panne de la preuve. Sans le `|| true`, `set -e` arrete le script ICI et l'etape devient
+    # muette — defaut constate en la lancant.
+    SORTIE_MUTANTS="$("$PYTHON" -m jio mutants --budget 1 --plafond-tests 4 --timeout 200 \
+        --fichiers "$MUTANTS_CIBLES" 2>&1)" || true
+    printf '%s\n' "$SORTIE_MUTANTS" | sed -n '/SCORE DE MUTATION/,/par famille/p'
+    # La ligne LISTANT un survivant commence par quatre espaces et le mot, suivis du fichier.
+    # Chercher le mot seul attrapait l'explication (« un mutant SURVIVANT est une ligne... »)
+    # et annoncait des survivants la ou il n'y en avait aucun : la preuve se trompait ELLE-MEME
+    # en cherchant un mot au lieu d'une forme.
+    if printf '%s\n' "$SORTIE_MUTANTS" | grep -qE "^    SURVIVANT  "; then
+        echo "    -> des lignes du depot restent sans preuve : voir la liste ci-dessus."
+        echo "       Chacune demande un test, ou une raison ECRITE de ne pas en avoir."
+    fi
+else
+    sauter "25. La suite attrape-t-elle ses propres mutations ?" \
+        "aucun dossier tests/ ici : rien a muter"
+fi
+
 titre "Termine"
 
 # Le controle qui compte : les etapes DECLAREES dans ce fichier doivent toutes avoir ete

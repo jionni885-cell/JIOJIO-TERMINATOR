@@ -148,3 +148,22 @@ def test_aucun_panel_est_dit_comme_tel() -> None:
     from jio.loop.engine import _motif_consensus
 
     assert "aucun panel" in _motif_consensus(None)
+
+
+def test_le_panel_effectif_par_defaut_est_zero() -> None:
+    """Mesure par mutation : le defaut `effective_panel = 0` n'etait protege par rien.
+
+    Ce chiffre existe parce qu'un panel de cinq agents sur un seul modele ne vaut pas cinq
+    agents : le compter comme tel est la faute qui rend un consensus decoratif. Un defaut a 1
+    ferait dire « panel decorrele » a un resultat qui n'a jamais ete calcule — le genre de
+    mensonge silencieux que ce champ a justement ete ajoute pour rendre visible.
+    """
+    from jio.audit.consensus import ConsensusOutcome
+    from jio.core.types import Verdict
+
+    resultat = ConsensusOutcome(
+        decision=Verdict.ABSTAIN, reached=False, agreement=0.0, quorum_required=3,
+        panel_size=0, estimated_faulty=0, tally={}, dissent=(), confidence=0.0,
+    )
+    assert resultat.effective_panel == 0
+    assert resultat.unanimous is False

@@ -2891,7 +2891,65 @@ def build_parser() -> argparse.ArgumentParser:
                     help="tours de boucle maximum")
     le.set_defaults(func=cmd_learn)
 
+    mu = sub.add_parser(
+        "mutants",
+        help="score de mutation de NOTRE suite : quelle ligne du depot aucun test ne protege ?",
+    )
+    mu.add_argument("--budget", type=int, default=2,
+                    help="mutants par fichier (defaut 2 : le but est de mesurer, pas d'epuiser)")
+    mu.add_argument("--plafond-tests", type=int, default=6,
+                    help="fichiers de test lances par mutant (heuristique declaree)")
+    mu.add_argument("--tout", dest="tous_les_tests", action="store_true",
+                    help="lancer la suite ENTIERE pour chaque mutant (lent, exact)")
+    mu.add_argument("--timeout", type=int, default=300, help="timeout par mutant (s)")
+    mu.add_argument("--fichiers", default="",
+                    help="liste de fichiers separes par des virgules (defaut : tout jio/)")
+    mu.add_argument("--root", default=".", help="racine du depot a muter")
+    mu.set_defaults(func=cmd_mutants)
+
     return p
+
+
+def cmd_mutants(args: argparse.Namespace) -> int:
+    """Mesure ce que la suite de tests du depot attrape REELLEMENT.
+
+    Le principe est celui de la porte de mutation, applique au depot lui-meme : un test
+    qui ne peut pas echouer ne tient rien. Chaque survivant est une ligne du depot sans
+    preuve, et le code de sortie vaut 1 tant qu'il en reste un — un chiffre qu'on peut
+    citer sans le mesurer serait exactement ce que ce depot refuse.
+    """
+    from .verify.mutants_suite import formater, mesurer
+
+    racine = Path(args.root).resolve()
+    if not (racine / "tests").is_dir():
+        print(f"  aucun dossier tests/ sous {racine} : rien a mesurer.")
+        return 0
+    fichiers = None
+    if args.fichiers:
+        fichiers = [
+            (racine / nom.strip()) for nom in args.fichiers.split(",") if nom.strip()
+        ]
+    rapport = mesurer(
+        racine,
+        fichiers=fichiers,
+        budget_par_fichier=max(1, args.budget),
+        plafond_tests=max(1, args.plafond_tests),
+        timeout=max(30, args.timeout),
+        tous_les_tests=args.tous_les_tests,
+    )
+    print()
+    print(formater(rapport))
+    print()
+    if not rapport.mutants:
+        print("    aucun mutant mesure : le score serait un chiffre sans contenu.")
+        return 1
+    if rapport.survivants:
+        print(f"    -> {len(rapport.survivants)} ligne(s) du depot sans preuve. Chacune demande")
+        print("       soit un test, soit une raison ECRITE de ne pas en avoir.")
+        return 1
+    print("    -> la suite attrape chaque mutation mesuree : les affirmations du depot")
+    print("       sont tenues par des tests qui savent echouer.")
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -99,8 +99,10 @@ def test_chaque_commande_refuse_une_option_inconnue_proprement(commande: str) ->
 
 #: Arguments minimaux pour les commandes qui peuvent tourner sans contexte. Ce qui est
 #: volontairement absent : `run`, `bench`, `learn`, `audit` (ils lancent des missions ou
-#: des mesures longues, couvertes ailleurs), et `recover`/`sync` (ils exigent un depot
-#: git reel — `test_recover.py` et `test_depot_reinitialise.py` s'en occupent).
+#: des mesures longues, couvertes ailleurs), `mutants` (il mutte le depot et relance pytest
+#: dans une copie — `test_mutants_suite.py` s'en occupe, et son but est justement de lancer
+#: des suites de tests) et `recover`/`sync` (ils exigent un depot git reel —
+#: `test_recover.py` et `test_depot_reinitialise.py` s'en occupent).
 SURES: dict[str, list[str]] = {
     "version": [],
     "doctor": [],
@@ -163,7 +165,7 @@ def test_chaque_commande_est_couverte_par_ce_fichier() -> None:
     couvert » alors qu'il ne regarde plus la nouvelle venue. C'est exactement le genre de
     silence que ce projet passe son temps a retirer.
     """
-    exclues = {"audit", "bench", "learn", "mcp", "recover", "run", "sync"}
+    exclues = {"audit", "bench", "learn", "mcp", "mutants", "recover", "run", "sync"}
     couvertes = set(SURES) | exclues
     manquantes = sorted(set(COMMANDES) - couvertes)
     assert not manquantes, (
