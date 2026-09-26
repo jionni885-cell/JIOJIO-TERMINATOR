@@ -306,3 +306,77 @@ def test_credit_flags_harmful_agent():
     report = credit(["good", "bad"], value)
     assert report.conserved
     assert "bad" in report.saboteurs
+
+
+def test_la_variante_polie_AJOUTE_la_queue_et_ne_la_retire_pas() -> None:
+    """`_polite` ajoute une queue : la transformation doit etre un ajout, jamais un retrait.
+
+    Mesure a l'origine : `jio mutants` a montre que le `+` de cette concatenation pouvait
+    devenir un `-` sans qu'aucun test ne bouge. Une variante qui RETIRE du texte ne teste
+    plus la meme propriete : elle en teste une autre, et l'invariance mesuree ne veut
+    plus rien dire.
+    """
+    from jio.verify.metamorphic import _NULL_TAIL, _polite
+
+    texte = "Combien font 2 + 2 ?"
+    variante = _polite(texte)
+    assert variante.startswith(texte)
+    assert len(variante) == len(texte) + len(_NULL_TAIL)
+    assert variante.endswith(_NULL_TAIL)
+
+
+def test_une_phrase_unique_n_est_pas_reorganisee_en_silence() -> None:
+    """Avec une seule phrase, il n'y a rien a reordonner : la variante vaut l'original.
+
+    Mesure a l'origine : `jio mutants` a montre que la borne `len(parts) > 1` pouvait passer
+    a 2 sans qu'aucun test ne bouge. Une variante identique a l'original ne teste RIEN : le
+    rapport la compterait comme une transformation reussie, donc comme une invariance
+    verifiee, alors qu'aucune transformation n'a eu lieu.
+    """
+    from jio.verify.metamorphic import _reorder_sentences
+
+    assert _reorder_sentences("Une seule phrase.") == "Une seule phrase."
+    deux = _reorder_sentences("Premiere. Deuxieme.")
+    assert deux == "Deuxieme. Premiere."
+
+def test_la_variante_en_MAJUSCULES_change_vraiment_le_texte() -> None:
+    """`_case_swap` : la variante metamorphique doit DIFFERER de l'original.
+
+    Mesure a l'origine : `jio mutants` a montre que le `is False` de cette condition pouvait
+    devenir `is True` sans qu'aucun test ne bouge. La variante devenait alors IDENTIQUE a
+    l'original pour un texte en minuscules : le test metamorphique comparait un texte a
+    lui-meme, comptait une transformation reussie, et n'avait plus rien verifie — le pire
+    cas pour une mesure, puisqu'il produit un « invariant tenu » a partir de rien.
+    """
+    from jio.verify.metamorphic import _case_swap
+
+    minuscule = "combien font 2 + 2 ?"
+    variante = _case_swap(minuscule)
+    assert variante == minuscule.upper()
+    assert variante != minuscule
+    # Un texte deja en majuscules n'est pas retransforme : la variante vaut l'original, et
+    # c'est voulu (l'axe « casse » n'a plus rien a changer, il ne fait pas semblant).
+    deja = "COMBIEN FONT 2 + 2 ?"
+    assert _case_swap(deja) == deja
+    # Au-dela de 400 caracteres, la variante est laissee telle quelle : borne de cout.
+    assert _case_swap("a" * 401) == "a" * 401
+
+
+def test_une_question_non_fermee_n_a_pas_d_axe_de_negation() -> None:
+    """`_is_boolean_answer` : sans marqueur oui/non, l'axe de negation ne s'applique pas.
+
+    Mesure a l'origine : `jio mutants` a montre que ce `return False` pouvait devenir `True`
+    sans qu'aucun test ne bouge. Toute question (« quelle est la capitale… ») aurait alors
+    ete traitee comme une question fermee : le systeme aurait cherche une reponse oui/non
+    dans une phrase qui n'en a pas, et aurait signale une inversion inexistante. Un faux
+    positif d'incoherence coute plus cher que pas de controle du tout : il fait douter d'une
+    reponse juste.
+    """
+    from jio.verify.metamorphic import _is_boolean_answer
+
+    assert _is_boolean_answer("La reponse est-elle correcte ? oui ou non") is True
+    assert _is_boolean_answer("Reponds vrai ou faux") is True
+    assert _is_boolean_answer("Quelle est la capitale de la France ?") is False
+    assert _is_boolean_answer("Explique la methode des moindres carres") is False
+    assert _is_boolean_answer("") is False
+    assert _is_boolean_answer("oui " + "x" * 250) is False

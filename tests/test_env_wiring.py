@@ -172,3 +172,66 @@ def test_le_fichier_dexemple_ne_change_pas_le_comportement_silencieusement() -> 
         "lignes actives dans .env.example (elles doivent toutes etre commentees) : "
         + ", ".join(actives)
     )
+
+
+def test_un_fournisseur_inconnu_leve_au_lieu_de_rendre_autre_chose() -> None:
+    """`get` LEVE sur un nom inconnu. Rendre autre chose ferait mesurer un autre modele.
+
+    Mesure a l'origine : `jio mutants` a montre que le `raise KeyError` du registre pouvait
+    etre remplace par un `pass` sans qu'aucun test ne bouge — la fonction aurait alors rendu
+    une valeur quelconque, ou leve une `UnboundLocalError` illisible, au lieu de NOMMER le
+    fournisseur inconnu et la liste de ceux qui existent.
+    """
+    import pytest
+
+    from jio.providers.registry import Registry
+
+    registre = Registry()
+    with pytest.raises(KeyError) as erreur:
+        registre.get("pas-un-fournisseur")
+    message = str(erreur.value)
+    assert "pas-un-fournisseur" in message
+    assert "connus" in message, "l'erreur doit dire ce qui existe, pas seulement ce qui manque"
+
+def test_une_cli_installee_est_DETECTEE_et_une_inconnue_est_ignoree(monkeypatch) -> None:
+    """`detect_clis` : un nom hors du catalogue est IGNORE, jamais une exception.
+
+    Mesure a l'origine : `jio mutants` a montre que le `if spec is None: continue` pouvait
+    devenir vide. `KNOWN_CLIS.get("mon-outil")` rend alors `None` et la ligne suivante
+    dechire `None["argv"]` : la detection entiere plantait, donc `jio doctor` aussi, sur une
+    simple faute de frappe dans la liste des CLI a chercher.
+
+    Le deuxieme cas tue la mutation inverse : une CLI REELLEMENT presente doit etre rendue.
+    """
+    import sys
+
+    from jio.providers.registry import KNOWN_CLIS, detect_clis
+
+    assert detect_clis(["nom-qui-nexiste-pas"]) == []
+
+    premier = sorted(KNOWN_CLIS)[0]
+    monkeypatch.setenv(f"JIO_BIN_{premier.upper()}", sys.executable)
+    trouvees = detect_clis([premier, "nom-qui-nexiste-pas"])
+    assert [p.name for p in trouvees] == [f"cli::{premier}"]
+    assert trouvees[0].available() is True
+
+
+def test_sans_configuration_aucun_fournisseur_API_n_est_invente(monkeypatch) -> None:
+    """`from_env()` sans variable : pas de fournisseur « api » sorti de nulle part.
+
+    Mesure a l'origine : `jio mutants` a montre que le `if base:` de `from_env` pouvait
+    devenir vide. Un fournisseur OpenAI serait alors declare avec une URL vide, et
+    `jio doctor` aurait annonce un modele disponible qui n'existe pas — la faute la plus
+    couteuse d'un garde-fou : une confiance fabriquee.
+    """
+    for variable in ("JIO_OPENAI_BASE", "JIO_OLLAMA", "JIO_OPENAI_KEY",
+                     "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+                     "DEEPSEEK_API_KEY"):
+        monkeypatch.delenv(variable, raising=False)
+
+    from jio.providers.registry import from_env
+
+    registre = from_env()
+    assert "api" not in registre.names()
+    monkeypatch.setenv("JIO_OPENAI_BASE", "http://127.0.0.1:9/v1")
+    assert "api" in from_env().names()

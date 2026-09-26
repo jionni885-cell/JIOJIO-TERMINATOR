@@ -327,3 +327,50 @@ def test_une_recuperation_qui_ne_change_rien_aux_fichiers_ne_perime_rien(
     assert resultat.fait, resultat.motif
     assert resultat.preuves_total == 1
     assert resultat.preuves_perimees == 0
+
+def _depot_nu(tmp_path: Path, commits: int, non_suivis: int) -> Path:
+    """Un depot neuf avec EXACTEMENT `commits` commits et `non_suivis` fichiers non suivis."""
+    racine = tmp_path / f"nu-{commits}-{non_suivis}"
+    racine.mkdir()
+    _git(racine, "init", "-q")
+    for i in range(commits):
+        (racine / "suivi.txt").write_text(f"{i}\n", encoding="utf-8")
+        _git(racine, "add", "suivi.txt")
+        _git(racine, "commit", "-qm", f"commit {i}")
+    for i in range(non_suivis):
+        (racine / f"perdu_{i:03d}.py").write_text(f"x = {i}\n", encoding="utf-8")
+    return racine
+
+
+@pytest.mark.parametrize(
+    ("commits", "non_suivis", "reconnu"),
+    [
+        (1, 20, True),   # le seuil exact des fichiers non suivis compte comme un accident
+        (3, 20, True),   # et le seuil exact des commits aussi
+        (1, 19, False),  # un fichier en moins : depot normal, on ne touche a RIEN
+        (4, 20, False),  # un commit de plus : depot normal, on ne touche a RIEN
+    ],
+)
+def test_l_empreinte_de_l_accident_est_EXACTE_aux_deux_seuils(
+    tmp_path: Path, commits: int, non_suivis: int, reconnu: bool
+) -> None:
+    """`<= 3 commits` ET `>= 20 non suivis` : les deux bornes sont incluses, et fermes.
+
+    Mesure a l'origine : `jio mutants` a montre que ce `3` pouvait devenir `4` et que ce
+    `20` pouvait devenir `21` sans qu'aucun test ne bouge. Les deux erreurs sont graves et
+    opposees : elargir la reconnaissance fait RESTAURER un depot normal (donc reecrire
+    l'historique de quelqu'un qui n'avait rien demande), la restreindre fait REFUSER le
+    sinistre pour lequel la commande a ete ecrite — ce qui est deja arrive trois fois ici.
+
+    Ces seuils sont ceux de `jio doctor` : deux jeux de seuils pour un meme accident
+    seraient deux verites.
+    """
+    from jio.recover import MAX_COMMITS, MIN_NON_SUIVIS
+
+    assert (MAX_COMMITS, MIN_NON_SUIVIS) == (3, 20)
+    racine = _depot_nu(tmp_path, commits, non_suivis)
+    detecte = empreinte_accident(racine)
+    if reconnu:
+        assert detecte == (commits, non_suivis)
+    else:
+        assert detecte is None

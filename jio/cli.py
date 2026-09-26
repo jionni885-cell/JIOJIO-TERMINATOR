@@ -41,6 +41,7 @@ from .providers.registry import detect_clis
 from .providers.simulated import Persona, SimulatedProvider, make_panel
 from .spec.compiler import SpecCompiler
 from .verify.executable import ExecutableProver, Sandbox
+from .clarify import MAX_QUESTIONS
 
 BANNER = r"""
      ██╗██╗ ██████╗      ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ████████╗ ██████╗ ██████╗
@@ -1372,6 +1373,42 @@ def cmd_run(args: argparse.Namespace) -> int:
             "  d'inventer une reponse.\n"
         )
         return 2
+
+    # --- Porte de clarification --------------------------------------------- #
+    # Elle passe AVANT tout appel de modele : une mission ambigue coute tous ses tours et
+    # livre quelque chose de plausible repondant a une autre question. En mode strict elle
+    # ARRETE la mission et rend les questions (code 3) ; sinon elle DECLARE les hypotheses
+    # qu'elle prend. Dans les deux cas, rien n'est tu.
+    # Quand une tache du banc existe, c'est SON objectif qui est execute (`mission.objective`
+    # plus bas) : c'est donc lui qu'il faut analyser. Analyser l'objectif tape a la main
+    # poserait des questions sans objet, la specification etant deja dans la tache — un faux
+    # positif de la porte, exactement ce qui lui ferait perdre toute autorite.
+    if tache_prose is not None:
+        objectif_pour_la_porte = tache_prose.objective
+    elif task is not None:
+        objectif_pour_la_porte = task.objective
+    else:
+        objectif_pour_la_porte = args.objective
+    from .clarify import analyser as _analyser, formater as _formater_clarify
+
+    analyse = _analyser(
+        objectif_pour_la_porte,
+        contexte=(Path("README.md").read_text(encoding="utf-8", errors="replace")[:50_000]
+                  if Path("README.md").is_file() else ""),
+        mode="strict" if getattr(args, "strict", False) else "assume",
+    )
+    if analyse.bloquant:
+        print(_formater_clarify(analyse))
+        print()
+        print("  MISSION ARRETEE (--strict) : reponds aux questions ci-dessus, puis relance.")
+        print("  Sans reponse, les defauts proposes sont ce que je ferais — dis-le si c'est bon.")
+        return 3
+    if analyse.questions and getattr(args, "strict", False) is False:
+        print("  HYPOTHESES DECLAREES (l'objectif laissait ces points ouverts) :")
+        for question in analyse.questions:
+            print(f"    - {question.signal} : {question.defaut}")
+        print("  Reponds a une seule d'entre elles pour que je l'enleve de cette liste.")
+        print()
 
     # Meme syntaxe que le banc : `--provider cli:opencode`, `openai:<modele>`, `simule`.
     # Un modele nomme et indisponible ARRETE la mission, ici comme ailleurs.
@@ -2766,6 +2803,11 @@ def build_parser() -> argparse.ArgumentParser:
              "faire rejeter un candidat ; une regle non prouvee interdit la mention "
              "« livre sans reserve ».",
     )
+    r.add_argument(
+        "--strict", action="store_true",
+        help="refuse de commencer si la porte de clarification a des questions sans reponse "
+             "(code 3) : c'est le mode a utiliser quand une IA doit DEMANDER avant d'agir",
+    )
     r.add_argument("-v", "--verbose", action="store_true")
     r.set_defaults(func=cmd_run)
 
@@ -2926,6 +2968,34 @@ def build_parser() -> argparse.ArgumentParser:
     ab.add_argument("--json", action="store_true", help="rapport lisible par une machine")
     ab.set_defaults(func=cmd_ablation)
 
+    st = sub.add_parser(
+        "start",
+        help="INTEGRE JIO dans tes outils en une commande : detecte, ecrit, cable, prouve",
+    )
+    st.add_argument("--root", default=".", help="racine du projet a equiper (defaut : ici)")
+    st.add_argument("--dry-run", action="store_true",
+                    help="montre ce qui serait fait, sans rien ecrire")
+    st.add_argument("--sans-mcp", dest="sans_mcp", action="store_true",
+                    help="n'ecrit pas les fichiers de cablage MCP (artefacts seuls)")
+    st.set_defaults(func=cmd_start)
+
+    cl = sub.add_parser(
+        "clarify",
+        help="pose les questions ESSENTIELLES avant de travailler (ou dit qu'il n'y en a pas)",
+    )
+    cl.add_argument("objective", nargs="?", default="", help="l'objectif, tel qu'ecrit")
+    cl.add_argument("--contexte", default="",
+                    help="fichier dont le contenu peut fournir ce qui manque (README, "
+                         "AGENTS.md) : un objectif court dans un projet documente n'est "
+                         "pas ambigu")
+    cl.add_argument("--strict", action="store_true",
+                    help="code de sortie 3 si des questions restent sans reponse (a utiliser "
+                         "quand une IA doit DEMANDER avant d'agir)")
+    cl.add_argument("--json", action="store_true", help="analyse lisible par une machine")
+    cl.add_argument("--max", type=int, default=MAX_QUESTIONS, dest="maximum",
+                    help=f"nombre maximum de questions (defaut {MAX_QUESTIONS})")
+    cl.set_defaults(func=cmd_clarify)
+
     return p
 
 
@@ -3080,6 +3150,213 @@ def cmd_mutants(args: argparse.Namespace) -> int:
     print("    -> la suite attrape chaque mutation mesuree : les affirmations du depot")
     print("       sont tenues par des tests qui savent echouer.")
     return 0
+
+
+def cmd_clarify(args: argparse.Namespace) -> int:
+    """Pose les questions essentielles — ou dit qu'il n'y en a pas, et pourquoi.
+
+    Sortie : 0 si l'objectif est actionnable (travaille), 3 s'il manque quelque chose
+    d'essentiel et que `--strict` est demande (l'appelant doit alors POSER les questions),
+    1 si l'objectif est vide.
+
+    Cette commande existe pour une seule raison : une IA qui part sans question choisit a la
+    place de son utilisateur, et livre quelque chose de plausible qui repond a une autre
+    question. Une IA qui pose quinze questions est insupportable. Le milieu est mesurable :
+    au plus trois questions, chacune pesant une consequence ecrite.
+    """
+    from .clarify import analyser, formater, resume
+
+    contexte = ""
+    if args.contexte:
+        chemin = Path(args.contexte).expanduser()
+        if chemin.is_file():
+            contexte = chemin.read_text(encoding="utf-8", errors="replace")[:200_000]
+        else:
+            print(f"  contexte introuvable : {chemin} (ignore, et dit)", file=sys.stderr)
+
+    mode = "strict" if args.strict else "assume"
+    analyse = analyser(
+        args.objective, contexte=contexte, max_questions=max(1, args.maximum), mode=mode
+    )
+    if args.json:
+        print(json.dumps(analyse.as_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(BANNER)
+        print(formater(analyse))
+        print()
+        print(f"    {resume(analyse)}")
+        print()
+    if not analyse.objectif:
+        return 1
+    if analyse.bloquant:
+        print("    -> QUESTIONS EN ATTENTE : je ne commence pas avant tes reponses.")
+        print("       (mode strict : c'est la seule facon de ne pas deviner a ta place.)")
+        return 3
+    if analyse.questions:
+        print("    -> HYPOTHESES DECLAREES (mode assume) : je commence, et je les annonce.")
+    return 0
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    """INTEGRE JIO dans les outils deja installes, sans rien demander : une seule commande.
+
+    C'est la commande de la premiere minute, et elle doit marcher sans cle d'API, sans
+    configuration, et sans rien detruire :
+
+      1. ecrit les artefacts natifs de tous les dialectes (AGENTS.md, CLAUDE.md, GEMINI.md,
+         .cursor, Copilot, agents opencode, competences Hermes) ;
+      2. cable le serveur MCP dans les fichiers de configuration que CHAQUE outil lit
+         vraiment, et jamais dans un fichier qui existe deja sans nous ;
+      3. PROUVE le cablage en demarrant reellement le serveur MCP et en comptant les outils
+         qu'il sert : une configuration correcte qui ne branche rien est le defaut que cette
+         commande existe pour attraper ;
+      4. ecrit `.jio/ACTIVE.md`, la fiche que l'IA lit en premier — etat reel, commandes
+         utiles, et ce qui reste non verifie.
+
+    Elle est IDEMPOTENTE : relancee, elle ne reecrit rien et le dit.
+    """
+    from .artifacts import TARGETS, manifest
+    from .artifacts.wiring import DIALECTES, brancher, prouver_branchement
+    from .artifacts.write_guard import ecrire_manifest
+    from .providers.registry import detect_clis
+
+    racine = Path(args.root).expanduser().resolve()
+    etat = racine / ".jio"
+    detectees = [p.name.replace("cli::", "") for p in detect_clis()]
+
+    print(BANNER)
+    print(f"  INTEGRATION  ·  racine : {racine}")
+    if detectees:
+        print(f"  Outils detectes sur cette machine : {', '.join(detectees)}")
+    else:
+        print("  Aucune CLI d'agent detectee sur le PATH : les artefacts seront ecrits")
+        print("  quand meme (ils sont lus par l'outil qui ouvrira ce dossier).")
+    print()
+
+    # `--sans-mcp` retire les cibles de CABLAGE autant que l'etape `brancher` : `opencode.json`
+    # et `.hermes/mcp-fragment.yaml` SONT du cablage. La premiere version les ecrivait quand
+    # meme, donc l'option ne tenait pas ce que son nom promettait — trouve par
+    # `tests/test_start.py`, qui a vu `opencode.json` dans une racine en `--sans-mcp`.
+    cibles = tuple(t for t in TARGETS if not (args.sans_mcp and t.endswith("-mcp")))
+
+    if args.dry_run:
+        for rel in sorted(manifest(cibles)):
+            print(f"    [simulation] {rel}")
+        print()
+        print("    mode simulation : rien n'a ete ecrit. Relance SANS --dry-run.")
+        return 0
+
+    decisions = ecrire_manifest(racine, manifest(cibles))
+    ecrits = [d for d in decisions if d.action != "inchange"]
+    print(f"    artefacts : {len(decisions) - len(ecrits)} deja a jour, {len(ecrits)} ecrit(s)")
+    for decision in sorted(ecrits, key=lambda d: d.chemin):
+        marque = {"preserve": "PRESERVE (le tien)", "remplace": "mis a jour",
+                  "sauvegarde": "mis a jour (ton original en .avant-jio)"}.get(
+                      decision.action, decision.action)
+        print(f"      {marque:<38} {decision.chemin}")
+
+    cablages: list[str] = []
+    if not args.sans_mcp:
+        print()
+        print("    cablage MCP (jamais dans un fichier qui existe sans nous)")
+        # `brancher` a DEUX formes de retour selon le dialecte : `(ecrit, message)` pour le
+        # cablage, `(deja, message)` pour les dialectes sans fichier (Hermes, Codex, Claude
+        # Code lisent une configuration utilisateur, que ce depot ne modifie pas). On ne
+        # devine pas : on lit le couple rendu, et on dit lequel des deux cas on a.
+        for dialecte, _fichier, description in DIALECTES:
+            try:
+                ecrit, message = brancher(racine, dialecte)
+            except (KeyError, ValueError, OSError) as exc:
+                print(f"      {dialecte:<12} impossible : {exc}")
+                continue
+            if ecrit is True:
+                cablages.append(dialecte)
+                print(f"      {dialecte:<12} BRANCHE  ({description})")
+            elif _fichier is None:
+                # Rien a ecrire : la configuration appartient a l'utilisateur. Le fragment
+                # est livre EN ENTIER (pas « voir la doc ») pour qu'il n'ait qu'a coller.
+                print(f"      {dialecte:<12} a coller  ({description}) — fragment ci-dessous")
+                for ligne in str(message).rstrip().splitlines():
+                    print(f"                   {ligne}")
+            else:
+                print(f"      {dialecte:<12} laisse tel quel ({description}) : {message}")
+
+    print()
+    print("    PREUVE DU CABLAGE (le serveur est reellement demarre)")
+    preuve = prouver_branchement(("python3", "-m", "jio.mcp_server"))
+    for ligne in str(preuve).splitlines():
+        print(f"    {ligne.strip()}" if ligne.strip() else "")
+
+    # La fiche que l'agent lit en premier. Elle est ECRITE, pas promise : un fichier d'etat
+    # qui decrit ce qui a ete fait est la seule chose qu'une IA puisse verifier seule.
+    etat.mkdir(parents=True, exist_ok=True)
+    fiche = etat / "ACTIVE.md"
+    fiche.write_text(_fiche_active(racine, detectees, cablages, len(ecrits)), encoding="utf-8")
+    print()
+    print(f"    fiche d'integration : {fiche.relative_to(racine)}  (l'IA la lit en premier)")
+    print()
+    print("    PROCHAINES ETAPES")
+    print("      1. `jio doctor`               etat reel : ce qui marche, ce qui manque")
+    print("      2. `jio clarify \"<objectif>\"`   les questions essentielles avant de travailler")
+    print("      3. `jio run \"<objectif>\"`       mission complete, avec preuves et reserves")
+    print()
+    return 0
+
+
+def _fiche_active(
+    racine: Path, detectees: list[str], cablages: list[str], ecrits: int
+) -> str:
+    """`.jio/ACTIVE.md` : ce qu'une IA doit lire avant de toucher ce projet.
+
+    Deux principes y sont ecrits parce qu'ils sont mesurables dans ce depot :
+
+      * les artefacts sont GENERES (`jio artifacts`) : les editer a la main est perdu ;
+      * la revendication sans preuve est refusee : `jio claims` la refute, et cette fiche
+        ne contient donc que ce qui a ete verifie a l'instant de son ecriture.
+    """
+    outils = ", ".join(detectees) if detectees else "aucune CLI detectee (ce n'est pas bloquant)"
+    cable = ", ".join(cablages) if cablages else "aucun (--sans-mcp)"
+    return f"""# JIO est actif sur ce projet
+
+> Fiche ecrite par `jio start`. Elle decrit l'etat REEL au moment de l'ecriture.
+> Pour la reecrire : `jio start`. Pour la contredire : les commandes ci-dessous.
+
+## Ce qui a ete fait
+
+- artefacts natifs ecrits ou mis a jour : {ecrits}
+- outils detectes sur cette machine : {outils}
+- cablage MCP effectue pour : {cable}
+
+## Avant de travailler : trois commandes, dans cet ordre
+
+```sh
+jio doctor                  # etat reel : fournisseurs, artefacts, journal, garde-fous
+jio clarify "<objectif>"    # les questions ESSENTIELLES ; code 3 si la reponse manque
+jio run "<objectif>"        # mission complete : preuve, panel, consensus, reserves
+```
+
+`jio clarify` sort en **3** quand une question essentielle reste sans reponse. Dans ce cas,
+la bonne action est de POSER la question a l'utilisateur, pas de commencer.
+
+## Trois regles de ce projet, et ce qui les tient
+
+1. **Aucune affirmation sans preuve executable.** `jio claims <document>` verifie un document
+   et sort en 1 s'il refute quoi que ce soit. Il n'y a pas d'exception pour les documents de
+   ce projet.
+2. **Les artefacts sont generes.** Modifier `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` ou les
+   competences a la main est perdu : editer `jio/artifacts/doctrine.py`, puis `jio sync`.
+3. **Trois etats, pas quatre.** `DELIVERED`, `DELIVERED_UNDER_RESERVATION`, `ABSTAINED`.
+   « Ca devrait marcher » n'est pas un etat.
+
+## Ce que "fini" veut dire ici
+
+- la suite de tests passe (`python -m pytest -q`) et `jio scan .` ne signale rien ;
+- `jio claims` sur les documents touches : 0 refutation ;
+- les reserves restantes sont NOMMEES, jamais tues ;
+- `jio mutants` ne regresse pas (une ligne non protegee est une preuve manquante).
+
+Detail complet : `README.md`, `docs/VISION-ARCHITECTURE.md`, doctrine : `jio/artifacts/doctrine.py`.
+"""
 
 
 def main(argv: Sequence[str] | None = None) -> int:

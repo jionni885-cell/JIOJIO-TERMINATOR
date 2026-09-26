@@ -3,11 +3,6 @@
 > Genere par `jio artifacts`. Source unique : `jio/artifacts/doctrine.py`.
 > Ne pas editer a la main.
 
-## Les trois etats d'une livraison
-
-`DELIVERED` / `DELIVERED_UNDER_RESERVATION` / `ABSTAINED`. Un quatrieme etat
-n'existe pas : « ca devrait marcher » est l'absence d'etat, pas un etat.
-
 ## Principes
 
 1. A delivery ends in exactly one state: DELIVERED, DELIVERED_UNDER_RESERVATION, ABSTAINED. There is no fourth state.
@@ -42,6 +37,18 @@ Every deliverable ends with exactly one of three states:
 
 Never emit a fourth state. "It should work", "likely correct" and "I believe"
 are not states; they are the absence of one.
+
+
+THE FIRST MINUTE (before any work)
+
+0. Read `.jio/ACTIVE.md`. If absent, run `jio start` (artifacts + MCP wiring + proof).
+1. Run `jio clarify "<objective>"` BEFORE planning.
+   exit 0 -> action + named target + success criterion: work.
+   exit 3 -> essential questions unanswered: ASK THE HUMAN them (at most three), then re-run.
+     DO NOT START. An answer to the wrong question is the most expensive failure there is.
+   exit 1 -> empty objective: ask for one sentence.
+2. Declare every assumption you take: "assumed: <what>, because <why>". Never ask a question
+   whose answer does not change the output.
 
 
 THE CORE LAW
@@ -114,6 +121,10 @@ and here is what would let me find out."
 ## Commandes
 
 ```
+jio start                  INTEGRE jio a tes outils : artefacts + cablage MCP + PREUVE du
+                           cablage, en une seule commande (aucune cle requise)
+jio clarify "<objectif>"   les 0 a 3 questions ESSENTIELLES a poser AVANT de travailler ;
+                           code 3 = demande a l'utilisateur avant de commencer
 jio doctor                 etat du systeme, fournisseurs detectes
 jio bench --skill 0.30     mesure le gain du harness (S0 -> S3, controle a budget egal)
 jio audit <fichier>        audite un artefact ; derive des regles executables de lui-meme
@@ -123,10 +134,12 @@ jio run "<objectif>" --prose   mission de DOCUMENT : la boucle de preuve complet
 jio claims <document>      verifie les faits d'une prose : calculs annonces, blocs
                            presentes comme Python, chemins cites (0 = conforme)
 jio trace <journal>        rejoue et verifie un journal (chaine de hachage + exploits)
+jio mutants                NOS tests attrapent-ils NOS erreurs ? (mutation de CE depot)
+jio ablation --missions 10 quelle brique apporte quoi ? (on l'enleve et on compare,
+                           memes missions : un levier NON VU n'est jamais dit « inutile »)
 ```
-Le banc est executable sans aucune cle API : les reponses sont simulees, la
-verification est reelle. `jio bench` refusera de vous vendre un chiffre : il
-compare toujours a un tirage aveugle de meme budget.
+Banc executable sans aucune cle API : reponses simulees, verification REELLE. `jio bench`
+ne vend jamais un chiffre nu : il compare toujours a un tirage aveugle de meme budget.
 
 ## Sous-agents
 

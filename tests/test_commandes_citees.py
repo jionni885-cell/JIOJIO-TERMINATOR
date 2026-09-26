@@ -200,3 +200,35 @@ def test_un_gabarit_n_est_pas_une_commande() -> None:
     assert "<objectif>" not in trouvees
     assert "--version" in trouvees, "une option de premier niveau doit rester verifiee"
     assert "scna" in trouvees, "une vraie faute doit rester detectee"
+
+
+def test_le_registre_des_sous_commandes_est_lu_dans_le_parseur_reel() -> None:
+    """Le seul oracle fiable est le parseur lui-meme : s'il ne rend rien, tout passe.
+
+    Mesure a l'origine : `jio mutants` a montre que le `return dict(action.choices)` de
+    `_sous_parsers` pouvait etre remplace par un `pass` sans qu'aucun test ne bouge. Une
+    fonction qui ne rend plus rien ferait passer TOUTES les invocations comme inconnues —
+    ou, si l'appelant lisait un dictionnaire vide comme « rien a verifier », ferait passer
+    un document faux. Les deux sont pires que l'absence de controle.
+    """
+    from jio.verify.commands import parser_reel, _sous_parsers
+
+    sous = _sous_parsers(parser_reel())
+    assert sous, "aucune sous-commande lue : le controle des citations ne controle rien"
+    assert "scan" in sous and "ablation" in sous and "mutants" in sous
+
+
+def test_une_invocation_dans_un_bloc_de_code_est_marquee_comme_telle() -> None:
+    """`dans_bloc` : un exemple n'est pas une consigne.
+
+    Mesure a l'origine : `jio mutants` a montre que ce booleen pouvait passer a `True` sans
+    qu'aucun test ne bouge. Le champ sert a distinguer « voici la commande a taper » de
+    « cette commande a ete tapee » — deux lectures qui ne se corrigent pas pareil.
+    """
+    from jio.verify.commands import commandes_citees
+
+    en_ligne = commandes_citees("Lancez `jio scan .` pour auditer.")
+    assert en_ligne and en_ligne[0].dans_bloc is False
+    dans_bloc = commandes_citees("```bash\njio scan .\n```\n")
+    assert dans_bloc, "une invocation dans un bloc doit etre VUE"
+    assert dans_bloc[0].dans_bloc is True

@@ -334,3 +334,63 @@ def test_un_seul_modele_nomme_reste_un_echo_et_le_harness_le_DIT(
 
     assert not outcome.reached
     assert "echo" in outcome.reason or "non decorrele" in outcome.reason, outcome.reason
+
+
+def test_une_sonde_vierge_ne_se_declare_pas_vivante() -> None:
+    """Un fournisseur nait « non vivant ». C'est un resultat nul, pas un pessimisme.
+
+    Mesure a l'origine : `jio mutants` a montre que les deux booleens de `Sonde` pouvaient
+    passer a `True` sans qu'aucun test ne bouge. Consequences : `jio providers` annoncerait
+    un fournisseur vivant et une reponse vide AVANT tout appel — le mensonge exact que la
+    sonde existe pour eviter.
+    """
+    from jio.providers.probe import Sonde
+
+    neuve = Sonde(nom="x")
+    assert neuve.vivant is False
+    assert neuve.reponse_vide is False
+    assert neuve.latence_s == 0.0
+    assert neuve.erreur == "" and neuve.temoignage is None
+
+
+def test_l_endpoint_openai_compatible_est_normalise_une_seule_fois() -> None:
+    """Trois formes d'URL, un seul endpoint — et jamais `/v1/v1/...`.
+
+    Mesure a l'origine : `jio mutants` a montre que le `return base` (URL deja complete),
+    le `base = f"{base}/v1"` et le `default timeout = 180` pouvaient changer sans qu'aucun
+    test ne bouge. Une URL mal normalisee ne fait pas echouer un appel : elle le fait
+    echouer AILLEURS, avec un 404 que l'utilisateur mettra sur le compte de sa cle.
+    """
+    from jio.providers.openai_compat import OpenAiCompatProvider
+
+    def endpoint(url: str) -> str:
+        return OpenAiCompatProvider(base_url=url, api_key="x")._endpoint()
+
+    assert endpoint("http://localhost:8000") == "http://localhost:8000/v1/chat/completions"
+    assert (
+        endpoint("http://localhost:8000/v1") == "http://localhost:8000/v1/chat/completions"
+    )
+    assert (
+        endpoint("http://localhost:8000/v1/chat/completions")
+        == "http://localhost:8000/v1/chat/completions"
+    )
+    assert endpoint("http://localhost:8000/") == "http://localhost:8000/v1/chat/completions"
+    assert "v1/v1" not in endpoint("http://localhost:8000/v1/")
+    # Le delai par defaut est une MESURE d'usage : trois minutes, pas deux.
+    assert OpenAiCompatProvider(base_url="http://x", api_key="k").timeout == 180
+
+def test_un_fournisseur_demande_UNE_instance_par_defaut() -> None:
+    """`instances = 1` : sans demande explicite, on ne fabrique pas d'instances en plus.
+
+    Mesure a l'origine : `jio mutants` a montre que ce `1` pouvait devenir `2` sans qu'aucun
+    test ne bouge. Le panel aurait alors tourne avec deux fois plus d'appels factures — un
+    cout double pour une decision identique, et personne pour le dire.
+    """
+    from dataclasses import fields
+
+    from jio.bench.provider_spec import Fournisseur
+
+    defauts = {f.name: f.default for f in fields(Fournisseur)}
+    assert defauts["instances"] == 1
+    simule = Fournisseur(spec="simule", genre="simule")
+    assert simule.instances == 1 and simule.provider is None

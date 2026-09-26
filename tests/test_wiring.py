@@ -186,3 +186,92 @@ def test_le_serveur_repond_au_protocole_utilise_par_la_sonde() -> None:
     assert [r["id"] for r in reponses] == [1, 2]
     assert reponses[0]["result"]["serverInfo"]["name"] == "jio"
     assert len(reponses[1]["result"]["tools"]) == 5
+
+def test_le_fragment_opencode_ACTIVE_le_serveur_explicitement() -> None:
+    """`enabled: true` : un serveur cable mais DESACTIVE serait un cablage qui ne fait rien.
+
+    Mesure a l'origine : `jio mutants` a montre que ce `True` pouvait devenir `False` sans
+    qu'aucun test ne bouge. Le fichier aurait ete ecrit, la sonde aurait meme pu le lire,
+    et aucun agent n'aurait jamais vu l'outil : le pire des deux mondes — un cablage cru
+    fait qui ne sert rien.
+    """
+    bloc = fragment_opencode()["mcp"][NOM_SERVEUR]
+    assert bloc["enabled"] is True
+    assert bloc["type"] == "local"
+    assert bloc["command"]
+    assert bloc["environment"] == {"JIO_ROOT": "."}
+
+
+def test_le_fragment_cursor_est_INDENTE_et_garde_les_accents() -> None:
+    """Le JSON ecrit pour Cursor est lisible par un humain et n'echappe pas les accents.
+
+    Mesure a l'origine : `jio mutants` a montre que `indent=2` pouvait disparaitre et que
+    `ensure_ascii=False` pouvait passer a `True` sans qu'aucun test ne bouge. Le fichier
+    restait valide : la perte etait invisible — un pavé d'une ligne illisible dans un
+    depot, et des `\\u00e9` dans un fichier de configuration destine a etre relu a la main.
+    """
+    from jio.artifacts.wiring import fragment_cursor
+
+    texte = fragment_cursor()
+    assert json.loads(texte)["mcpServers"][NOM_SERVEUR]["command"] == "python3"
+    assert "\n  \"mcpServers\"" in texte, "indent=2 attendu : sinon le fichier est illisible"
+    assert "\\u" not in texte, "ensure_ascii=False attendu : les accents restent lisibles"
+    assert texte.endswith("\n")
+
+
+def test_la_taille_maximale_de_source_est_declaree_et_respectee() -> None:
+    """`MAX_SOURCE = 200_000` : au-dela on REFUSE, on ne rame pas.
+
+    Mesure a l'origine : `jio mutants` a montre que cette borne pouvait passer a 200 001
+    sans qu'aucun test ne bouge. Une borne qui glisse en silence n'est plus une borne.
+    """
+    from jio.mcp_server import MAX_SOURCE, handle
+
+    assert MAX_SOURCE == 200_000
+
+    def refus(source: str) -> str:
+        reponse = handle({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "jio_prove",
+                       "arguments": {"source": source, "checks": {"R-1": "assert True"}}},
+        })
+        assert reponse is not None
+        resultat = reponse.get("result") or {}
+        contenu = resultat.get("content") or [{}]
+        return str(contenu[0].get("text", ""))
+
+    assert refus("x = 1") .startswith("REFUS : aucune regle") is False  # une regle est fournie
+    assert refus("x" * (MAX_SOURCE + 1)).startswith("REFUS : source trop longue")
+    # exactement a la borne : ce n'est PAS un refus de taille
+    assert not refus("x" * MAX_SOURCE).startswith("REFUS : source trop longue")
+
+def test_les_deux_requetes_de_la_sonde_ont_des_identifiants_DISTINCTS() -> None:
+    """Deux requetes JSON-RPC en vol ne portent jamais le meme identifiant.
+
+    Mesure a l'origine : `jio mutants` a montre que ce `1` pouvait devenir `2` sans qu'aucun
+    test ne bouge — les deux requetes de la sonde (`initialize` puis `tools/list`) auraient
+    alors porte le MEME identifiant. La sonde continuait de marcher par chance (elle lit
+    toute la sortie sans apparier), mais la propriete du protocole etait tenue par accident,
+    et une sonde qui n'apparie pas les reponses a ses requetes est exactement le genre
+    d'outil qui annonce « tout va bien » sur la reponse d'un autre.
+    """
+    from jio.artifacts.wiring import ID_INITIALIZE, ID_TOOLS_LIST
+
+    assert ID_INITIALIZE != ID_TOOLS_LIST
+    assert (ID_INITIALIZE, ID_TOOLS_LIST) == (1, 2)
+
+
+def test_le_fragment_cursor_lance_la_MEME_commande_que_le_serveur() -> None:
+    """`list(_COMMANDE[1:])` : le fragment Cursor lance le module, pas autre chose.
+
+    Mesure a l'origine : `jio mutants` a montre que ce `[1:]` pouvait devenir `[2:]` sans
+    qu'aucun test ne bouge. Le fichier de configuration aurait alors annonce `python3 <args
+    sans -m>` : une commande qui ne lance rien, ecrite dans le fichier que Cursor lit
+    vraiment — le cablage mort que tout ce module existe pour empecher.
+    """
+    from jio.artifacts.wiring import fragment_cursor
+
+    config = json.loads(fragment_cursor())["mcpServers"][NOM_SERVEUR]
+    assert config["args"] == list(_COMMANDE[1:])
+    assert config["args"] and config["args"][0] == "-m"
+    assert config["command"] == _COMMANDE[0]

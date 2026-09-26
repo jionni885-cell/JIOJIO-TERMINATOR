@@ -194,3 +194,56 @@ def test_une_intention_technique_prime_sur_un_verbe_de_redaction():
     """Bug reel : « write a function… » tombait dans `writing` par ordre alphabetique."""
     assert task_class("write a script that sorts a list") == "code"
     assert task_class("write a report") == "writing"
+
+
+def test_le_budget_d_un_bras_est_candidats_fois_tours() -> None:
+    """`candidates * rounds` est le nombre d'appels qu'un bras peut depenser.
+
+    Mesure a l'origine : `jio mutants` a montre que la multiplication pouvait devenir une
+    division ENTIERE sans qu'aucun test ne bouge (`3 x 2 = 6` contre `3 // 2 = 1`). Le bandit
+    aurait alors cru qu'un bras coute six fois moins qu'il ne coute, et il l'aurait choisi
+    pour cette raison — un reglage faux, invisible, qui decide du budget de verification.
+    """
+    from jio.trust.router import DEFAULT_ARMS, Arm
+
+    assert Arm("x", candidates=3, rounds=2, panel_size=1, alpha=0.05, cost=1.0).budget_calls == 6
+    assert Arm("x", candidates=1, rounds=1, panel_size=1, alpha=0.05, cost=1.0).budget_calls == 1
+    for bras in DEFAULT_ARMS:
+        assert bras.budget_calls == bras.candidates * bras.rounds
+
+
+def test_le_bras_minimal_est_un_seul_appel_et_un_seul_tour() -> None:
+    """Le bras le plus leger est la REFERENCE : « un appel, un tour ».
+
+    Mesure a l'origine : `jio mutants` a montre que ses deux constantes pouvaient passer de
+    1 a 2 sans qu'aucun test ne bouge. Un bras minimal a 2 candidats n'est plus le minimum,
+    et le bandit n'aurait plus de point de comparaison bas.
+    """
+    from jio.trust.router import DEFAULT_ARMS
+
+    minimal = DEFAULT_ARMS[0]
+    assert minimal.name == "minimal"
+    assert (minimal.candidates, minimal.rounds) == (1, 1)
+    assert minimal.budget_calls == 1
+    # Et l'echelle reste croissante : trois regimes distincts, volontairement grossiers.
+    assert [a.budget_calls for a in DEFAULT_ARMS] == sorted(
+        a.budget_calls for a in DEFAULT_ARMS
+    )
+
+def test_l_empreinte_d_un_echec_regarde_douze_tokens_de_symptome() -> None:
+    """La fenetre est de 12 tokens trie : au-dela, le bruit du symptome ne change pas l'empreinte.
+
+    Mesure a l'origine : `jio mutants` a montre que ce `12` pouvait devenir `13` sans qu'aucun
+    test ne bouge. Une fenetre trop large rendrait l'empreinte sensible a des mots sans
+    rapport, et le meme echec cesserait d'etre reconnu — donc la memoire cesserait de servir.
+    """
+    from jio.learn.memory import fingerprint
+
+    base = " ".join(f"t{i:02d}" for i in range(1, 13))
+    a = fingerprint("objectif", base + " zzz")
+    b = fingerprint("objectif", base + " yyy")
+    assert a == b, "au-dela du 12e token, le symptome ne doit plus compter"
+    # ... et DANS la fenetre, il compte : sinon l'empreinte serait constante.
+    c = fingerprint("objectif", base.replace("t01", "t99") + " zzz")
+    assert c != a
+    assert len(a) == 16 and a != fingerprint("autre objectif", base + " zzz")

@@ -12,8 +12,31 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 755 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 839 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
+
+---
+
+## Donnez ce dépôt à n'importe quelle IA : trois commandes, et elle s'intègre seule
+
+Aucune clé d'API, aucune configuration à écrire à la main, rien à installer d'autre que le
+paquet. Les artefacts que lisent opencode, Claude Code, Cursor, Copilot, Gemini, Codex et
+Hermes sont **générés**, et le câblage MCP est **prouvé** en démarrant réellement le serveur :
+
+```sh
+jio start                     # artefacts + câblage MCP + preuve du câblage + fiche .jio/ACTIVE.md
+jio clarify "<objectif>"      # les 0 à 3 questions ESSENTIELLES — code 3 : il faut DEMANDER
+jio run "<objectif>"          # mission complète : preuve, panel, consensus, réserves nommées
+```
+
+`jio clarify` existe pour une seule raison : une IA qui part sans question choisit le
+périmètre, le format et le critère de réussite **à la place de son utilisateur**, puis livre
+quelque chose de plausible qui répond à une autre question. La porte est mesurable, bornée à
+trois questions, et chaque question porte la conséquence de ne pas y répondre ainsi que
+l'hypothèse prise à défaut : `jio clarify --strict` sort en **3** et la mission ne commence pas.
+
+`jio start` écrit `.jio/ACTIVE.md` — la fiche que l'IA lit en premier : état réel, commandes
+utiles, et ce qui reste non vérifié. Elle est **idempotente** : relancée, elle ne réécrit rien.
 
 ---
 

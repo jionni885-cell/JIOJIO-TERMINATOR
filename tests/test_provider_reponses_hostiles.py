@@ -282,3 +282,41 @@ def test_un_agent_en_erreur_donne_son_stderr(tmp_path) -> None:
         provider.complete([Message("user", "salut")])
     assert "non authentifie" in str(erreur.value)
     assert "exit=3" in str(erreur.value)
+
+
+def test_le_retour_d_echec_est_reconnu_par_sa_MARQUE_et_son_IDENTIFIANT() -> None:
+    """Deux exigences, et la seconde est celle qui compte.
+
+    « ca a rate » n'informe personne ; « la regle R-003 attend 9 » informe. Le simulateur
+    ne traite donc un prompt comme un retour d'echec structure que s'il porte la marque ET
+    un identifiant de regle. Mesure a l'origine : `jio mutants` a montre que la borne
+    `if at < 0: return False` de la recherche pouvait passer a `at >= 0` sans qu'aucun test
+    ne bouge — un prompt SANS marque aurait alors ete traite comme un echec structure, et
+    tous les bancs simules auraient mesure un modele qui apprend de plaintes vagues.
+    """
+    from jio.providers.simulated import _has_structured_feedback
+
+    assert not _has_structured_feedback("rien du tout")
+    assert not _has_structured_feedback("PREVIOUS ATTEMPT FAILED")  # marque seule
+    assert _has_structured_feedback("PREVIOUS ATTEMPT FAILED : la regle R-003 attend 9")
+    assert _has_structured_feedback("PREVIOUS ATTEMPT FAILED (rule 3 wants 9)")
+    # Un identifiant de regle SANS la marque n'est pas un retour d'echec : le prompt peut
+    # simplement citer une regle.
+    assert not _has_structured_feedback("la regle R-003 attend 9")
+
+def test_un_retour_d_echec_qui_COMMENCE_par_la_marque_est_reconnu() -> None:
+    """La marque trouvee a la position 0 est encore une marque.
+
+    Mesure a l'origine : `jio mutants` a montre que le test `at < 0` pouvait devenir `at < 1`
+    sans qu'aucun test ne bouge. Un prompt dont la PREMIERE ligne est le retour d'echec
+    n'aurait alors plus ete reconnu comme structure : le modele aurait rejoue la meme
+    reponse, la boucle aurait consomme un tour pour rien, et le budget aurait servi a
+    repeter une erreur.
+    """
+    from jio.providers.simulated import _has_structured_feedback
+
+    assert _has_structured_feedback("PREVIOUS ATTEMPT FAILED : la regle R-003 attend 9") is True
+    assert _has_structured_feedback("bla bla PREVIOUS ATTEMPT FAILED - rule R-1") is True
+    assert _has_structured_feedback("PREVIOUS ATTEMPT FAILED sans identifiant") is False
+    assert _has_structured_feedback("PREVIOUS ATTEMPT") is False
+    assert _has_structured_feedback("ca a rate") is False

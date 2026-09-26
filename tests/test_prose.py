@@ -295,3 +295,23 @@ def test_un_candidat_propre_ne_perd_jamais_contre_un_candidat_qui_cite_un_chemin
         f"{malgre_un_propre} livraison(s) ont cite un chemin inexistant alors qu'un "
         "candidat propre etait disponible"
     )
+
+def test_le_resume_affiche_des_POURCENTAGES_et_non_des_fractions() -> None:
+    """`self.jio * 100` : un taux de 0,5 doit s'ecrire « 50 % », pas « 0,5 % ».
+
+    Mesure a l'origine : `jio mutants` a montre que ce `100` pouvait devenir `101` sans
+    qu'aucun test ne bouge. Le rapport aurait annonce 50,5 % la ou le moteur livre la
+    moitie des taches — une erreur d'affichage qui ne se voit pas, sur le seul chiffre
+    que ce banc sert a publier.
+    """
+    from jio.bench.prose import MesureProse
+
+    resultat = MesureProse(
+        essais=4, aveugle=0.25, aveugle_best_of=0.75, jio=0.5, erreurs_silencieuses=0,
+        sous_reserve=1, abstentions=2, appels=3.5,
+    )
+    texte = resultat.resume("moteur complet")
+    assert "50.0%" in texte
+    assert "(aveugle 25.0%, oracle best-of 75.0%)" in texte
+    assert "SILENCIEUX : 0" in texte and "appels 3.5" in texte
+    assert "50.5%" not in texte

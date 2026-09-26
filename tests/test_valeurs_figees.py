@@ -57,6 +57,45 @@ VALEURS_FIGEES: dict[str, str] = {
     "jio.core.journal:Event": (
         "un evenement de journal est la matiere du rejeu deterministe"
     ),
+    # --- les onze ajoutees apres la deuxieme passe de mutation (budget 2, tout jio/) ---
+    "jio.verify.mutation:Mutation": (
+        "une mutation est un COUPLE (etiquette, source mutee) : la modifier en place ferait "
+        "mesurer autre chose que ce qu'on a applique"
+    ),
+    "jio.trust.router:Arm": (
+        "un bras du bandit est une configuration de reference : le modifier en place "
+        "changerait le budget d'une decision deja prise"
+    ),
+    "jio.verify.commands:CommandeCitee": (
+        "une invocation citee est comparee au parseur reel ; mutee en place, elle "
+        "designerait une autre commande"
+    ),
+    "jio.verify.entropy:EntropyResult": (
+        "un resultat d'entropie est une mesure : elle ne doit pas se reviser sous les "
+        "yeux de celui qui la lit"
+    ),
+    "jio.verify.dependances:Manque": (
+        "un manque de dependance est une VALEUR mise dans un rapport"
+    ),
+    "jio.verify.metamorphic:Mutation": (
+        "une transformation metamorphique est une fonction nommee, pas un etat"
+    ),
+    "jio.verify.metamorphic:MetamorphicFinding": (
+        "un constat de metamorphose est une valeur, comme tout constat"
+    ),
+    "jio.spec.library:TemoinValide": (
+        "un temoin valide par une livraison prouvee est une CAPACITE rejouable : sa "
+        "signature doit etre figeable"
+    ),
+    "jio.bench.prose:ProseTache": (
+        "une tache de prose est une donnee de reference du banc"
+    ),
+    "jio.bench.tasks:Task": (
+        "une tache du banc de code est une donnee de reference : la meme pour tous les bras"
+    ),
+    "jio.bench.provider_spec:Fournisseur": (
+        "la description d'un fournisseur est lue par plusieurs couches avant un appel"
+    ),
 }
 
 

@@ -54,6 +54,36 @@ the same error and calls it confirmation. Five conditions buy independence:
 A check that satisfies none of D1-D5 is theatre. Say so and drop it.
 """
 
+OPENING = """\
+THE FIRST MINUTE (before any work, in this order)
+
+0. Read `.jio/ACTIVE.md`. If it is absent, run `jio start`: it writes the native artifacts,
+   wires the MCP server, proves the wiring by starting it. No key, nothing destroyed.
+1. Run `jio clarify "<objective>"` BEFORE planning anything.
+   exit 0 -> action + named target + success criterion: work.
+   exit 3 -> essential questions unanswered: ASK the human those exact questions (at most
+     three, each with the consequence of not answering), then re-run with the answers.
+     DO NOT START. A plausible answer to the wrong question is the most expensive failure.
+   exit 1 -> empty objective: ask for one sentence, nothing else.
+2. Declare every assumption you take, in one line, at the top of the delivery:
+   "assumed: <what>, because <why>". An assumption not written down is a silent choice.
+3. Never ask a question that does not change the output. If you cannot write the sentence
+   "not answering this changes <X>", drop the question.
+"""
+
+OPENING_MIN = """\
+THE FIRST MINUTE (before any work)
+
+0. Read `.jio/ACTIVE.md`. If absent, run `jio start` (artifacts + MCP wiring + proof).
+1. Run `jio clarify "<objective>"` BEFORE planning.
+   exit 0 -> action + named target + success criterion: work.
+   exit 3 -> essential questions unanswered: ASK THE HUMAN them (at most three), then re-run.
+     DO NOT START. An answer to the wrong question is the most expensive failure there is.
+   exit 1 -> empty objective: ask for one sentence.
+2. Declare every assumption you take: "assumed: <what>, because <why>". Never ask a question
+   whose answer does not change the output.
+"""
+
 EVIDENCE = """\
 EVIDENCE RULES
 
@@ -191,6 +221,7 @@ COMMUNICATION WITH THE HUMAN
 FULL = "\n\n".join(
     [
         CONTRACT,
+        OPENING,
         CORE_LAW,
         EVIDENCE,
         ANTI_HACK,
@@ -205,10 +236,12 @@ FULL = "\n\n".join(
 )
 
 #: Version condensee pour les fichiers de contexte projet (AGENTS.md, etc.).
-COMPACT = "\n\n".join([CONTRACT, CORE_LAW, EVIDENCE, ANTI_HACK, ABSTENTION])
+COMPACT = "\n\n".join([CONTRACT, OPENING_MIN, CORE_LAW, EVIDENCE, ANTI_HACK, ABSTENTION])
 
 __all__ = [
     "CONTRACT",
+    "OPENING",
+    "OPENING_MIN",
     "CORE_LAW",
     "EVIDENCE",
     "ANTI_HACK",

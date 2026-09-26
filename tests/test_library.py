@@ -299,3 +299,53 @@ def test_une_memoire_des_echecs_editee_a_la_main_nest_jamais_injectee(
     assert rechargee.size == 0, "la chaine cassee invalide la memoire entiere"
     assert any("incoherente" in n for n in rechargee.journal.notices), rechargee.journal.notices
     assert list(tmp_path.glob("failures.jsonl.corrompu-*")), "le fichier est conserve"
+
+def test_l_empreinte_d_objectif_fait_SEIZE_caracteres_hexadecimaux() -> None:
+    """Empreinte = 16 caracteres hexa : assez courte pour un rapport, assez longue pour trier.
+
+    Mesure a l'origine : `jio mutants` a montre que ce `16` pouvait passer a 17 sans qu'aucun
+    test ne bouge. Toutes les empreintes deja ecrites au journal changeraient alors de forme,
+    et les temoins deja memorises ne seraient plus reconnus — une perte silencieuse.
+    """
+    import re
+
+    empreinte = empreinte_objectif("corriger la moyenne d'une liste vide")
+    assert len(empreinte) == 16
+    assert re.fullmatch(r"[0-9a-f]{16}", empreinte)
+    # Deux formulations equivalentes se reconnaissent ; deux objectifs differents non.
+    assert empreinte == empreinte_objectif("Corriger  la MOYENNE d'une liste vide !")
+    assert empreinte != empreinte_objectif("corriger la somme d'une liste vide")
+
+
+def test_une_bibliotheque_neuve_n_a_RIEN_servi_et_ne_declare_rien_d_autre() -> None:
+    """`servies = 0` et `seq = 0` : un compteur neuf part de zero, et le dit.
+
+    Mesure a l'origine : `jio mutants` a montre que ces deux zeros pouvaient devenir 1 sans
+    qu'aucun test ne bouge. Un compteur faux des l'ouverture fait mentir TOUS les appels :
+    le rapport annoncerait des reutilisations qui n'ont pas eu lieu, et une mesure fausse
+    est pire qu'une mesure absente.
+    """
+    from jio.spec.library import TemoinValide
+
+    bibliotheque = BibliothequeTemoins()
+    assert bibliotheque.servies == 0
+    assert bibliotheque.revoquees == 0
+    temoin = TemoinValide(objectif="o", regle="R-001", empreinte="a" * 16, assertion="assert 1")
+    assert temoin.seq == 0
+    assert temoin.mission_id == ""
+
+def test_la_graine_du_banc_de_temoins_est_FIGEE() -> None:
+    """La graine du banc est un contrat de reproductibilite, pas un detail : elle est figee.
+
+    Mesure a l'origine : `jio mutants` a montre que le `[:12]` de `_graine` pouvait devenir
+    `[:13]` et la base `16` devenir `17` sans qu'aucun test ne bouge. `_graine` decide quel
+    temoin est traduit fidelement et lequel est faux : la changer change TOUS les chiffres
+    du banc — donc change la mesure elle-meme. Un banc de mesure qui bouge sans qu'on l'ait
+    decide ne mesure plus rien : il raconte.
+    """
+    from jio.bench.temoins import _graine
+
+    assert _graine("T-1", "R-001", 0) == 93858704764288
+    assert _graine("T-1", "R-001", 0) == _graine("T-1", "R-001", 0)
+    assert _graine("T-1", "R-001", 0) != _graine("T-1", "R-002", 0)
+    assert 0 <= _graine("nimporte", "quoi", 7) < 16 ** 12

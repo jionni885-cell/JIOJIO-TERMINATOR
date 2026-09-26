@@ -386,3 +386,56 @@ def test_temoignage_resume_est_lisible() -> None:
     temoignage = Temoignage(tests={"R-001": "assert 1"}, aveux={"R-002": "raison"})
     resume = temoignage.resume()
     assert "1 regle(s) traduite(s)" in resume and "1 declaree(s)" in resume
+
+
+def test_un_test_plus_long_que_la_limite_est_refuse_avec_sa_raison() -> None:
+    """`MAX_LONGUEUR = 600` : au-dela, ce n'est plus un test, c'est un programme.
+
+    Mesure a l'origine : `jio mutants` a montre que ce 600 pouvait passer a 601 sans qu'aucun
+    test ne bouge. La limite n'est pas cosmetique : un temoin long a plus de chances de
+    contenir autre chose qu'une assertion — et il est ecrit par un modele, donc non fiable.
+    """
+    from jio.spec.witness import MAX_LONGUEUR, valider_test
+
+    assert MAX_LONGUEUR == 600
+    court = "def test_r():\n    assert f(1) == 2"
+    assert valider_test(court, entrypoint="f")[0] is True
+    trop_long = "def test_r():\n    assert f(1) == 2\n" + "# bruit\n" * 200
+    assert len(trop_long) > MAX_LONGUEUR
+    ok, motif = valider_test(trop_long, entrypoint="f")
+    assert ok is False and str(MAX_LONGUEUR) in motif
+
+
+def test_le_nombre_de_temoins_traduits_est_borne_et_declare() -> None:
+    """`MAX_TESTS = 8` : au-dela, la traduction coute plus qu'elle ne rapporte.
+
+    On verifie la borne sur le comportement ET la valeur : une borne qui glisse en silence
+    ferait payer huit appels de plus sans que rien ne le dise.
+    """
+    import inspect
+
+    from jio.spec.witness import MAX_TESTS, traduire
+
+    assert MAX_TESTS == 8
+    signature = inspect.signature(traduire)
+    assert signature.parameters["max_tests"].default == MAX_TESTS
+
+
+def test_la_couverture_additionne_les_trois_categories_au_lieu_de_les_soustraire() -> None:
+    """`couverture = tests / (tests + aveux + refuses)` : une SOMME au denominateur.
+
+    Mesure a l'origine : `jio mutants` a montre que ce `+` pouvait devenir un `-` sans
+    qu'aucun test ne bouge. Avec quatre regles separees en deux tests et deux aveux, la
+    couverture aurait ete divisee par un denominateur NUL — donc annoncee a 0 % au lieu de
+    50 %, et le rapport aurait blame un modele qui avait fait la moitie du travail.
+    """
+    from jio.spec.witness import Temoignage
+
+    temoignage = Temoignage(
+        tests={"R-1": "assert f(1) == 1", "R-2": "assert f(2) == 2"},
+        aveux={"R-3": "pas traduisible"},
+        refuses={"R-4": "test vide"},
+    )
+    assert temoignage.couverture == 0.5
+    assert Temoignage().couverture == 0.0
+    assert Temoignage(tests={"R-1": "x"}).couverture == 1.0

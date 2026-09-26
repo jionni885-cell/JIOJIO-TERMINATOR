@@ -147,9 +147,18 @@ et le coût par mission diminue — **mesuré, pas supposé**.
 - `jio bench` : suite de tâches à difficulté croissante **avec oracles cachés**
 - Mesure sur le **même modèle** : baseline (1 appel) vs JIO complet
 - Métriques : taux de réussite, taux d'erreurs non détectées, coût, latence, taux d'abstention
+- `jio mutants` : la suite de tests de ce dépôt attrape-t-elle une erreur injectée dans son
+  propre code ? Un survivant est une preuve manquante ; un survivant **équivalent** se déclare,
+  avec sa raison, et un test refuse une déclaration fantôme
+- `jio ablation` : quelle brique apporte quoi ? On l'enlève et on compare sur les **mêmes
+  missions** (appariement par tâche et par graine). Deux métriques — erreurs silencieuses, et
+  livraisons **sans réserve** — parce que retirer le red-team ne rend pas le résultat faux, il
+  le rend non livrable. Un levier sans effet mesuré est déclaré **NON DISTINGUABLE**, jamais
+  « inutile », avec le nombre de dissociations qu'il faudrait pour trancher
 - Rapport comparatif chiffré FR + graphiques
 
-**Critère de sortie :** un tableau qui montre le gain réel, y compris les cas où JIO **ne** gagne pas.
+**Critère de sortie :** un tableau qui montre le gain réel, y compris les cas où JIO **ne** gagne
+pas — et, pour chaque brique, une ligne qui dit ce qu'elle coûte et ce qu'elle rapporte.
 
 ---
 

@@ -116,3 +116,32 @@ def test_resume_lisible():
     report = MutationReport(total=4, killed=3)
     assert "3/4" in report.summary()
     assert "75%" in report.summary()
+
+
+def test_la_borne_de_mutation_est_declaree_et_respectee() -> None:
+    """`MUTATION_BUDGET = 4` : chaque mutant coute une passe COMPLETE de verification.
+
+    Mesure a l'origine : `jio mutants` a montre que ce 4 pouvait passer a 5 sans qu'aucun
+    test ne bouge. Le chiffre est un BUDGET annonce a l'utilisateur — « on borne le cout, on
+    ne cherche pas l'exhaustivite » — donc il doit etre celui-la.
+    """
+    from jio.verify.mutation import MUTATION_BUDGET, mutate
+
+    assert MUTATION_BUDGET == 4
+    # Une source avec beaucoup de sites mutables : la borne doit MORDRE.
+    source = "\n".join(
+        f"def f{i}(x):\n    if x < {i}:\n        return {i}\n    return True\n"
+        for i in range(12)
+    )
+    assert len(mutate(source)) <= MUTATION_BUDGET
+    assert len(mutate(source, budget=MUTATION_BUDGET + 6)) > MUTATION_BUDGET
+
+
+def test_un_rapport_de_mutation_vierge_ne_compte_aucun_mutant() -> None:
+    """Les compteurs partent de ZERO. Un rapport qui part de 1 annonce une preuve qui n'existe
+    pas — et c'est exactement ce que ce module existe pour empecher ailleurs."""
+    from jio.verify.mutation import MutationReport
+
+    rapport = MutationReport()
+    assert (rapport.total, rapport.killed) == (0, 0)
+    assert rapport.survived == () and rapport.unusable == ()

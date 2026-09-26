@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import contextlib
 from pathlib import Path
 
@@ -115,6 +116,9 @@ SURES: dict[str, list[str]] = {
     "scan": ["."],
     "artifacts": ["--budget"],
     "claims": ["AUCUN_FICHIER.md"],
+    # `clarify` : la porte de clarification. Sans argument, elle dit qu'il n'y a pas
+    # d'objectif — c'est le pire cas d'un utilisateur qui decouvre la commande.
+    "clarify": [],
 }
 
 
@@ -167,8 +171,13 @@ def test_chaque_commande_est_couverte_par_ce_fichier() -> None:
     """
     # `ablation` fait tourner la BOUCLE plusieurs fois (un bras par levier) : ses tests
     # vivent dans `tests/test_ablation.py`, ou l'executeur est truque pour etre instantane.
+    # `start` ECRIT (artefacts + cablage) : c'est sa fonction, et le lancer ici violerait la
+    # regle « aucune ecriture dans le dossier de l'utilisateur » que ce fichier impose.
+    # `tests/test_start.py` le mesure sur une `tmp_path`, y compris l'idempotence et le refus
+    # de detruire un fichier ecrit a la main.
     exclues = {
-        "ablation", "audit", "bench", "learn", "mcp", "mutants", "recover", "run", "sync"
+        "ablation", "audit", "bench", "learn", "mcp", "mutants", "recover", "run", "start",
+        "sync",
     }
     couvertes = set(SURES) | exclues
     manquantes = sorted(set(COMMANDES) - couvertes)
@@ -211,3 +220,24 @@ def test_le_test_de_fumee_attrape_vraiment_une_commande_cassee(monkeypatch) -> N
     code, sortie = _lancer(["version"])
     assert code == 0
     assert sortie.strip(), "la sortie n'est pas capturee : les assertions seraient vides"
+
+def test_le_module_s_execute_par_python_dash_m(tmp_path: Path) -> None:
+    """`python -m jio --version` : le point d'entree `jio/__main__.py` marche vraiment.
+
+    Le score de mutation l'a dit : « aucun test ne mentionne jio/__main__.py ». Ce fichier
+    est pourtant ce que lance celui qui n'a pas installe la console-script : `python -m jio`.
+    Un point d'entree casse ne se voit dans aucun test unitaire — il ne se voit qu'en
+    executant la commande, dans un dossier neutre, et en verifiant la sortie.
+    """
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "jio", "--version"],
+        cwd=tmp_path, capture_output=True, text=True, timeout=120,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip(), "aucune sortie : le point d'entree n'a rien execute"
+    assert "jio" in proc.stdout.lower()
+

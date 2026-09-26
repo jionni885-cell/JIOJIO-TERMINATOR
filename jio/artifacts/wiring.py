@@ -40,6 +40,14 @@ __all__ = [
 ]
 
 #: Nom du serveur MCP tel qu'il apparaitra dans les outils de l'IA.
+#: Identifiants des deux requetes JSON-RPC de la sonde. Ils doivent etre DISTINCTS : un
+#: identifiant sert a apparier une reponse a SA requete, et deux requetes en vol portant le
+#: meme identifiant rendent les reponses indiscernables. `jio mutants` a montre que ce `1`
+#: pouvait devenir `2` en silence : deux identifiants egaux ne cassaient rien ici
+#: (la sonde lit tout ce qui sort), mais c'etait une propriete tenue par accident.
+ID_INITIALIZE = 1
+ID_TOOLS_LIST = 2
+
 NOM_SERVEUR = "jio"
 
 #: L'outil est recherche comme module Python (`python3 -m jio.mcp_server`) : cela marche
@@ -196,8 +204,8 @@ def prouver_branchement(commande: Sequence[str] = _COMMANDE, delai: float = 20.0
     import sys
 
     requetes = (
-        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
-        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+        json.dumps({"jsonrpc": "2.0", "id": ID_INITIALIZE, "method": "initialize", "params": {}}),
+        json.dumps({"jsonrpc": "2.0", "id": ID_TOOLS_LIST, "method": "tools/list", "params": {}}),
     )
     try:
         processus = subprocess.run(

@@ -192,3 +192,55 @@ def test_un_gain_net_du_banc_de_memoire_est_significatif() -> None:
     assert ecart == pytest.approx(62.5)
     assert bas > 0.0 and tranche is True
     assert resultat.budget_de_mesure() > 0
+
+
+def test_une_entropie_de_risque_FAIBLE_seule_est_dite_confiante() -> None:
+    """`confident` est vrai pour « faible », et pour lui SEUL.
+
+    Mesure a l'origine : `jio mutants` a montre que l'egalite `risk == "faible"` pouvait
+    devenir une INEGALITE sans qu'aucun test ne bouge. Le systeme se serait alors declare
+    confiant quand le risque est MOYEN ou ELEVE — l'inverse exact de sa fonction, et sur le
+    signal qui decide d'accepter une reponse.
+    """
+    from jio.verify.entropy import EntropyResult
+
+    def resultat(risque: str) -> bool:
+        return EntropyResult(
+            entropy=0.1, clusters=1, samples=4, dominant_share=1.0, risk=risque
+        ).confident
+
+    assert resultat("faible") is True
+    assert resultat("moyen") is False
+    assert resultat("eleve") is False
+
+
+def test_un_ensemble_vide_est_un_risque_ELEVE_pas_une_confiance() -> None:
+    """Sans reponse a comparer, il n'y a rien a conclure : le risque est maximal.
+
+    Mesure a l'origine : `jio mutants` a montre que les compteurs de ce cas (`clusters=0`,
+    `samples=0`) pouvaient passer a 1 sans qu'aucun test ne bouge. Zero echantillon annonce
+    comme un echantillon donnerait une entropie calculee sur rien.
+    """
+    from jio.verify.entropy import semantic_entropy
+
+    vide = semantic_entropy([])
+    assert (vide.clusters, vide.samples) == (0, 0)
+    assert vide.risk == "eleve" and vide.confident is False
+    assert vide.entropy == 1.0
+    # Les entrees blanches comptent comme absentes : elles n'apportent aucune information.
+    blanc = semantic_entropy(["", "   ", "\n"])
+    assert (blanc.clusters, blanc.samples) == (0, 0)
+
+def test_deux_textes_SANS_nombre_ne_sont_pas_declares_numeriquement_egaux() -> None:
+    """`_numeric_equal` : sans nombre des deux cotes, il n'y a aucune egalite a conclure.
+
+    Mesure a l'origine : `jio mutants` a montre que ce `return False` pouvait devenir `True`
+    sans qu'aucun test ne bouge. Deux reponses sans aucun nombre auraient alors ete jugees
+    « identiques » : l'entropie se serait effondree, le systeme se serait declare CONFIANT,
+    et il l'aurait fait sur deux textes qui peuvent dire l'inverse l'un de l'autre.
+    """
+    from jio.verify.entropy import _numeric_equal
+
+    assert _numeric_equal("aucun nombre ici", "rien du tout") is False
+    assert _numeric_equal("le total est 12.0", "le total est 12") is True
+    assert _numeric_equal("le total est 12", "le total est 13") is False

@@ -46,6 +46,10 @@ def _principles_block() -> str:
 def _commands_block() -> str:
     return """\
 ```
+jio start                  INTEGRE jio a tes outils : artefacts + cablage MCP + PREUVE du
+                           cablage, en une seule commande (aucune cle requise)
+jio clarify "<objectif>"   les 0 a 3 questions ESSENTIELLES a poser AVANT de travailler ;
+                           code 3 = demande a l'utilisateur avant de commencer
 jio doctor                 etat du systeme, fournisseurs detectes
 jio bench --skill 0.30     mesure le gain du harness (S0 -> S3, controle a budget egal)
 jio audit <fichier>        audite un artefact ; derive des regles executables de lui-meme
@@ -55,10 +59,12 @@ jio run "<objectif>" --prose   mission de DOCUMENT : la boucle de preuve complet
 jio claims <document>      verifie les faits d'une prose : calculs annonces, blocs
                            presentes comme Python, chemins cites (0 = conforme)
 jio trace <journal>        rejoue et verifie un journal (chaine de hachage + exploits)
+jio mutants                NOS tests attrapent-ils NOS erreurs ? (mutation de CE depot)
+jio ablation --missions 10 quelle brique apporte quoi ? (on l'enleve et on compare,
+                           memes missions : un levier NON VU n'est jamais dit « inutile »)
 ```
-Le banc est executable sans aucune cle API : les reponses sont simulees, la
-verification est reelle. `jio bench` refusera de vous vendre un chiffre : il
-compare toujours a un tirage aveugle de meme budget."""
+Banc executable sans aucune cle API : reponses simulees, verification REELLE. `jio bench`
+ne vend jamais un chiffre nu : il compare toujours a un tirage aveugle de meme budget."""
 
 
 def _agent_markdown(agent: AgentSpec, *, frontmatter: bool = True) -> str:
@@ -139,19 +145,27 @@ def _target_hermes() -> dict[str, str]:
     return files
 
 
-def _context_file(title: str, extra: str = "") -> str:
+def _context_file(title: str, extra: str = "", *, entete: bool = True) -> str:
+    """Le fichier de contexte d'un dialecte.
+
+    `entete=False` retire le rappel des trois etats : il est DEJA dans la doctrine qui suit
+    (`CONTRACT`), et le dupliquer fait depasser a `AGENTS.md` la limite de 150 lignes au-dela
+    de laquelle un fichier d'instructions est survole plutot que lu. Une redite coute donc
+    exactement ce que ce depot cherche a ne pas payer : du contexte qui ne sert pas.
+    """
+    rappel = ("""## Les trois etats d'une livraison
+
+`DELIVERED` / `DELIVERED_UNDER_RESERVATION` / `ABSTAINED`. Un quatrieme etat
+n'existe pas : « ca devrait marcher » est l'absence d'etat, pas un etat.
+
+""" if entete else "")
     return f"""\
 # {title}
 
 > Genere par `jio artifacts`. Source unique : `jio/artifacts/doctrine.py`.
 > Ne pas editer a la main.
 
-## Les trois etats d'une livraison
-
-`DELIVERED` / `DELIVERED_UNDER_RESERVATION` / `ABSTAINED`. Un quatrieme etat
-n'existe pas : « ca devrait marcher » est l'absence d'etat, pas un etat.
-
-## Principes
+{rappel}## Principes
 
 {_principles_block()}
 
@@ -174,15 +188,16 @@ Les roles du harness sont disponibles comme agents (`jio`, `jio-verifier`,
 `jio-forge`). Le verificateur n'a **pas** le droit d'ecrire : un verificateur qui
 peut modifier l'artefact qu'il juge finit toujours par le rendre conforme.
 """
-    return {"CLAUDE.md": _context_file("CLAUDE.md — instructions projet", extra)}
+    return {"CLAUDE.md": _context_file("CLAUDE.md — instructions projet", extra, entete=False)}
 
 
 def _target_agents() -> dict[str, str]:
     # <= 150 lignes : au-dela, le fichier est survole et non lu.
     content = _context_file(
         "AGENTS.md",
-        "\n## Regle de taille\n\nCe fichier est volontairement court. Detail complet : "
-        "`docs/VISION-ARCHITECTURE.md`, doctrine : `jio/artifacts/doctrine.py`.\n",
+        "\nDetail complet : `docs/VISION-ARCHITECTURE.md` · doctrine : "
+        "`jio/artifacts/doctrine.py`.\n",
+        entete=False,
     )
     lines = content.splitlines()
     if len(lines) > 150:  # pragma: no cover - garde-fou de qualite
@@ -191,11 +206,11 @@ def _target_agents() -> dict[str, str]:
 
 
 def _target_gemini() -> dict[str, str]:
-    return {"GEMINI.md": _context_file("GEMINI.md — instructions projet")}
+    return {"GEMINI.md": _context_file("GEMINI.md — instructions projet", entete=False)}
 
 
 def _target_cursor() -> dict[str, str]:
-    body = _context_file("JIO — harness anti-erreur").replace("# ", "## ", 1)
+    body = _context_file("JIO — harness anti-erreur", entete=False).replace("# ", "## ", 1)
     return {
         ".cursor/rules/jio.mdc": (
             "---\n"
@@ -210,7 +225,7 @@ def _target_cursor() -> dict[str, str]:
 def _target_copilot() -> dict[str, str]:
     return {
         ".github/copilot-instructions.md": _context_file(
-            "Copilot instructions — JIO harness"
+            "Copilot instructions — JIO harness", entete=False
         )
     }
 
