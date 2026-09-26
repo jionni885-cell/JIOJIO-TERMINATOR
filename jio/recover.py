@@ -67,6 +67,12 @@ class Recuperation:
     fichiers_modifies: int = 0
     fichiers_non_suivis: int = 0
     operations: list[str] = field(default_factory=list)
+    #: Preuves enregistrees dans le journal et portant le sceau d'un AUTRE etat du monde.
+    #: La restauration ne les efface pas — elle ne doit pas non plus les laisser passer
+    #: pour des preuves de l'etat actuel (arXiv 2608.29381, etat de verification
+    #: incoherent : c'est ainsi qu'on publie un monde sous la verification d'un autre).
+    preuves_perimees: int = 0
+    preuves_total: int = 0
     #: Vrai quand la simulation a pu etablir un plan SANS rien executer. Le code de retour
     #: de la commande vaut alors 0 : `--dry-run` est une inspection qui a REUSSI, et un
     #: script qui la lance ne doit pas la confondre avec un echec de recuperation.
@@ -123,6 +129,32 @@ def _branches_distantes(racine: Path, remote: str) -> list[str]:
         if "\trefs/heads/" in ligne:
             noms.append(ligne.split("\trefs/heads/", 1)[1].strip())
     return sorted(nom for nom in noms if nom)
+
+
+def _preuves_perimees(racine: Path, sceau_actuel: str) -> tuple[int, int]:
+    """Combien d'evenements du journal portent le sceau d'un autre monde ? (perimes, total)
+
+    Lecture seule, et jamais bloquante : un journal absent, illisible ou d'une version
+    anterieure (sans sceau) rend (0, 0). Une recuperation ne doit pas echouer parce qu'un
+    fichier annexe n'est pas lisible — elle doit seulement ne rien affirmer a son sujet.
+    """
+    from .core.journal import Journal
+
+    chemin = racine / ".jio" / "journal.jsonl"
+    if not chemin.is_file():
+        return 0, 0
+    try:
+        journal = Journal.from_jsonl(chemin.read_text(encoding="utf-8", errors="replace"))
+    except Exception:  # pragma: no cover - fichier abime : on ne conclut rien
+        return 0, 0
+    total = 0
+    perimes = 0
+    for evenement in journal:
+        total += 1
+        sceau_evenement = (evenement.payload.get("monde") or {}).get("sceau", "")
+        if sceau_evenement and sceau_evenement != sceau_actuel:
+            perimes += 1
+    return perimes, total
 
 
 def _branche_courante(racine: Path) -> str:
@@ -290,8 +322,10 @@ def recuperer(
 
     apres = empreinte_arbre(racine)
     modifies, restants = _compte_etat(racine)
+    perimes, total = _preuves_perimees(racine, apres)
     return Recuperation(
         fait=True,
+        preuves_perimees=perimes, preuves_total=total,
         motif=(
             "historique restaure. Les fichiers du disque n'ont pas ete touches : "
             f"empreinte identique avant/apres ({avant[:12]})."

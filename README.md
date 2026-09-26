@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 562 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 564 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1266,6 +1266,38 @@ contenu réelle serait passée inaperçue.
 Un test fige explicitement la date (`os.utime`) après une réécriture de même taille : taille
 identique, date identique, contenu différent — **le sceau doit changer quand même**. C'est ce
 qui empêche de « réoptimiser » un jour ce chemin avec des `stat`.
+
+### Le sceau est regardé par la boucle, pas seulement rangé
+
+Un journal scellé ne sert à rien si personne ne le lit. Deux endroits s'en servent :
+
+**Pendant une mission.** `jio run` compare les sceaux de ses propres événements et ajoute un
+avertissement au rapport dès que le monde a changé en cours de route :
+
+```
+    [MONDE] le monde a change PENDANT la mission (2 etats distincts — 4a1f3c2b : 6
+    evenement(s) · 95bce190 : 2 evenement(s)). Une conclusion peut relier des
+    observations faites sur deux etats differents : la relire avant de l'utiliser
+    comme preuve. `jio trace` en donne le detail.
+```
+
+Il **avertit** sans bloquer : le travail de l'utilisateur change légitimement pendant une
+mission — c'est même souvent le but. Mais une preuve qui ne dit pas sur quel monde elle a été
+obtenue n'en est pas une.
+
+**Après une restauration.** `jio recover` lit le journal et compte les preuves qui portent le
+sceau d'un autre état :
+
+```
+    2 preuves enregistrees portent le sceau d'un AUTRE etat du monde (sur 2 au total).
+    Elles restent valides pour ce qu'elles decrivent, pas pour l'etat actuel :
+    `jio trace` les montre, groupees par monde.
+```
+
+Rien n'est effacé ni invalidé : le constat est posé, la décision reste à l'utilisateur. Et
+quand le monde n'a pas changé — le cas normal, puisque `recover` ne touche aucun fichier — le
+compte est **zéro** et rien ne s'affiche. Un avertissement qui se déclenche toujours ne dit
+plus rien.
 
 ### Une seule mesure, pour deux usages
 

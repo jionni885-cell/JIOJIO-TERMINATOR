@@ -636,6 +636,18 @@ def cmd_recover(args: argparse.Namespace) -> int:
             print(f"    etiquette posee sur l'etat precedent : {resultat.etiquette}")
         print(f"    etat local : {resultat.fichiers_modifies} modification(s), "
               f"{resultat.fichiers_non_suivis} fichier(s) non suivi(s)")
+        if resultat.preuves_perimees:
+            nombre = resultat.preuves_perimees
+            if nombre == 1:
+                phrase = ("1 preuve enregistree porte le sceau d'un AUTRE etat du monde "
+                          f"(sur {resultat.preuves_total} au total).")
+            else:
+                phrase = (f"{nombre} preuves enregistrees portent le sceau d'un AUTRE etat "
+                          f"du monde (sur {resultat.preuves_total} au total).")
+            print()
+            print(f"    {phrase}")
+            print("    Elles restent valides pour ce qu'elles decrivent, pas pour l'etat")
+            print("    actuel : `jio trace` les montre, groupees par monde.")
         print()
         print("    Aucune commande n'a touche aux fichiers du disque (ni `--hard`, ni")
         print("    `checkout`, ni `clean`). Verifiez avec `git status`, puis commitez.")

@@ -500,6 +500,20 @@ journal.append("mission", {"objectif": "verifier le total"})
 journal.append("verification", {"resultat": "1+1=2 : conforme"})
 (racine / "src" / "total.py").write_text("def total():\n    return 2\n", encoding="utf-8")
 journal.append("livraison", {"fichier": "src/total.py"})
+from jio.loop.engine import Engine
+
+
+class _Faux:
+    """Le strict necessaire : la methode ne lit que le journal."""
+
+    def __init__(self, journal):
+        self.journal = journal
+
+
+avertissement = Engine._avertir_sur_le_monde(_Faux(journal))
+print("    avertissement du moteur :", (avertissement.message[:96] + "...")
+      if avertissement else "aucun")
+assert avertissement is not None, "le moteur n'avertis pas alors que le monde a change"
 print("    sceaux distincts :", len(journal.mondes()))
 print("    chaine integre    :", journal.verify_chain()[0])
 for entree in journal.mondes():

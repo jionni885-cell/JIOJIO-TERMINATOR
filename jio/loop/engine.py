@@ -229,6 +229,43 @@ class Engine:
 
     # -- point d'entree ----------------------------------------------------- #
 
+    def _avertir_sur_le_monde(self) -> Finding | None:
+        """Le monde a-t-il change PENDANT la mission ? Si oui, le rapport doit le dire.
+
+        Le journal scelle chaque evenement avec l'empreinte du monde ou il a ete ecrit.
+        Deux sceaux differents signifient qu'une partie des observations a porte sur un
+        etat et le reste sur un autre : une conclusion peut alors relier deux mondes qui
+        ne se sont jamais rencontres. C'est le defaut « inconsistent checkpoint state »
+        (arXiv 2608.29381) applique a la boucle elle-meme.
+
+        On AVERTIT, on ne bloque pas : le travail de l'utilisateur change legitimement
+        pendant une mission (c'est meme souvent le but). Mais une preuve qui ne dit pas
+        sur quel monde elle a ete obtenue n'en est pas une.
+        """
+        try:
+            mondes = self.journal.mondes()
+        except Exception:  # pragma: no cover - le journal ne doit jamais faire echouer une mission
+            return None
+        # Un seul monde, ou aucun sceau (journal d'une version anterieure) : rien a dire.
+        if len(mondes) <= 1:
+            return None
+        detail = " · ".join(
+            f"{monde['sceau'][:8] or '(sans sceau)'} : "
+            f"{len(monde['evenements'])} evenement(s)"
+            for monde in mondes
+        )
+        return Finding(
+            agent="monde",
+            severity=Severity.MEDIUM,
+            message=(
+                f"le monde a change PENDANT la mission ({len(mondes)} etats distincts — "
+                f"{detail}). Une conclusion peut relier des observations faites sur deux "
+                "etats differents : la relire avant de l'utiliser comme preuve. "
+                "`jio trace` en donne le detail."
+            ),
+        )
+
+
     def run(self, mission: Mission, work: WorkItem | None = None) -> MissionReport:
         started = time.monotonic()
         work = work or WorkItem(objective=mission.objective)
@@ -488,6 +525,15 @@ class Engine:
         # --- 4/5. AUDIT SI PAS ENCORE FAIT --------------------------------- #
         if best is not None and not reports:
             reports, outcome = self._audit_and_decide(best[0], spec, work, rounds - 1, usage)
+
+        # --- 6 bis. LE MONDE A-T-IL CHANGE SOUS NOS PIEDS ? ---------------- #
+        avertissement_monde = self._avertir_sur_le_monde()
+        if avertissement_monde is not None:
+            self.journal.append("monde", {
+                "avertissement": avertissement_monde.message,
+                "etats": len(self.journal.mondes()),
+            })
+            warnings.append(avertissement_monde)
 
         # --- 7. INTEGRITE -------------------------------------------------- #
         integrity = self.monitor.audit(self.journal)

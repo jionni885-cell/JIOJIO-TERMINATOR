@@ -274,3 +274,56 @@ def test_une_branche_inconnue_donne_les_noms_disponibles(
     assert "aucune reference distante pour `fantome`" in resultat.motif
     assert "Branches presentes sur le distant" in resultat.motif
     assert "main" in resultat.motif
+
+
+def test_les_preuves_d_un_autre_monde_sont_signalees(incident: tuple[Path, Path]) -> None:
+    """Restaurer l'historique ne restaure pas les preuves : il faut le dire.
+
+    Un journal enchaine prouve qu'il n'a pas ete altere ; il ne prouve pas que le monde n'a
+    pas change. Ici, deux evenements sont ecrits, puis le travail continue (le monde
+    change), puis l'accident arrive : les preuves portent desormais sur un etat qui n'existe
+    plus. La recuperation doit l'annoncer, sans effacer ni invalider quoi que ce soit.
+
+    Mesure honnete faite en ecrivant ce test : quand le monde n'a PAS change (cas normal de
+    `jio recover`, qui ne touche aucun fichier), le compte est zero et rien n'est affiche.
+    Un avertissement qui se declenche toujours ne dit plus rien.
+    """
+    from jio.core.journal import Journal
+
+    travail, _ = incident
+    journal = Journal(path=travail / ".jio" / "journal.jsonl", racine=travail)
+    journal.append("mission", {"id": "avant"})
+    journal.append("verdict", {"ok": True})
+
+    # Le monde change apres les preuves.
+    (travail / "src").mkdir(exist_ok=True)
+    (travail / "src" / "neuf.py").write_text("y = 1\n", encoding="utf-8")
+
+    resultat = recuperer(travail, branche="main")
+
+    assert resultat.fait, resultat.motif
+    assert resultat.preuves_total == 2
+    assert resultat.preuves_perimees == 2, (
+        "les preuves portant sur l'etat precedent n'ont pas ete signalees"
+    )
+
+
+def test_une_recuperation_qui_ne_change_rien_aux_fichiers_ne_perime_rien(
+    incident: tuple[Path, Path],
+) -> None:
+    """Le cas nominal : `recover` ne touche pas aux fichiers, donc les preuves restent valides.
+
+    C'est ce que l'empreinte avant/apres etablit. Signaler une peremption ici serait un faux
+    positif — et un faux positif sur un avertissement de surete est pire qu'une absence.
+    """
+    from jio.core.journal import Journal
+
+    travail, _ = incident
+    journal = Journal(path=travail / ".jio" / "journal.jsonl", racine=travail)
+    journal.append("mission", {"id": "avant"})
+
+    resultat = recuperer(travail, branche="main")
+
+    assert resultat.fait, resultat.motif
+    assert resultat.preuves_total == 1
+    assert resultat.preuves_perimees == 0
