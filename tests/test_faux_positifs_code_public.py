@@ -38,8 +38,10 @@ passer sur une machine sans reseau.
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
+from jio.cli import main
 from jio.verify.autocheck import _instantiable_without_args, derive, _lie_la_sortie_standard
 from jio.verify.imports import check_project
 from jio.verify.linters import LIMITES_DE_L_ANALYSE, LintFinding
@@ -199,13 +201,23 @@ def test_import_etoile_est_une_limite_et_non_une_accusation() -> None:
     vrai = LintFinding(path=Path("x.py"), line=3, rule="ruff:F821",
                        message="undefined name `truc`")
     assert not vrai.limite_de_l_analyse, "F821 est une preuve de defaut, pas une limite"
-    assert not LintFinding(path=Path("x.py"), line=4, rule="ruff:F401",
-                           message="import inutilise").limite_de_l_analyse
+    # F401 : code mort, pas rupture. Mesure : 41 des 44 constats sur 12 paquets publics
+    # etaient des F401 (wcwidth en a 38 a lui seul), qui noyaient les 3 vrais.
+    assert LintFinding(path=Path("x.py"), line=4, rule="ruff:F401",
+                       message="import inutilise").limite_de_l_analyse
 
 
 def test_le_jeu_de_limites_reste_etroit() -> None:
-    """Un jeu de limites qui s'elargit transforme l'audit en decor."""
-    assert set(LIMITES_DE_L_ANALYSE) == {"F403", "F405"}, sorted(LIMITES_DE_L_ANALYSE)
+    """Un jeu de limites qui s'elargit transforme l'audit en decor.
+
+    Trois entrees, chacune payee par une mesure sur du code public. Toute regle retiree de
+    l'accusation doit l'etre pour un constat precis, jamais pour faire baisser un chiffre :
+    ce test est la pour rendre ce choix visible et couteux.
+    """
+    assert set(LIMITES_DE_L_ANALYSE) == {"F401", "F403", "F405"}, sorted(LIMITES_DE_L_ANALYSE)
+    # Aucune limite ne doit couvrir les regles qui PROUVENT une rupture.
+    for preuve in ("F821", "F811", "F822", "F823", "F701", "F702", "F811"):
+        assert preuve not in LIMITES_DE_L_ANALYSE, f"{preuve} ne peut pas etre une limite"
 
 
 # --------------------------------------------------------------------------- #
@@ -256,3 +268,249 @@ def test_l_etoile_est_vue_meme_dans_un_try(tmp_path) -> None:
         "pkg/common.py": "from .helpers import Chose\n\nx = Chose\n",
     })
     assert check_project(fichiers, racine) == []
+
+
+# --------------------------------------------------------------------------- #
+# 5. Un module local ne doit pas masquer un paquet externe
+# --------------------------------------------------------------------------- #
+
+
+def test_un_import_absolu_ne_resout_pas_vers_un_module_local_d_un_seul_segment(
+    tmp_path,
+) -> None:
+    """Mesure sur `tqdm/contrib/discord.py` : `from requests.utils import
+    default_user_agent` etait resolu vers le `tqdm/utils.py` VOISIN, et la bibliotheque
+    etait accusee d'un nom inexistant.
+
+    Un nom absolu a plusieurs segments ne peut pas designer un module local d'un seul
+    segment. On accepte de rater le cas ou l'on auditerait le paquet `requests` lui-meme :
+    un faux negatif se declare, un faux positif detruit la confiance.
+    """
+    # La disposition compte : on audite le DOSSIER DU PAQUET (`.../pkg`), comme on audite
+    # `site-packages/tqdm`. C'est la que le module voisin porte le nom nu `utils`.
+    paquet = tmp_path / "pkg"
+    paquet.mkdir()
+    (paquet / "__init__.py").write_text("", encoding="utf-8")
+    (paquet / "utils.py").write_text("def aide():\n    return 1\n", encoding="utf-8")
+    (paquet / "client.py").write_text(
+        "from requests.utils import default_user_agent\n\nx = default_user_agent\n",
+        encoding="utf-8",
+    )
+    assert check_project(sorted(paquet.rglob("*.py")), paquet) == []
+
+
+def test_un_sous_paquet_n_abandonne_pas_plus_que_son_propre_nom(tmp_path) -> None:
+    """Regression attrapee par la mesure : `tqdm/contrib/discord.py` est revenu en `[IMPORT]`.
+
+    Le fichier vit dans un sous-paquet, donc la resolution essayait d'abandonner `tqdm`,
+    PUIS `tqdm.contrib`, PUIS `requests` — et le reste `utils` tombait sur le `utils.py` du
+    projet. Le nombre de segments abandonnes compte : seuls les noms de paquets ANCETRES du
+    fichier sont des prefixes legitimes, pas ceux du nom importe.
+    """
+    paquet = tmp_path / "pkg"
+    (paquet / "sous").mkdir(parents=True)
+    (paquet / "__init__.py").write_text("", encoding="utf-8")
+    (paquet / "sous" / "__init__.py").write_text("", encoding="utf-8")
+    (paquet / "utils.py").write_text("def aide():\n    return 1\n", encoding="utf-8")
+    (paquet / "sous" / "client.py").write_text(
+        "from requests.utils import default_user_agent\n\nx = default_user_agent\n",
+        encoding="utf-8",
+    )
+    assert check_project(sorted(paquet.rglob("*.py")), paquet) == []
+
+    # Contre-epreuve : le paquet lui-meme reste verifie, y compris en passant par le nom
+    # derive de la racine de scan.
+    (paquet / "sous" / "client.py").write_text(
+        "from pkg.sous.voisin import disparu\n\nx = disparu\n", encoding="utf-8"
+    )
+    (paquet / "sous" / "voisin.py").write_text("def reste():\n    return 1\n", encoding="utf-8")
+    trouves = check_project(sorted(paquet.rglob("*.py")), paquet)
+    assert len(trouves) == 1 and "disparu" in trouves[0].message, [p.message for p in trouves]
+
+
+def test_un_import_absolu_DU_PAQUET_EST_encore_verifie(tmp_path) -> None:
+    """Contre-epreuve : quand le prefixe abandonne EST le nom du dossier audite, la
+    resolution par suffixe reste legitime — c'est le cas d'une bibliotheque qui s'importe
+    par son nom absolu (`from pkg.utils import x`) et que l'on audite dans son dossier."""
+    paquet = tmp_path / "pkg"
+    paquet.mkdir()
+    (paquet / "__init__.py").write_text("", encoding="utf-8")
+    (paquet / "utils.py").write_text("def aide():\n    return 1\n", encoding="utf-8")
+    (paquet / "client.py").write_text(
+        "from pkg.utils import disparu\n\nx = disparu\n", encoding="utf-8"
+    )
+    trouves = check_project(sorted(paquet.rglob("*.py")), paquet)
+    assert len(trouves) == 1 and "disparu" in trouves[0].message, [p.message for p in trouves]
+
+
+def test_un_import_RELATIF_resout_toujours_le_module_voisin(tmp_path) -> None:
+    """Contre-epreuve : la resolution par suffixe reste valable pour `from .utils import x`.
+
+    La, le nom est construit depuis le paquet du fichier : le module d'un segment est la
+    bonne cible. Casser ce cas rendrait le controle muet sur les vrais renommages.
+    """
+    fichiers, racine = _projet(tmp_path, {
+        "pkg/__init__.py": "",
+        "pkg/utils.py": "def aide():\n    return 1\n",
+        "pkg/client.py": "from .utils import disparu\n\nx = disparu\n",
+    })
+    trouves = check_project(fichiers, racine)
+    assert len(trouves) == 1 and "disparu" in trouves[0].message
+
+
+def test_un_fichier_n_importe_pas_d_attribut_de_lui_meme(tmp_path) -> None:
+    """Mesure sur `tqdm/keras.py` : le fichier fait `import keras` (le VRAI paquet, externe)
+    puis `keras.callbacks.Callback`. Le nom se resolvait sur `tqdm/keras.py` LUI-MEME, d'ou
+    deux accusations fausses. Un fichier ne s'importe pas lui-meme sous son nom absolu.
+    """
+    fichiers, racine = _projet(tmp_path, {
+        "pkg/__init__.py": "",
+        "pkg/keras.py": (
+            "try:\n"
+            "    import keras\n"
+            "except ImportError:\n"
+            "    keras = None\n"
+            "\n"
+            "\n"
+            "if keras is not None:\n"
+            "    class Callback(keras.callbacks.Callback):\n"
+            "        pass\n"
+        ),
+    })
+    assert check_project(fichiers, racine) == []
+
+
+# --------------------------------------------------------------------------- #
+# 6. Une dataclass derivee : les champs de la base comptent
+# --------------------------------------------------------------------------- #
+
+
+def test_une_dataclass_derivee_n_est_pas_declaree_instanciable() -> None:
+    """Mesure sur `filelock.asyncio.AsyncFileLockContext`, derivee de `FileLockContext`.
+
+    Le constructeur GENERE inclut les champs de la base — cinq arguments obligatoires ici,
+    definis dans un autre fichier. La regle « s'instancie sans argument » etait donc fausse
+    par construction, et le bac a sable repondait `TypeError: __init__() missing 5 required
+    positional arguments`.
+    """
+    source = (
+        "from dataclasses import dataclass\n"
+        "\n"
+        "\n"
+        "@dataclass\n"
+        "class Contexte(BaseDuProjet):\n"
+        "    actif: bool = True\n"
+    )
+    classe = next(
+        n for n in ast.parse(source).body if isinstance(n, ast.ClassDef)
+    )
+    possible, raison = _instantiable_without_args(classe, {})
+    assert not possible, "une dataclass derivee a ete declaree instanciable a vide"
+    assert "hors de ce fichier" in raison, raison
+
+
+def test_une_dataclass_derivee_d_une_dataclass_du_fichier_est_auditee() -> None:
+    """Contre-epreuve : quand la base est visible, la regle reste verifiable."""
+    source = (
+        "from dataclasses import dataclass, field\n"
+        "\n"
+        "\n"
+        "@dataclass\n"
+        "class Base:\n"
+        "    actif: bool = True\n"
+        "\n"
+        "\n"
+        "@dataclass\n"
+        "class Contexte(Base):\n"
+        "    nom: str = 'x'\n"
+    )
+    arbre = ast.parse(source)
+    classes = {n.name: n for n in arbre.body if isinstance(n, ast.ClassDef)}
+    possible, raison = _instantiable_without_args(classes["Contexte"], classes)
+    assert possible, raison
+
+
+# --------------------------------------------------------------------------- #
+# 7. La version de Python annoncee a l'analyseur
+# --------------------------------------------------------------------------- #
+
+
+def test_l_analyseur_recoit_la_version_de_l_interpreteur() -> None:
+    """Mesure sur `filelock` : `ruff` declarait `BaseExceptionGroup` non defini.
+
+    Le message proposait lui-meme la correction (`target-version = "py311"`), et l'artefact
+    — qui garde ce nom derriere `sys.version_info >= (3, 11)` — etait accuse a tort. On
+    annonce donc la version sous laquelle on MESURE.
+    """
+    from jio.verify.linters import _version_cible
+
+    attendu = f"py{sys.version_info[0]}{sys.version_info[1]}"
+    assert _version_cible() == attendu
+
+
+def test_un_nom_de_la_stdlib_recente_ne_fait_pas_echouer_le_scan(tmp_path) -> None:
+    """Le cas complet, au niveau de l'outil : un nom apparu plus tard que la version par
+    defaut de ruff ne doit plus etre signale sur la version courante."""
+    from jio.verify.linters import analyse
+
+    (tmp_path / "m.py").write_text(
+        "import sys\n"
+        "\n"
+        "\n"
+        "def groupe():\n"
+        "    if sys.version_info >= (3, 11):\n"
+        "        return BaseExceptionGroup\n"
+        "    return None\n",
+        encoding="utf-8",
+    )
+    rapport = analyse([tmp_path / "m.py"], root=tmp_path, prefer="ruff")
+    if not rapport.tool:
+        return  # aucun analyseur installe : le controle ne peut rien dire, et le dit
+    assert not [f for f in rapport.findings if f.code == "F821"], [
+        str(f) for f in rapport.findings
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# 8. Un exemple abrege par `...`
+# --------------------------------------------------------------------------- #
+
+
+def test_un_exemple_abrege_par_des_points_n_est_pas_une_specification(
+    tmp_path, capsys
+) -> None:
+    """Mesure sur `wcwidth.hyperlink.Hyperlink` : l'exemple annonce
+
+        Hyperlink(params=HyperlinkParams(url='http://example.com', ...), text='Hello')
+
+    C'est une convention d'ecriture tres repandue ; doctest, lui, compare au caractere pres
+    tant que `ELLIPSIS` n'est pas active. La classe etait donc declaree fautive alors que sa
+    sortie reelle correspond, au detail abrege pres.
+
+    Le controle se fait au niveau de la COMMANDE : c'est ce que l'utilisateur voit, et la
+    classification « reserve » (et non « defaut ») est justement ce qui est en cause.
+    """
+    (tmp_path / "mod.py").write_text(
+        "from dataclasses import dataclass\n"
+        "\n"
+        "\n"
+        "@dataclass\n"
+        "class Enveloppe:\n"
+        '    """\n'
+        "    >>> Enveloppe().rendu()\n"
+        "    Enveloppe(url='http://example.com', ...)\n"
+        '    """\n'
+        "\n"
+        "    url: str = 'http://example.com'\n"
+        "    identifiant: str = 'abc'\n"
+        "\n"
+        "    def rendu(self) -> None:\n"
+        "        print(f\"Enveloppe(url={self.url!r}, identifiant={self.identifiant!r})\")\n",
+        encoding="utf-8",
+    )
+    code = main(["scan", str(tmp_path), "--no-learn", "--no-linters"])
+    sortie = capsys.readouterr().out
+
+    assert code == 0, "un exemple abrege ne doit pas faire echouer le scan :\n" + sortie[-800:]
+    assert "ABREGEE" in sortie, "la limite doit etre SIGNALEE, pas taisee"
+    assert "RESERVE(S)" in sortie or "RESERVE" in sortie

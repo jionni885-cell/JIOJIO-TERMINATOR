@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 675 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 685 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1718,14 +1718,15 @@ bien des fonctions, simplement pas auditables ainsi.
 
 Le README annonçait ce chiffre manquant, noir sur blanc : *« de nouvelles règles dans
 `jio scan` sans mesure sur le corpus de paquets publics — qui est ce qui décide si une règle
-accuse à tort »*. Le voici.
+accuse à tort »*. Le voici, et il a changé le code.
 
-Protocole : quatre bibliothèques publiées sur PyPI (`click` 8.5.0, `packaging` 26.3,
-`pyparsing` 3.3.3, `attrs` 26.1.0), installées puis passées à `jio scan`, sans aucune
-adaptation.
+Protocole : **douze** bibliothèques publiées sur PyPI (`click`, `packaging`, `pyparsing`,
+`attrs`, `jinja2`, `tqdm`, `tabulate`, `wcwidth`, `idna`, `more_itertools`, `filelock`,
+`platformdirs`), installées puis passées à `jio scan`, sans aucune adaptation.
 
-**Avant : trois paquets sur quatre déclarés fautifs.** Douze problèmes au total, et pas un
-seul n'était un défaut du code.
+**Avant : trois paquets sur quatre déclarés fautifs au premier essai.** Douze problèmes, aucun
+n'était un défaut du code — huit familles, toutes de la même nature : **l'analyseur ne pouvait
+pas conclure, et il accusait.**
 
 | Cause réelle | Ce qui était rapporté |
 |---|---|
@@ -1733,38 +1734,49 @@ seul n'était un défaut du code.
 | Une classe à fabriques refuse la construction | **5 problèmes** `[C-001..005]` — `VersionRange.__new__` lève `TypeError` volontairement |
 | Un exemple attend une traceback, dont le nom de module diffère | 2 problèmes `[A-003]`, `[C-001]` |
 | Un exemple écrit dans un flux **lié à l'import** (`file=sys.stdout`) | 1 problème `[A-003]` |
+| Un exemple **abrégé** par `...` (style courant, `ELLIPSIS` absent) | 1 problème `[C-001]` — `wcwidth.hyperlink` |
 | `import *` : l'analyseur ne peut pas suivre les noms | **5 problèmes** `[ruff:F403]` |
 | Un nom vient d'un `from .core import *` chez le voisin | 2 problèmes `[IMPORT]` |
+| Un module local masque un paquet externe (`tqdm/utils.py` contre `requests.utils`) | 3 problèmes `[IMPORT]` |
+| Une dataclass dérivée : les champs obligatoires vivent dans la base | 1 problème `[C-001]` — `filelock.AsyncFileLockContext` |
+| `ruff` juge avec sa version de Python par défaut, pas la nôtre | 1 problème `[ruff:F821]` — `BaseExceptionGroup` |
+| Un import mort dans un module qui réexporte | 41 problèmes `[ruff:F401]` — `wcwidth` à lui seul en avait 38 |
 
-Toutes de la même famille : **l'analyseur ne pouvait pas conclure, et il accusait.**
-
-### Après, et ce qu'il reste
+### Après : 12 paquets, 3 problèmes, et les trois sont vrais
 
 ```
-    click        0 probleme(s)  ·  code de sortie 0
-    packaging    0 probleme(s)  ·  code de sortie 0
-    pyparsing    1 probleme(s)  ·  code de sortie 1
-                [ruff:F401] import inutilise — `.unicode.UnicodeRangeList` imported but unused
-    attrs        0 probleme(s)  ·  code de sortie 0
+    jinja2       0 probleme(s)  ·  code de sortie 0
+    tqdm         3 probleme(s)  ·  code de sortie 1
+                [IMPORT] `_screen_shape_linux` est importe de `utils` (relatif) mais n'y existe pas
+                [IMPORT] `_screen_shape_tput` est importe de `utils` (relatif) mais n'y existe pas
+                [IMPORT] `_screen_shape_windows` est importe de `utils` (relatif) mais n'y existe pas
+    wcwidth      0 probleme(s)  ·  code de sortie 0
+    filelock     0 probleme(s)  ·  code de sortie 0
+    ... click, packaging, pyparsing, attrs, idna, tabulate, platformdirs, more_itertools : 0
 ```
 
-Le seul problème restant est **vrai**, vérifié à la main : `UnicodeRangeList` est un alias de
-type public de `pyparsing.unicode`, importé dans `__init__.py`, et absent des **171** noms de
-`__all__`. Le nom est donc visible (`pyparsing.UnicodeRangeList`) sans être réexporté — soit
-l'import est mort, soit l'alias a été oublié dans `__all__`.
+**Les trois sont un vrai défaut, et il est reproductible en une ligne :**
 
-Un audit qui trouve peu de lignes et que des vraies vaut mieux qu'un audit qui en trouve
-douze et se trompe onze fois.
+```console
+$ python -c "import tqdm._utils"
+ImportError: cannot import name '_screen_shape_linux' from 'tqdm.utils'
+```
+
+`tqdm/_utils.py` importe trois fonctions que `tqdm/utils.py` ne déclare plus. C'est exactement
+la classe de bug pour laquelle le contrôle d'imports a été écrit — *renommé sans mettre à jour
+les appelants* —, celle qui casse chez le consommateur et jamais dans le fichier modifié. Le
+dépôt tarball officiel de `tqdm 4.70.1` le confirme : `utils.py` n'a qu'un `_screen_shape_wrapper`,
+et `_utils.py` en importe trois autres. `jio scan` l'a vu **en lisant les imports, sans jamais
+exécuter le module** — c'est le but : voir sans lancer le code douteux.
 
 ```bash
 scripts/mesure-code-public.sh          # rejoue la mesure (n'installe rien)
 scripts/mesure-code-public.sh rich     # n'importe quel paquet déjà installé
 ```
 
-### Quatre corrections, une seule doctrine
+### Onze corrections, une seule doctrine
 
-Chaque correction suit la même règle, écrite dans le code depuis le début : *une capacité qui
-n'a pas pu conclure se **déclare**, elle ne s'**accuse** pas*. Et, comme toujours, l'exclusion
+Une capacité qui n'a pas pu conclure se **déclare**, elle ne s'**accuse** pas. Et l'exclusion
 est **dite** :
 
 ```
@@ -1777,18 +1789,40 @@ est **dite** :
     __init__.py [A-003] la sortie attendue passe par un flux lie a l'import
     (`file=sys.stdout` par defaut), que le bac a sable ne peut pas capter
 
+    hyperlink.py [C-001] la sortie annoncee est ABREGEE par `...` ; les parties litterales
+    concordent, ce qui est abrege n'est pas verifie — jamais un succes
+
     __init__.py [ruff:F403] `import *` : l'analyseur ne peut pas suivre les noms [...] —
     limite de l'outil, pas du code
 ```
 
-Et deux gardes pour que ces filtres ne deviennent pas des trous :
+**Le cas `F401` mérite d'être raconté**, parce que c'est la mesure qui a tranché, pas une
+préférence. `ruff:F401` (« import inutilisé ») est un fait, et le projet le traitait comme un
+défaut. Sur les douze paquets, **41 des 44 constats étaient des `F401`** — `wcwidth` en avait
+38 à lui seul, dans un module dont le commentaire dit *« re-export ... even a few private ones ...
+for convenience and others for legacy »*. Le message de `ruff` lui-même propose trois
+intentions différentes (retirer, ajouter à `__all__`, réexporter sous un alias) : l'outil ne
+sait pas laquelle, et **rien ne casse**. Ces constats sont donc passés en **réserves** —
+affichés, comptés, jamais accusés — parce qu'un rapport qu'on ne peut pas lire est ignoré **en
+entier, y compris ses vrais défauts**. Les 38 `F401` de `wcwidth` noyaient l'`ImportError` de
+`tqdm`.
 
-* un `@lru_cache` ou un décorateur maison n'exclut rien de l'audit (un test l'exige) ; un
-  `raise` **conditionnel** dans un constructeur non plus — seul un `raise` au premier niveau
-  du corps est un refus par construction ;
-* `F821` (nom non défini) reste une **preuve de défaut**, pas une limite. Le jeu
-  `LIMITES_DE_L_ANALYSE` ne contient que `F403` et `F405`, et un test l'exige : un jeu de
-  limites qui s'élargit transforme l'audit en décor.
+Ce qui reste une **preuve de défaut**, en revanche, n'a pas bougé : `F821` (nom non défini),
+`F811`, `F822`, `F823` et les erreurs de syntaxe. Un test l'exige — `LIMITES_DE_L_ANALYSE` ne
+contient que `F401`, `F403` et `F405`, chacun payé par une mesure, et un jeu de limites qui
+s'élargit transforme l'audit en décor.
+
+### Les gardes, pour que ces filtres ne deviennent pas des trous
+
+* un `@lru_cache` ou un décorateur maison n'exclut rien de l'audit ; un `raise`
+  **conditionnel** dans un constructeur non plus — seul un `raise` au premier niveau du corps
+  est un refus par construction ;
+* la résolution par suffixe d'un import **absolu** n'est acceptée que si le préfixe abandonné
+  est le **nom du dossier audité** — et le contre-test exige qu'un vrai renommage reste vu ;
+* un fichier ne s'importe pas lui-même sous son nom absolu (`tqdm/keras.py` fait `import keras`,
+  le vrai Keras — pas `tqdm/keras.py`) ;
+* une dataclass dérivée d'une dataclass **du même fichier** reste auditée : la limite ne couvre
+  que les champs invisibles.
 
 ### Le bug dans le bug
 
@@ -1799,19 +1833,15 @@ En corrigeant la comparaison des tracebacks, la reprise rejouait les **mêmes** 
 NameError: name 'Specifier' is not defined
 ```
 
-et la correction échouait pour une raison qui n'avait **rien à voir** avec ce qu'elle
-vérifiait. Les objets de test sont maintenant reconstruits (`DocTestFinder` neuf) à chaque
-passe — mesuré, pas supposé.
+et la correction échouait pour une raison qui n'avait **rien à voir** avec ce qu'elle vérifiait.
+Les objets de test sont maintenant reconstruits (`DocTestFinder` neuf) à chaque passe.
 
-Et une régression attrapée par la mesure elle-même, deux minutes après avoir été écrite : le
-nouveau contrôle acceptait une fonction mais recevait parfois une **classe**, ce qui faisait
-échouer l'audit du fichier entier sur
-
-```
-[SCAN] analyse impossible : 'ClassDef' object has no attribute 'args'
-```
-
-Un contrôle doit accepter ce que ses appelants lui donnent.
+Deux régressions attrapées par la mesure elle-même, à quelques minutes d'intervalle : le
+nouveau contrôle acceptait une fonction mais recevait parfois une **classe**
+(`[SCAN] analyse impossible : 'ClassDef' object has no attribute 'args'`), et la première
+version du filtre de suffixe cassait les imports **relatifs** (`from .utils import x`). Les deux
+ont un test dédié : *un contrôle doit accepter ce que ses appelants lui donnent*, et *un filtre
+ne doit pas emporter ce qu'il ne visait pas*.
 
 ## Toutes les commandes répondent, et c'est testé
 

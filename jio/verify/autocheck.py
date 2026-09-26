@@ -304,7 +304,9 @@ def _refuse_la_construction(constructeur: ast.FunctionDef) -> bool:
     return any(isinstance(item, ast.Raise) for item in constructeur.body)
 
 
-def _instantiable_without_args(node: ast.ClassDef) -> tuple[bool, str]:
+def _instantiable_without_args(
+    node: ast.ClassDef, classes: dict[str, ast.ClassDef] | None = None
+) -> tuple[bool, str]:
     """L'instanciation sans argument est-elle garantie possible ?
 
     C'est la seule condition qui autorise une regle *prouvable* : une classe dont
@@ -336,6 +338,28 @@ def _instantiable_without_args(node: ast.ClassDef) -> tuple[bool, str]:
         # classe etait instanciable a vide -> faux positif sur Calibration,
         # ProgressPoint, Event, ConsensusOutcome.
         missing = _required_dataclass_fields(node)
+        # Les champs de la BASE comptent : le constructeur genere les inclut. Mesure sur du
+        # code public : `filelock.AsyncFileLockContext` est une dataclass derivee de
+        # `FileLockContext`, dont les cinq champs obligatoires vivent dans un AUTRE fichier.
+        # La regle « s'instancie sans argument » etait donc fausse par construction, et le
+        # bac a sable repondait :
+        #     TypeError: __init__() missing 5 required positional arguments
+        for base in node.bases:
+            nom = ast.unparse(base).split(".")[-1]
+            if nom in {"object", "ABC", "Protocol", "ABCMeta"}:
+                continue
+            base_node = (classes or {}).get(nom)
+            if base_node is None:
+                return False, (
+                    f"dataclass derivee de {nom} : les champs de la base sont hors de ce "
+                    "fichier, donc l'instanciation a vide n'est pas verifiable ici"
+                )
+            if not _is_dataclass(base_node):
+                return False, (
+                    f"dataclass derivee de {nom}, qui n'est pas une dataclass : le "
+                    "constructeur vient de la base"
+                )
+            missing += _required_dataclass_fields(base_node)
         if missing:
             return False, f"dataclass a champs obligatoires : {', '.join(missing)}"
         return True, ""
@@ -885,6 +909,37 @@ if _jio_runner.failures:
                 % (_jio_runner.failures, _jio_tail)
             )
 
+    # Cinquieme cas, meme famille : l'exemple est ABREGE par `...`.
+    #
+    #     >>> Hyperlink.parse(...)
+    #     Hyperlink(params=HyperlinkParams(url='http://example.com', ...), text='Hello')
+    #
+    # C'est une convention d'ecriture tres repandue ; doctest, lui, compare le texte au
+    # caractere pres tant que `ELLIPSIS` n'est pas active. Mesure sur `wcwidth` : la classe
+    # etait declaree fautive alors que sa sortie reelle correspond, au detail abrege pres.
+    #
+    # On rejoue donc avec `ELLIPSIS` : les parties LITTERALES doivent toujours concorder,
+    # seul ce qui est remplace par `...` echappe au controle. Si tout passe ainsi, l'exemple
+    # est declare en RESERVE — jamais en succes : ce qui est abrege n'est pas verifie.
+    if _jio_runner.failures:
+        _jio_buf3 = []
+        _jio_runner3 = _jio_doc.DocTestRunner(
+            verbose=False, optionflags=_jio_doc.ELLIPSIS | _jio_doc.IGNORE_EXCEPTION_DETAIL
+        )
+        _jio_tests3 = [
+            _t for _t in _jio_doc.DocTestFinder().find(_jio_fn, name=_jio_fn.__name__)
+            if _t.examples
+        ]
+        for _t in _jio_tests3:
+            _jio_runner3.run(_t, out=_jio_buf3.append)
+        if not _jio_runner3.failures:
+            raise AssertionError(
+                "[RESERVE] %d exemple(s) de docstring : la sortie annoncee est ABREGEE par "
+                "`...` ; les parties litterales concordent, ce qui est abrege n'est pas "
+                "verifie (doctest exige `ELLIPSIS` pour ce style d'ecriture) : %s"
+                % (_jio_runner.failures, _jio_tail)
+            )
+
     # Quatrieme cas, meme famille : l'exemple ecrit dans un flux LIE A L'IMPORT.
     # `def f(file=sys.stdout)` capture la sortie standard d'AVANT le test ; doctest la
     # remplace pendant l'execution, ne voit rien, et annonce « Got nothing » alors que
@@ -1319,7 +1374,7 @@ def _class_spec(
     notes: list[str] = []
     under: list[str] = []
 
-    instantiable, reason = _instantiable_without_args(node)
+    instantiable, reason = _instantiable_without_args(node, classes)
     methods = _public_methods(node)
 
     if instantiable:

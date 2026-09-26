@@ -95,6 +95,14 @@ def plain_french(code: str) -> str:
 #: raison. Une capacite limitee se declare ; elle ne s'accuse pas — et elle ne se taise pas
 #: non plus, sinon `import *` deviendrait une zone ou plus personne ne regarde.
 LIMITES_DE_L_ANALYSE: dict[str, str] = {
+    "F401": (
+        "import inutilise : c'est du CODE MORT, pas une rupture — rien ne casse. Le message "
+        "de l'outil propose trois intentions differentes (retirer, ajouter a `__all__`, ou "
+        "reexporter sous un alias), et un module qui declare `__all__` reexporte "
+        "deliberement des noms. Mesure sur 12 paquets publics : 41 des 44 constats etaient "
+        "des F401, et ils noyaient les 3 VRAIS (dont un ImportError dans tqdm). Un rapport "
+        "qu'on ne peut pas lire est ignore en entier, y compris ses vrais defauts"
+    ),
     "F403": (
         "`import *` : l'analyseur ne peut pas suivre les noms, donc il ne peut rien prouver "
         "sur ce fichier — limite de l'outil, pas du code"
@@ -104,6 +112,24 @@ LIMITES_DE_L_ANALYSE: dict[str, str] = {
         "limite de l'outil, pas une preuve de defaut"
     ),
 }
+
+def _version_cible() -> str:
+    """Version de Python annoncee a l'analyseur : celle de l'INTERPRETE COURANT.
+
+    Sans elle, ruff prend sa version par defaut, et tout nom de la bibliotheque standard
+    apparu apres cette version est declare « non defini » :
+
+        [ruff:F821] Undefined name `BaseExceptionGroup`. Consider specifying
+        requires-python = ">=3.11" or tool.ruff.target-version = "py311"
+
+    Mesure sur du code public (`filelock`) : l'outil proposait lui-meme la correction, et
+    l'artefact — qui garde ce nom derriere `sys.version_info >= (3, 11)` — etait accuse a
+    tort. On annonce donc la version sous laquelle on MESURE : c'est celle la qui decide de
+    ce qui est defini, et un rapport doit dire dans quelles conditions il a ete produit.
+    """
+    majeur, mineur = sys.version_info[:2]
+    return f"py{majeur}{mineur}"
+
 
 #: Plafond de constats remontes pour un meme outil : au-dela, on resume au lieu de
 #: noyer le rapport. Un fichier peut legitimement produire des centaines de lignes.
@@ -248,7 +274,10 @@ def analyse(
 
     ruff = _ruff_command() if prefer in {"auto", "ruff"} else None
     if ruff is not None:
-        cmd = [*ruff, "check", "--select", BUG_RULES, "--output-format", "json", *files]
+        cmd = [
+            *ruff, "check", "--select", BUG_RULES, "--output-format", "json",
+            "--target-version", _version_cible(), *files,
+        ]
         tool = "ruff"
     else:
         flake8 = _flake8_command() if prefer in {"auto", "flake8"} else None

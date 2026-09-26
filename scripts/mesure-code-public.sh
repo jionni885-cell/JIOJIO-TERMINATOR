@@ -67,6 +67,9 @@ done
 echo
 echo "    total : $TOTAL_PROBLEMES probleme(s) sur ${#MESURES[@]} paquet(s) mesure(s)"
 echo "    Lecture : un probleme n'est ni un succes ni un echec du script. Chacun doit etre"
-echo "    INSTRUIT a la main — c'est ainsi qu'ont ete trouves les quatre faux positifs deja"
-echo "    corriges (fixture pytest, classe a fabriques, traceback, sortie liee a l'import)."
+echo "    INSTRUIT a la main — c'est ainsi qu'ont ete trouves et corriges les faux positifs"
+echo "    des huit familles deja rencontrees : fixture pytest, classe a fabriques, traceback,"
+echo "    sortie liee a l'import, exemple abrege par \`...\`, import etoile, nom venant d'une"
+echo "    etoile chez le voisin, module local masquant un paquet externe."
+echo "    Et c'est ainsi qu'a ete trouve un VRAI defaut : \`import tqdm._utils\` echoue."
 echo

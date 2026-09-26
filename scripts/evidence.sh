@@ -953,7 +953,9 @@ done
 if [ "$PAQUETS_PUBLICS" -lt 2 ]; then
     sauter "moins de deux paquets publics installes (reseau non requis pour la preuve)"
 else
-    SORTIE_MESURE="$(bash "$RACINE/scripts/mesure-code-public.sh" 2>&1)"
+    SORTIE_MESURE="$(bash "$RACINE/scripts/mesure-code-public.sh" \
+        jinja2 tqdm tabulate wcwidth idna more_itertools filelock platformdirs \
+        click packaging pyparsing attrs 2>&1)"
     printf '%s\n' "$SORTIE_MESURE" | sed -n '/MESURE/,/total/p' | head -12
 
     # Le controle du controle : les formes REELLES qui accusaient a tort sont verifiees une
@@ -999,6 +1001,23 @@ with tempfile.TemporaryDirectory() as temporaire:
 
 print("    contrefacons : 3 formes reelles verifiees (fabriques, flux lie, import etoile)")
 PYEOF
+
+    # Le VRAI defaut trouve sur du code public, verifie a l'EXECUTION : `jio scan` a vu que
+    # `tqdm/_utils.py` importe trois noms que `tqdm/utils.py` ne declare pas. La preuve n'est
+    # pas l'avis de l'outil : c'est l'ImportError, reproductible en une ligne.
+    if "$PYTHON" -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('tqdm') else 1)" 2>/dev/null; then
+        if "$PYTHON" -c "import tqdm._utils" 2>/dev/null; then
+            echo "    tqdm._utils s'importe maintenant : le defaut trouve par le scan a disparu."
+            echo "    -> re-verifier la trouvaille avant de la citer : un defaut corrige n'est"
+            echo "       plus une preuve, et une preuve qui cite un defaut corrige est un mensonge."
+        else
+            MESSAGE="$("$PYTHON" -c "import tqdm._utils" 2>&1 | tail -1)"
+            echo "    defaut REEL confirme : $MESSAGE"
+            echo "      (jio scan l'a vu en lisant les imports, sans jamais executer le module)"
+        fi
+    else
+        echo "    tqdm absent : la trouvaille reelle n'est pas re-verifiee ici"
+    fi
 fi
 
 titre "Termine"

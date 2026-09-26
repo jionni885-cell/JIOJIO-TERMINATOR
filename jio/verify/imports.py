@@ -219,18 +219,82 @@ def _index(infos: list[ModuleInfo]) -> dict[str, ModuleInfo]:
     return table
 
 
-def _resolve(module: str, table: dict[str, ModuleInfo]) -> ModuleInfo | None:
+def _espaces_d_import(path: Path, root: Path) -> frozenset[str]:
+    """Prefixes sous lesquels les paquets ANCETRES de ce fichier s'importent.
+
+    Un fichier ne sait pas depuis quelle racine on l'audite : `src/humanize/__init__.py`
+    s'importe `humanize` pour Python, que l'on scanne le depot ou `src/humanize/`. Ces noms
+    se lisent sur le DISQUE — tout dossier ancetre portant un `__init__.py` est un paquet,
+    et il s'importe par son nom de dossier ; on ajoute la forme derivee de la racine de
+    scan (`src.humanize`), celle que l'outil utilise dans sa propre table. Mesure : le meme
+    renommage etait vu depuis la racine du depot et invisible depuis le dossier du paquet.
+
+    Le nom du dossier racine est ajoute : auditer `site-packages/tqdm` doit permettre
+    `from tqdm.utils import ...` meme si `__init__.py` manque la ou l'on regarde.
+    """
+    noms = {Path(root).name}
+    cible, borne = Path(path).resolve(), Path(root).resolve()
+    for parent in cible.parents:
+        if not (parent / "__init__.py").is_file():
+            if parent == borne:
+                break
+            continue
+        noms.add(parent.name)
+        derive = ".".join(parent.relative_to(borne).parts) if parent != borne else ""
+        if derive:
+            noms.add(derive)
+        if parent == borne:
+            break
+    return frozenset(noms)
+
+
+def _resolve(
+    module: str,
+    table: dict[str, ModuleInfo],
+    *,
+    absolu: bool = False,
+    racine: str = "",
+    espaces: frozenset[str] | None = None,
+) -> ModuleInfo | None:
     """Resout un module par son nom, puis par ses suffixes — seulement si non ambigu.
 
     On prefere ne rien dire que de designer le mauvais fichier : si deux modules
     partagent le meme suffixe (`a.utils` et `b.utils`), la resolution est
     abandonnee. Un outil qui accuse le mauvais fichier est pire qu'un outil muet.
+
+    `absolu=True` pour un import ECRIT EN ABSOLU (`from requests.utils import ...`). La
+    resolution par suffixe n'est alors acceptee QUE si les segments abandonnes forment
+    EXACTEMENT le nom d'un paquet ancetre du fichier (`espaces`, voir `_espaces_d_import`) :
+    le code parle alors de son propre paquet, et le reste du nom se resout chez lui.
+
+    Sans cette condition, `tqdm/contrib/discord.py` faisait resoudre `requests.utils` vers
+    le `tqdm/utils.py` voisin : l'audit accusait une bibliotheque correcte d'un nom
+    inexistant. Mesure faite sur du code public, et le meme mecanisme accusait
+    `keras.callbacks` dans `tqdm/keras.py`.
+
+    Le prix est un faux NEGATIF : un import absolu du paquet lui-meme, ecrit depuis un
+    dossier racine qui ne porte pas son nom, n'est plus verifie. C'est le bon sens du
+    compromis — un faux negatif se declare, un faux positif detruit la confiance.
+
+    Le nom construit depuis le paquet du fichier (`from .utils import ...`) n'est pas
+    concerne : la, le suffixe vient du paquet lui-meme, et le module a un segment est
+    la bonne cible.
     """
     if module in table:
         return table[module]
     parts = module.split(".")
+    autorises = espaces if espaces is not None else frozenset({racine})
     for i in range(1, len(parts)):
         suffix = parts[i:]
+        # Pour un nom ABSOLU, les segments abandonnes doivent former le nom d'un paquet
+        # ancetre du fichier : sinon l'import designe un paquet EXTERIEUR, et resoudre son
+        # reste chez nous accusait une bibliotheque correcte.
+        #
+        # Le compte des segments compte : `tqdm/contrib/discord.py` importe
+        # `requests.utils` ; abandonner `tqdm`, puis `tqdm.contrib`, menait a abandonner
+        # aussi `requests` et a tomber sur n'importe quel `...utils` du projet.
+        if absolu and ".".join(parts[:i]) not in autorises:
+            continue
         matches = {
             info.path: info
             for info in table.values()
@@ -259,6 +323,16 @@ def check_project(paths: list[Path], root: Path) -> list[ImportProblem]:
     infos = [analyse(p, root) for p in paths]
     table = _index(infos)
     problems: list[ImportProblem] = []
+    # Prefixes qu'un fichier peut abandonner dans un import absolu : les noms des paquets
+    # ancetres, lus sur le disque (voir `_espaces_d_import`). C'est le SEUL ensemble
+    # accepte (voir `_resolve`).
+    espaces_vus: dict[Path, frozenset[str]] = {}
+
+    def _prefixes(info: ModuleInfo) -> frozenset[str]:
+        cle = Path(info.path)
+        if cle not in espaces_vus:
+            espaces_vus[cle] = _espaces_d_import(cle, root)
+        return espaces_vus[cle]
 
     for info in infos:
         if not info.parses:
@@ -274,10 +348,13 @@ def check_project(paths: list[Path], root: Path) -> list[ImportProblem]:
                 # stdlib ne se cherche jamais dans le projet : on se tait plutot que
                 # d'accuser, et rater une ombre de la stdlib est le prix acceptable.
                 continue
-            target = _resolve(module, table)
+            noms_du_fichier = _prefixes(info)
+            target = _resolve(module, table, absolu=True, espaces=noms_du_fichier)
             if target is None and info.package:
                 # un projet peut s'importer depuis sa propre racine
-                target = _resolve(f"{info.package}.{module}", table)
+                target = _resolve(
+                    f"{info.package}.{module}", table, absolu=True, espaces=noms_du_fichier
+                )
             if target is None or not target.parses:
                 continue  # import externe ou non resolu : on ne dit rien
             for name in names:
@@ -293,7 +370,9 @@ def check_project(paths: list[Path], root: Path) -> list[ImportProblem]:
                 # `from pkg import a` ou `a` est le SOUS-MODULE pkg/a.py : forme
                 # parfaitement valide en Python, et courante dans le code reel.
                 # L'ignorer produisait une fausse alerte sur chaque projet.
-                if _resolve(f"{module}.{name}", table) is not None:
+                if _resolve(
+                    f"{module}.{name}", table, absolu=True, espaces=noms_du_fichier
+                ) is not None:
                     continue
                 if _resolve(f"{target.dotted}.{name}", table) is not None:
                     continue
@@ -366,6 +445,14 @@ def _check_attribute(info: ModuleInfo, chain: str, table: dict[str, ModuleInfo])
         if target is None and info.package:
             target = _resolve(f"{info.package}.{module}", table)
         if target is None or not target.parses:
+            continue
+        if target.path == info.path:
+            # Le nom se resout sur le FICHIER LUI-MEME : c'est un homonyme, pas une
+            # reference. Mesure sur du code public : `tqdm/keras.py` contient
+            # `import keras` (le vrai paquet Keras, externe) puis
+            # `keras.callbacks.Callback` — resolu vers `tqdm/keras.py`, d'ou deux
+            # accusations fausses. Un fichier ne s'importe pas lui-meme sous son nom
+            # absolu : dans ce cas le nom designe forcement autre chose.
             continue
         current = target
         for segment in parts[cut:]:
