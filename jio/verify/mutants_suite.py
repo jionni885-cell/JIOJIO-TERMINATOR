@@ -49,6 +49,27 @@ _IGNORES = shutil.ignore_patterns(
 )
 
 
+#: Mutants declarees EQUIVALENTS : (chemin relatif, etiquette) -> la raison, en clair.
+#:
+#: Certains mutants ne changent RIEN au comportement : le code retire est repris juste
+#: apres par un autre chemin (un `except`, une valeur par defaut, une branche qui rend la
+#: meme chose). Ces mutants ne peuvent pas etre tues — aucun test ne peut distinguer deux
+#: programmes identiques — et ecrire un test pour les « tuer » serait du theatre : il
+#: n'echouerait jamais sur autre chose que la mutation elle-meme.
+#:
+#: La reponse de ce depot n'est ni de les cacher, ni d'inventer un test : c'est de les
+#: DECLARER, avec la raison, et de le dire dans le rapport. Une declaration dont le mutant
+#: a disparu (ou dont l'etiquette a change) devient un FANTOME, et un test la refuse : une
+#: raison ecrite pour un mutant qui n'existe plus est une raison qui ment.
+EQUIVALENTS: dict[tuple[str, str], str] = {
+    ("jio/artifacts/write_guard.py", "bloc conditionnel vide"): (
+        "le `return {}` retire (registre absent) est rattrape par le `except OSError` qui "
+        "suit : verifie sur cinq cas (absent, valide, corrompu, sans cle, mauvais type), "
+        "le comportement rendu est identique dans les cinq."
+    ),
+}
+
+
 #: Familles de mutation, lues sur l'etiquette produite par `mutate`. La distinction sert a
 #: lire le score sans se raconter d'histoires : un mutant de CONSTANTE (un plafond, un
 #: budget) survit souvent sans consequence observable — il dit « cette borne n'est pas
@@ -79,10 +100,17 @@ class MutantDeLaSuite:
     label: str
     tue: bool
     preuve: str = ""
+    #: Raison ECRITE quand le mutant est declare equivalent (voir `EQUIVALENTS`).
+    equivalent: str = ""
 
     @property
     def famille(self) -> str:
         return famille(self.label)
+
+    @property
+    def survivant_reel(self) -> bool:
+        """Un survivant qui n'est PAS declare equivalent : c'est lui qui demande un test."""
+        return not self.tue and not self.equivalent
 
 
 @dataclass
@@ -98,7 +126,13 @@ class RapportSuite:
 
     @property
     def survivants(self) -> list[MutantDeLaSuite]:
-        return [m for m in self.mutants if not m.tue]
+        """Survivants NON declares equivalents : chacun demande un test, ou une raison."""
+        return [m for m in self.mutants if m.survivant_reel]
+
+    @property
+    def equivalents(self) -> list[MutantDeLaSuite]:
+        """Survivants declares equivalents AVEC leur raison : ils ne comptent pas au score."""
+        return [m for m in self.mutants if m.equivalent]
 
     @property
     def score(self) -> float:
@@ -229,7 +263,15 @@ def mesurer(
                 else:
                     preuve = "la suite passe AVEC le mutant : aucune preuve de cette ligne"
                 rapport.mutants.append(
-                    MutantDeLaSuite(relatif, mutant.label, tue, preuve)
+                    MutantDeLaSuite(
+                        relatif,
+                        mutant.label,
+                        tue,
+                        preuve,
+                        equivalent="" if tue else EQUIVALENTS.get(
+                            (str(relatif), mutant.label), ""
+                        ),
+                    )
                 )
                 rapport.tests_lances += 1
             cible.write_text(original, encoding="utf-8")
@@ -249,12 +291,17 @@ def formater(rapport: RapportSuite) -> str:
     ]
     if rapport.note:
         lignes.append(f"    note : {rapport.note}")
-    for mutant in rapport.survivants[:12]:
+    for mutant in rapport.survivants:
         lignes.append(f"    SURVIVANT  {mutant.fichier}  [{mutant.label}]")
-    if len(rapport.survivants) > 12:
-        lignes.append(f"    ... et {len(rapport.survivants) - 12} autre(s)")
     if not rapport.survivants:
         lignes.append("    aucun survivant : chaque mutation mesuree a ete attrapee.")
+    for mutant in rapport.equivalents:
+        # Une equivalence DECLAREE n'est pas un oubli : elle porte sa raison, ici, dans le
+        # rapport — pas dans la tete de quelqu'un.
+        lignes.append(
+            f"    EQUIVALENT DECLARE  {mutant.fichier}  [{mutant.label}]"
+        )
+        lignes.append(f"      raison : {mutant.equivalent}")
     # Le detail par famille : c'est la lecture honnete d'un score global. Un score bas
     # fait de constantes de plafond n'a pas la meme significance qu'un score bas fait de
     # comparaisons et de booleens.

@@ -231,6 +231,37 @@ def test_solve_min_samples_matches_conformal_bound():
     assert ConformalGate(alpha=0.1).solve_min_samples() == 9
 
 
+def test_le_minimum_d_echantillons_par_defaut_est_vingt():
+    """`min_samples = 20` n'est pas un reglage de confort : c'est ce que la borne conforme
+    demande pour alpha = 0,05 (`solve_min_samples()` en calcule 19), plus un.
+
+    Mesure a l'origine : `jio mutants` a montre que ce 20 pouvait passer a 21 sans qu'aucun
+    test ne bouge. Or 19 points ne suffisent pas a la borne, et 20 la rend atteignable : le
+    seuil exact decide donc de ce que « calibre » veut dire.
+    """
+    g = ConformalGate(alpha=0.05)
+    assert g.min_samples == 20
+    assert g.solve_min_samples() == g.min_samples - 1
+    for _ in range(19):
+        g.observe(0.99, correct=True)
+    assert not g.calibrated, "19 points ne suffisent pas : la porte doit rester prudente"
+    assert g.tau() == g.default_tau
+    g.observe(0.99, correct=True)
+    assert g.calibrated, "le 20e point atteint le minimum declare"
+
+
+def test_charger_un_fichier_absent_ne_compte_aucun_point(tmp_path):
+    """`load` rend le nombre de points REELLEMENT charges. Un fichier absent en vaut zero.
+
+    Mesure a l'origine : `jio mutants` a montre que ce `return 0` pouvait devenir `return 1`.
+    Un point fantome rendrait la porte « calibree » sur une calibration qui n'existe pas —
+    exactement la garantie que ce module vend.
+    """
+    g = ConformalGate(min_samples=3)
+    assert g.load(tmp_path / "absent.jsonl") == 0
+    assert not g.calibrated and g.tau() == g.default_tau
+
+
 def test_gate_persists_calibration(tmp_path):
     path = tmp_path / "calib.jsonl"
     g = ConformalGate(min_samples=3)

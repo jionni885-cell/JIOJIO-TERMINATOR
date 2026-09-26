@@ -1083,6 +1083,45 @@ else
         "aucun dossier tests/ ici : rien a muter"
 fi
 
+titre "26. Chaque brique du harness apporte-t-elle quelque chose ?"
+
+# L'ablation : on ENLEVE une brique et on compare sur les MEMES missions (appariement par
+# tache et par graine). Ce n'est pas une opinion sur l'architecture, c'est la seule facon de
+# repondre a « cette brique sert-elle ? » autrement qu'en l'affirmant. Le code de sortie vaut
+# 1 si le moteur COMPLET a livre une erreur silencieuse : c'est alors un vrai defaut, et
+# l'etape doit echouer — mais en ayant PARLE d'abord (sinon l'echec est muet, defaut deja
+# rencontre a l'etape 25).
+ABLATION_LEVIERS="${JIO_ABLATION_LEVIERS:-preuve,red-team,consensus}"
+ABLATION_MISSIONS="${JIO_ABLATION_MISSIONS:-8}"
+if [ -d .venv ] || command -v python3 >/dev/null 2>&1; then
+    CODE_ABLATION=0
+    SORTIE_ABLATION="$("$PYTHON" -m jio ablation --missions "$ABLATION_MISSIONS" \
+        --levers "$ABLATION_LEVIERS" 2>&1)" || CODE_ABLATION=$?
+    printf '%s\n' "$SORTIE_ABLATION" | sed -n '/ABLATION DU HARNESS/,/appel(s)\/mission/p'
+    printf '%s\n' "$SORTIE_ABLATION" | sed -n '/VERDICTS/,$p' | head -9
+    echo "    lecture : une brique dont l'ablation ne change RIEN n'est pas declaree inutile"
+    echo "    ici — elle est declaree NON DISTINGUABLE a cette taille d'echantillon, avec le"
+    echo "    nombre de dissociations qu'il faudrait pour trancher."
+    # Le code de sortie de `jio ablation` vaut 1 si le moteur COMPLET a livre une erreur sans
+    # reserve : c'est alors un vrai defaut du harness, et l'etape doit echouer. On imprime
+    # d'abord (sinon l'echec serait muet, defaut deja rencontre a l'etape 25).
+    if [ "$CODE_ABLATION" -ne 0 ]; then
+        echo "    ECHEC : le moteur complet a livre une erreur sans reserve (voir ci-dessus)."
+        exit 1
+    fi
+    # Un levier « PROUVE » a l'ablation est la seule chose qui autorise a dire qu'une brique
+    # sert. Zero levier prouve ne fait PAS echouer la preuve — mais cela doit etre lu, pas
+    # traverse en silence.
+    if printf '%s\n' "$SORTIE_ABLATION" | grep -q "PREUVE ("; then
+        echo "    -> au moins un levier a fait perdre quelque chose de MESURE a l'ablation."
+    else
+        echo "    -> aucun levier prouve a cette taille : elargir --missions avant de conclure."
+    fi
+else
+    sauter "26. Chaque brique du harness apporte-t-elle quelque chose ?" \
+        "aucun interpreteur Python utilisable ici"
+fi
+
 titre "Termine"
 
 # Le controle qui compte : les etapes DECLAREES dans ce fichier doivent toutes avoir ete

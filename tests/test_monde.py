@@ -304,3 +304,66 @@ def test_le_sceau_ne_depend_pas_des_metadonnees(atelier: Path) -> None:
         "un sceau fonde sur les metadonnees serait aveugle a cette modification : "
         "c'est exactement le defaut qui a fait jeter la variante rapide"
     )
+
+
+def test_un_lien_symbolique_ne_fait_pas_entrer_l_exterieur_dans_le_sceau(
+    tmp_path: Path,
+) -> None:
+    """Le parcours SAUTE les liens symboliques, et ce n'est pas un detail de confort.
+
+    Mesure a l'origine : `jio mutants` a montre que le `continue` sur `chemin.is_symlink()`
+    pouvait etre remplace par `pass` sans qu'aucun test ne bouge. Consequence de ce
+    remplacement : un lien vers un fichier HORS du depot ferait entrer dans le sceau un
+    contenu qui n'appartient pas au travail, et ce contenu pourrait changer sans qu'aucun
+    fichier du depot ne bouge — le sceau detecterait alors des changements de monde qui
+    n'ont pas eu lieu, ou, pire, laisserait passer une modification reelle.
+    """
+    # L'atelier est un SOUS-dossier : le fichier vise par le lien doit etre en dehors de
+    # l'arbre scelle, sinon le test ne prouverait rien (il mesurerait un vrai changement).
+    travail = tmp_path / "travail"
+    travail.mkdir()
+    (travail / "a.py").write_text("x = 1\n", encoding="utf-8")
+    dehors = tmp_path / "hors-du-depot.txt"
+    dehors.write_text("contenu exterieur\n", encoding="utf-8")
+    (travail / "lien.txt").symlink_to(dehors)
+
+    avant = sceau(travail)
+    dehors.write_text("contenu CHANGE a l'exterieur\n", encoding="utf-8")
+    assert sceau(travail) == avant, (
+        "le sceau a suivi un lien symbolique : l'exterieur du depot est entre dedans"
+    )
+
+
+def test_la_revision_courante_est_le_sha_de_head(tmp_path: Path) -> None:
+    """`revision` lit la sortie de git : elle est du TEXTE, et non vide dans un depot.
+
+    Mesure a l'origine : `jio mutants` a montre que `capture_output=True` et `text=True`
+    pouvaient passer a `False` sans qu'aucun test ne bouge. Les deux consequences sont
+    silencieuses, donc graves :
+
+      * sans capture de la sortie, `revision` rend TOUJOURS la chaine vide — le journal
+        perdrait la revision du monde sans que rien ne le signale ;
+      * sans decodage, elle rendrait des OCTETS, et toute comparaison de revision avec une
+        chaine deviendrait fausse sans lever d'erreur.
+    """
+    import subprocess
+
+    depot = tmp_path / "depot"
+    depot.mkdir()
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", *args], cwd=depot, capture_output=True, text=True, timeout=60
+        )
+
+    assert revision(depot) == "", "un dossier sans depot n'a pas de revision"
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "test@exemple.invalid")
+    git("config", "user.name", "test")
+    (depot / "a.txt").write_text("x\n", encoding="utf-8")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "premier")
+    attendu = git("rev-parse", "HEAD").stdout.strip()
+    lue = revision(depot)
+    assert isinstance(lue, str), f"la revision doit etre du texte, pas {type(lue).__name__}"
+    assert lue == attendu and len(lue) == 40, f"revision lue : {lue!r}"

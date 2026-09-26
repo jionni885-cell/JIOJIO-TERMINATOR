@@ -123,3 +123,31 @@ def test_jio_sync_est_idempotent(tmp_path: Path) -> None:
     assert main(["sync", "--root", str(tmp_path)]) == 0
     apres = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*"))
     assert avant == apres
+
+
+def test_la_fenetre_de_marque_est_bornnee_au_byte_pres(tmp_path: Path) -> None:
+    """La marque ne compte que dans les 600 PREMIERS octets — ni 599, ni 601.
+
+    Mesure a l'origine : `jio mutants` a montre que `FENETRE_MARQUE = 600` pouvait passer a
+    601 sans qu'aucun test ne bouge. Le test qui existait visait une marque a 1 400 octets,
+    donc largement hors des deux bornes : il ne disait rien sur la limite elle-meme. Or la
+    limite est exactement ce qui separe « ce fichier est a nous » de « ce fichier est a
+    l'utilisateur », et une fenetre qui s'elargit en silence finit par adopter un document
+    qui ne fait que PARLER de jio.
+    """
+    from jio.artifacts.write_guard import FENETRE_MARQUE, MARQUE, _porte_la_marque
+
+    assert FENETRE_MARQUE == 600
+    # La longueur du motif REELLEMENT reconnu, mesuree par le motif lui-meme : ecrire la
+    # borne a la main (« 16 ») la ferait mentir le jour ou le motif change.
+    motif = "genere par `jio`"
+    reconnu = MARQUE.search(motif).end()
+    assert _porte_la_marque("x" * (FENETRE_MARQUE - reconnu) + motif), "juste DANS la fenetre"
+    assert not _porte_la_marque(
+        "x" * (FENETRE_MARQUE - reconnu + 1) + motif
+    ), "juste AU-DELA de la fenetre"
+    # Et le comportement complet suit : un fichier dont la marque tombe juste au-dela de la
+    # fenetre n'est PAS a nous, donc il est preserve.
+    dehors = "x" * (FENETRE_MARQUE - reconnu + 1) + motif + "\nautre chose\n"
+    (tmp_path / "DOC.md").write_text(dehors, encoding="utf-8")
+    assert _actions(ecrire_manifest(tmp_path, {"DOC.md": NOTRE})) == [("DOC.md", "preserve")]

@@ -192,3 +192,82 @@ def test_la_selection_des_tests_classe_par_pertinence(tmp_path: Path) -> None:
     assert choisis == [str(tmp_path / "tests" / "test_zzz.py")], choisis
     # Et les deux restent candidats quand le plafond le permet.
     assert len(_tests_pour(tmp_path, tmp_path / "jio" / "module_vise.py", 5)) == 2
+
+
+# --------------------------------------------------------------------------- #
+# 6. Les mutants EQUIVALENTS : declares, justifies, jamais maquilles
+# --------------------------------------------------------------------------- #
+
+
+def test_une_equivalence_declaree_porte_toujours_sa_raison() -> None:
+    """Un mutant equivalent sans raison serait une exclusion muette, sous un autre nom."""
+    from jio.verify.mutants_suite import EQUIVALENTS
+
+    assert EQUIVALENTS, "la table est vide : ce test ne prouve alors rien de plus"
+    for (fichier, label), raison in EQUIVALENTS.items():
+        assert fichier.endswith(".py"), f"chemin suspect : {fichier}"
+        assert label.strip(), f"{fichier} : etiquette vide"
+        assert len(raison.strip()) > 40, (
+            f"{fichier} [{label}] : la raison est trop courte pour dire quoi que ce soit"
+        )
+
+
+def test_aucune_equivalence_declaree_n_est_un_fantome() -> None:
+    """Le mutant declare doit EXISTER encore, avec cette etiquette exacte.
+
+    Une equivalence ecrite pour un mutant qui n'existe plus est une raison qui ment : elle
+    protege une ligne qui n'est plus mutee, et personne ne s'en apercevrait puisque rien ne
+    la contredit. On rejoue donc le moteur de mutation sur le fichier vise.
+    """
+    from jio.verify.mutants_suite import EQUIVALENTS
+    from jio.verify.mutation import mutate
+
+    racine = Path(__file__).resolve().parents[1]
+    for (fichier, label) in EQUIVALENTS:
+        source = (racine / fichier).read_text(encoding="utf-8")
+        etiquettes = {m.label for m in mutate(source, budget=6)}
+        assert label in etiquettes, (
+            f"{fichier} : le mutant declare [{label}] n'existe plus "
+            f"(etiquettes mesurees : {sorted(etiquettes)})"
+        )
+
+
+def test_un_mutant_equivalent_est_compte_a_part_et_ne_tue_pas_le_score(tmp_path: Path) -> None:
+    """Un equivalent declare n'est NI un kill, NI un survivant : c'est une troisieme case."""
+    from jio.verify.mutants_suite import MutantDeLaSuite, RapportSuite, formater
+
+    equivalent = MutantDeLaSuite(
+        Path("jio/exemple.py"), "bloc conditionnel vide", False,
+        "la suite passe AVEC le mutant",
+        equivalent="le retour retire est rattrape par le except juste en dessous",
+    )
+    survivant = MutantDeLaSuite(Path("jio/exemple.py"), "constante 0 -> 1", False)
+    rapport = RapportSuite(mutants=[equivalent, survivant])
+
+    assert rapport.survivants == [survivant], "l'equivalent ne doit pas etre un survivant"
+    assert rapport.equivalents == [equivalent]
+    assert rapport.tues == 0
+    assert rapport.score == 0.0
+    texte = formater(rapport)
+    assert "SURVIVANT  jio/exemple.py  [constante 0 -> 1]" in texte
+    assert "EQUIVALENT DECLARE" in texte
+    assert "rattrape par le except" in texte, "la raison doit apparaitre dans le rapport"
+
+
+def test_le_rapport_n_ampute_plus_la_liste_des_survivants() -> None:
+    """Chaque survivant doit etre lisible : un survivant cache ne demande aucun test.
+
+    Le rapport s'arretait a douze lignes (« ... et N autre(s) »). Sur un depot reel, cela
+    voulait dire : douze preuves manquantes visibles, les autres hors de portee — alors que
+    la regle du depot est que CHACUNE demande un test ou une raison ecrite.
+    """
+    from jio.verify.mutants_suite import MutantDeLaSuite, RapportSuite, formater
+
+    mutants = [
+        MutantDeLaSuite(Path(f"jio/f{i}.py"), "constante 0 -> 1", False)
+        for i in range(20)
+    ]
+    texte = formater(RapportSuite(mutants=mutants))
+    for i in range(20):
+        assert f"jio/f{i}.py" in texte
+    assert "autre(s)" not in texte

@@ -144,3 +144,34 @@ def test_chaque_agent_opencode_est_mesurable_et_bornant() -> None:
         assert agent.prompt, agent.name
         mesure = mesurer(agent.name, agent.prompt)
         assert mesure.lignes < 200, f"{agent.name} : {mesure.lignes} lignes"
+
+
+def test_les_trois_seuils_sont_ceux_qui_ont_ete_mesures() -> None:
+    """Ces trois nombres sont des MESURES de terrain, pas des reglages de confort.
+
+    150 lignes : au-dela, un fichier de contexte (`AGENTS.md`) est survole plutot que lu ;
+    5 000 jetons : la limite d'UNE competence ; 25 000 : la bibliotheque entiere. Le
+    rapport les CITE dans ses messages — un seuil qui glisse d'une unite ferait dire au
+    rapport autre chose que ce qu'il a mesure.
+
+    Mesure a l'origine : `jio mutants` a montre que les trois constantes pouvaient toutes
+    changer de 1 sans qu'aucun test ne bouge, parce que tous les tests les lisaient
+    SYMBOLIQUEMENT (`SEUILS[...]`).
+    """
+    assert SEUILS == {
+        "contexte_lignes": 150,
+        "competence_jetons": 5_000,
+        "bibliotheque_jetons": 25_000,
+    }
+
+
+def test_les_deux_limites_de_competence_ne_peuvent_pas_diverger() -> None:
+    """`MAX_COMPETENCE` (audit des competences) doit valoir le seuil du budget de contexte.
+
+    Deux constantes pour une seule limite, c'est une limite qui tombera : le jour ou l'une
+    bouge, l'audit d'une competence et sa mesure de contexte ne diraient plus la meme chose,
+    et rien ne le signalerait.
+    """
+    from jio.artifacts.audit_skills import MAX_COMPETENCE
+
+    assert MAX_COMPETENCE == SEUILS["competence_jetons"]

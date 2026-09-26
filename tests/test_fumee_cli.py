@@ -165,7 +165,11 @@ def test_chaque_commande_est_couverte_par_ce_fichier() -> None:
     couvert » alors qu'il ne regarde plus la nouvelle venue. C'est exactement le genre de
     silence que ce projet passe son temps a retirer.
     """
-    exclues = {"audit", "bench", "learn", "mcp", "mutants", "recover", "run", "sync"}
+    # `ablation` fait tourner la BOUCLE plusieurs fois (un bras par levier) : ses tests
+    # vivent dans `tests/test_ablation.py`, ou l'executeur est truque pour etre instantane.
+    exclues = {
+        "ablation", "audit", "bench", "learn", "mcp", "mutants", "recover", "run", "sync"
+    }
     couvertes = set(SURES) | exclues
     manquantes = sorted(set(COMMANDES) - couvertes)
     assert not manquantes, (

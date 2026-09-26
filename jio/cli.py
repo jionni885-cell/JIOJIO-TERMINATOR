@@ -2907,7 +2907,137 @@ def build_parser() -> argparse.ArgumentParser:
     mu.add_argument("--root", default=".", help="racine du depot a muter")
     mu.set_defaults(func=cmd_mutants)
 
+    ab = sub.add_parser(
+        "ablation",
+        help="enleve une brique du harness et mesure ce qui change (apparie)",
+    )
+    ab.add_argument("--missions", type=int, default=10,
+                    help="CIBLE de missions par bras (defaut 10), reparties sur les taches "
+                         "du banc : le rapport dit le nombre EXACT qu'il a mesure")
+    ab.add_argument("--levers", default="",
+                    help="leviers a mesurer, separes par des virgules (defaut : tous). "
+                         "`--levers liste` affiche les noms et ce que « sans » veut dire.")
+    ab.add_argument("--skill", type=float, default=0.35, help="competence du modele simule")
+    ab.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
+                    help="tours de boucle maximum")
+    ab.add_argument("--sans-oracle", dest="sans_oracle", action="store_true",
+                    help="retire les oracles de la mission : les regles doivent alors etre "
+                         "TRADUITES en temoins (c'est la que le levier « temoins » compte)")
+    ab.add_argument("--json", action="store_true", help="rapport lisible par une machine")
+    ab.set_defaults(func=cmd_ablation)
+
     return p
+
+
+def cmd_ablation(args: argparse.Namespace) -> int:
+    """Mesure ce que chaque brique du harness apporte REELLEMENT.
+
+    Le principe : au lieu d'affirmer qu'une brique sert, on l'ENLEVE et on compare sur les
+    MEMES missions (appariement par tache et par graine). Ce qui change est son apport.
+    La metrique qui decide n'est pas le taux de reussite mais le nombre d'erreurs
+    SILENCIEUSES — livrees sans reserve et fausses : c'est ce que le harness existe pour
+    empecher. Une seule erreur silencieuse apparue a l'ablation est une preuve d'existence,
+    qu'aucune statistique ne relativise ; un levier sans effet visible est declare NON
+    DISTINGUABLE, jamais « inutile ».
+
+    Code de sortie : 1 si le moteur COMPLET livre une erreur silencieuse (le harness a
+    failli a son travail), 0 sinon — un levier non distingue n'est pas une panne, c'est une
+    mesure honnete.
+    """
+    from .bench.ablation import LEVIERS, Issue, appliquer, formater, levier, mesurer
+
+    if args.levers.strip() == "liste":
+        print()
+        print("  LEVIERS MESURABLES")
+        print()
+        for lev in LEVIERS:
+            print(f"    {lev.nom:<14} {lev.quoi}")
+            print(f"    {'':<14} sans : {lev.sans}")
+        print()
+        return 0
+
+    noms = [n.strip() for n in args.levers.split(",") if n.strip()] or None
+    try:
+        for nom in noms or []:
+            levier(nom)
+    except KeyError as exc:
+        print(f"  {exc.args[0]}", file=sys.stderr)
+        return 2
+
+    missions = max(1, args.missions)
+    taches = min(len(TASKS), missions)
+    graines = max(1, math.ceil(missions / taches))
+
+    def executer(indice: int, graine: int, ablations: tuple[str, ...]) -> Issue:
+        tache: Task = TASKS[indice % len(TASKS)]
+        moteur = _simulated_engine(
+            tache,
+            skill=args.skill,
+            seed=graine,
+            max_rounds=args.rounds,
+            # Sans oracle, la traduction des regles en temoins est ce qui REMPLACE les
+            # tests absents : sans elle, le moteur ne peut que s'abstenir et on mesurerait
+            # l'absence d'oracle au lieu de l'apport du levier.
+            traducteur=(
+                TraducteurSimule(taches=TASKS, fidelite=1.0) if args.sans_oracle else None
+            ),
+        )
+        appliquer(moteur, ablations)
+        debut = time.monotonic()
+        rapport = moteur.run(
+            Mission(objective=tache.objective, id=f"{tache.id}-{graine}", max_rounds=args.rounds),
+            WorkItem(
+                objective=tache.objective,
+                entrypoint=tache.entrypoint,
+                # En mode sans oracle, la mission ne fournit AUCUN test : le moteur doit
+                # traduire les regles lui-meme, et sans cette traduction il ne peut rien
+                # prouver. C'est le seul mode ou le levier « temoins » est mesurable.
+                checks={} if args.sans_oracle else tache.checks,
+                spec=tache.spec(),
+            ),
+        )
+        duree = time.monotonic() - debut
+        juste = _check(rapport.subject, tache)
+        sans_reserve = rapport.status is MissionStatus.DELIVERED
+        avec_reserve = rapport.status is MissionStatus.DELIVERED_WITH_RESERVATION
+        return Issue(
+            juste=juste,
+            livree=sans_reserve,
+            reservee=avec_reserve,
+            # Livree SANS reserve et fausse. « Avec reserve » n'est pas silencieux : le
+            # systeme a dit quelque chose, et c'est toute la difference que ce module
+            # mesure. Les confondre effacerait le seul chiffre qui compte.
+            silencieuse=sans_reserve and not juste,
+            abstention=rapport.status is MissionStatus.ABSTAINED,
+            appels=int(rapport.usage.get("calls", 0)) or 1,
+            duree_s=duree,
+        )
+
+    print(BANNER)
+    print(f"  Ablation du harness  ·  competence simulee {args.skill:.2f}  ·  "
+          f"{taches * graines} mission(s) par bras  ·  {len(noms) if noms else len(LEVIERS)} levier(s)"
+          + ("  ·  SANS ORACLE" if args.sans_oracle else ""))
+    print("  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.")
+    print()
+    rapport = mesurer(executer, taches=taches, graines=graines, leviers=noms)
+    if args.json:
+        print(json.dumps(rapport.en_dict(), ensure_ascii=False, indent=2))
+        return 1 if rapport.silencieuses else 0
+    print(formater(rapport))
+    print()
+    prouves = len(rapport.prouves)
+    non_distingues = len(rapport.non_distingues)
+    couts = len(rapport.couts)
+    print(f"    {prouves} levier(s) prouve(s) par l'ablation  ·  "
+          f"{couts} au cout mesure (le retrait AMELIORE)  ·  "
+          f"{non_distingues} non distingue(s)  ·  "
+          f"{rapport.silencieuses} erreur(s) silencieuse(s) du moteur complet")
+    if rapport.silencieuses:
+        print("    -> le moteur COMPLET a livre une erreur sans reserve : c'est un defaut")
+        print("       du harness, pas du levier. A corriger avant toute autre mesure.")
+        return 1
+    print("    -> le moteur complet n'a livre aucune erreur sans reserve sur ces missions.")
+    return 0
 
 
 def cmd_mutants(args: argparse.Namespace) -> int:

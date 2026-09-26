@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 708 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 755 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -78,6 +78,7 @@ python -m jio trust "<objectif>"         # combien de vérification dépenser (b
 python -m jio memory --recall "<texte>"  # ce que le système a déjà payé comme erreurs
 python -m jio learn --skill 0.15         # l'auto-amélioration paie-t-elle ? (protocole A/B/C)
 python -m jio mutants                    # NOS tests attrapent-ils NOS erreurs ? (mutation)
+python -m jio ablation --missions 10     # quelle brique apporte quoi ? (ablation appariee)
 python -m jio scan jio                   # JIO s'audite lui-même : 0 problème attendu
 ```
 
@@ -1939,9 +1940,12 @@ $ python -m jio mutants --budget 1 --plafond-tests 4
     par famille : autre 1/2 · booleen 1/3 · comparaison 2/2 · constante 0/3
 ```
 
-Le premier passage a mesuré **44 %** sur tout `jio/`. Sur la logique d'audit (bissection,
-consensus, oscillation, résolution d'imports), il est passé de **40 % à 83 %**, puis à
-**100 %** — chaque survivant est devenu un test avec sa raison :
+Le premier passage a mesuré **44 %** sur tout `jio/`. Deux corrections plus tard, il vaut
+**60 %** sur l'ensemble et **95 % sur les sept fichiers retravaillés** (80 % → 95 % rien qu'en
+supprimant un seuil caché et en classant les tests par pertinence, puis en écrivant un test par
+survivant). Sur la logique d'audit (bissection, consensus, oscillation, résolution d'imports),
+il est passé de **40 % à 83 %**, puis à **100 %** — chaque survivant est devenu un test avec sa
+raison :
 
 | Survivant mesuré | Ce que le test ajouté vérifie |
 |---|---|
@@ -1950,6 +1954,13 @@ consensus, oscillation, résolution d'imports), il est passé de **40 % à 83 %*
 | `errors: int = 0` → `1` (tour de boucle) | un tour sans erreur dit **zéro**, sinon la détection d'oscillation lit un état faux |
 | `effective_panel: int = 0` → `1` | un panel non calculé ne peut pas se déclarer décorrélé — le champ existe pour rendre cette faute **visible** |
 | table française vidée, famille de préfixes vidée | chaque famille de constat est expliquée, et un code inconnu reste brut |
+| `FENETRE_MARQUE = 600` → `601` (garde d'écriture) | la borne **exacte** : une marque au 600e octet est à nous, une marque au 601e ne l'est pas — le test qui existait visait 1 400 octets, donc ne disait rien de la limite |
+| `min_samples = 20` → `21` (porte conforme) | 19 points ne suffisent pas à la borne conforme, 20 la rendent atteignable : le seuil exact décide de ce que « calibré » veut dire |
+| `steps = 30` → `31` (défaut d'un agent) | le budget par défaut d'un agent qui n'en déclare pas — invisible, donc à figer |
+| `frozen=True` → `False` (×5) | `FrozenInstanceError` sur chaque valeur qui sert de clé : `Risque`, `Calibration`, `Decision`, `AgentSpec`, `SkillSpec` |
+| `capture_output=True` / `text=True` → `False` (révision git) | sans capture, la révision serait **toujours vide** ; sans décodage, elle rendrait des **octets** — deux pannes silencieuses |
+| compteurs d'`ABCResult` `0` → `1` | un compteur qui part de 1 annonce une réussite qui n'a pas eu lieu, et **tous** les taux calculés sur lui seraient faux |
+| `MAX_COMPETENCE` face au budget de contexte | deux constantes pour une seule limite finissent toujours par diverger : elles sont comparées |
 
 Trois détails qui font la différence entre une mesure et un chiffre :
 
@@ -1958,7 +1969,16 @@ Trois détails qui font la différence entre une mesure et un chiffre :
   la même signification qu'un score bas fait de comparaisons ; le rapport donne les deux ;
 * **la sélection des tests est une heuristique DÉCLARÉE** — les fichiers de test qui
   mentionnent le module visé, **classés par pertinence** (un test qui l'importe passe avant un
-  test qui cite son nom en passant), et `--tout` lance la suite entière pour lever le doute.
+  test qui cite son nom en passant), et `--tout` lance la suite entière pour lever le doute ;
+* **aucun survivant n'est caché** : la liste n'est plus tronquée à douze lignes, parce qu'un
+  survivant illisible ne demande aucun test ;
+* **un mutant équivalent se DÉCLARE, il ne se maquille pas**. Certains mutants ne changent rien
+  au comportement : un `return {}` retiré, rattrapé deux lignes plus bas par un `except OSError`,
+  donne un programme identique. Aucun test ne peut le tuer — en écrire un serait du théâtre.
+  Le dépôt les déclare donc par écrit, raison à l'appui, dans le rapport et dans la table
+  `EQUIVALENTS`, et **un test refuse une déclaration fantôme** (une équivalence écrite pour un
+  mutant qui a disparu est une raison qui ment). L'équivalence a été *vérifiée* sur cinq cas
+  (registre absent, valide, corrompu, sans clé, mauvais type) avant d'être écrite.
   Les deux limites de cette heuristique ont été trouvées en la mesurant, pas en y pensant : un
   seuil de taille caché (`> 200 octets`) faisait disparaître la mesure — une exclusion muette,
   exactement ce que ce dépôt s'interdit — et l'ordre purement alphabétique laissait survivre un
@@ -1967,6 +1987,78 @@ Trois détails qui font la différence entre une mesure et un chiffre :
 La logique des garde-fous est elle-même dérivée de cette mesure : l'étape 25 de
 `scripts/evidence.sh` rejoue la mutation sur la logique d'audit, et `jio mutants` sort en **1**
 tant qu'un survivant subsiste.
+
+## Chaque brique prouve-t-elle son utilité ? `jio ablation`
+
+Un harness qui empile des couches finit par ne plus savoir lesquelles servent. Ce dépôt
+s'interdit d'**affirmer** qu'une brique sert : `jio ablation` l'**enlève** et regarde ce qui
+change, sur les **mêmes missions** — appariement par (tâche, graine). Ce qui reste de
+différence est son apport, et rien d'autre : la variance entre missions domine l'effet
+cherché, donc deux échantillons indépendants ne diraient rien. Chaque levier porte, en clair,
+ce que « sans » veut dire — « sans preuve » signifie *tout ce qui est soumis est déclaré
+prouvé*, pas « on laisse le hasard décider ». Une ablation approximative mesurerait une autre
+question que celle posée.
+
+```console
+$ python -m jio ablation --missions 10
+  ABLATION DU HARNESS  ·  10 mission(s) appariee(s)  ·  12 levier(s)
+    moteur complet : 10/10 justes  ·  8 livree(s)  ·  0 SILENCIEUSE(S)  ·  3.3 appel(s)/mission
+    levier        justes          livrees  reserve  silencieuse abst.  appels
+    (complet)     10/10           8        2        0           0      3.3
+    preuve        5/10            0        10       0           0      3.0
+    red-team      10/10           0        10       0           0      10.5
+    consensus     10/10           0        10       0           0      3.3
+    mutation      10/10           10       0        0           0      3.3
+    ...
+```
+
+### Deux métriques, parce qu'une seule ne suffit pas
+
+La première est le nombre d'erreurs **silencieuses** — livrées sans réserve et fausses. C'est
+le seul chiffre qui doit valoir zéro : le harness existe pour ça, pas pour gagner trois points
+de réussite. La seconde est la **livraison propre** (livrée *sans réserve*), et elle a été
+ajoutée après avoir vu la première manquer l'essentiel : retirer le red-team ou le consensus
+**ne rend pas le moteur faux** (10/10 justes dans les deux cas) — il le rend incapable de
+livrer sans réserve (**8/10 → 0/10**). Un rapport qui ne regarderait que la justesse aurait
+déclaré ces deux briques « non distinguées » alors qu'elles décident de l'utilité du résultat.
+
+Trois leviers sont **prouvés** par cette mesure, au sens exact du test de McNemar sur paires
+appariées (8 livraisons propres perdues contre 0, p = 0,0078 — six dissociations
+unidirectionnelles suffisent, il y en a huit) : `preuve`, `red-team`, `consensus`. La phrase
+du rapport n'est pas un slogan : *la brique ne rend pas le résultat plus juste, elle le rend
+livrable*.
+
+### Le coût, dans les deux sens
+
+`red-team` montre l'autre moitié du résultat : sans lui, le moteur dépense **10,5 appels par
+mission contre 3,3** — trois fois plus. Lecture probable, à confirmer : un critique
+complaisant ne coupe rien, donc la boucle paie des tours supplémentaires pour un résultat
+équivalent. Le rapport donne le chiffre tel qu'il est mesuré, avec la lecture en hypothèse.
+
+Et `mutation` est déclaré **NON CONCLUANT** — pas « inutile » : son retrait *gagne* deux
+livraisons propres (p = 0,5, non tranché). Le rapport écrit noir sur blanc *« à justifier, ou
+à interroger »*. La porte de mutation est conservée parce que sa valeur n'est pas dans le taux
+de livraison : elle vérifie qu'une règle **peut échouer**, sans quoi un test qui n'échoue jamais
+vaudrait un quitus.
+
+### Huit leviers non distingués, et ce que ça veut dire
+
+À compétence 0,35, la mission simulée est le plus souvent réussie dès les premiers tours : les
+briques ne sont donc **pas exercées**, et huit leviers ne se distinguent pas. Ce n'est pas une
+preuve d'inutilité, et le rapport refuse de l'écrire : il donne les dissociations observées
+(zéro), l'intervalle de l'effet et le seuil exact — **six dissociations unidirectionnelles**
+pour que McNemar conclue (2/2⁶ = 3,1 %). `--missions` élargit l'échantillon, `--skill` durcit
+la mission, `--sans-oracle` retire les tests fournis (c'est le seul réglage où le levier
+`temoins` est mesurable), et `--json` rend le tout lisible par une machine.
+
+Le même essai à compétence 0,15 (`--skill 0.15`) coûte **6,0 appels par mission au lieu de
+3,3** : une mission plus dure consomme plus de boucle, et `red-team` reste la brique dont le
+retrait double la dépense (12,0 appels) tout en ramenant les livraisons propres de 3 à 0. À
+quatre missions, rien de nouveau n'est *prouvé* — et le rapport le dit, plutôt que de laisser
+croire qu'un réglage plus dur aurait changé le verdict.
+
+Codes de sortie : **0** si le moteur complet n'a livré aucune erreur sans réserve, **1** s'il
+en a livré une — un levier non distingué n'est pas une panne, c'est une mesure honnête.
 
 ## Toutes les commandes répondent, et c'est testé
 

@@ -229,3 +229,21 @@ def test_contract_renvoie_la_doctrine():
     )
     text = out["result"]["content"][0]["text"]
     assert "DELIVERED" in text and "ABSTAINED" in text
+
+
+def test_le_budget_de_pas_d_un_agent_est_declare_et_borne() -> None:
+    """Un agent sans budget de pas tourne en rond ; un budget par defaut invisible encore plus.
+
+    Mesure a l'origine : `jio mutants` a montre que le defaut `steps = 30` pouvait passer a
+    31 sans qu'aucun test ne bouge. Le defaut compte : c'est le budget d'un agent qui n'en
+    declare pas, et l'ecrire ici evite qu'il derive en silence (30 pas couvrent une mission
+    bornee ; au-dela, on ne sait plus si l'agent travaille ou tourne en rond).
+    """
+    from jio.artifacts.definitions import AGENTS, AgentSpec
+
+    assert AgentSpec(name="x", description="y", prompt="z").steps == 30
+    for agent in AGENTS:
+        assert 10 <= agent.steps <= 60, (
+            f"{agent.name} : {agent.steps} pas — hors de la plage ou un agent peut finir "
+            "sans boucler"
+        )
