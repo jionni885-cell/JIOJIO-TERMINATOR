@@ -33,20 +33,17 @@ compare au distant, et c'est a l'utilisateur de decider.
 
 from __future__ import annotations
 
-import hashlib
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# L'empreinte de l'arbre vit dans `jio/core/monde.py`, avec le sceau du journal : deux
+# implementations d'une meme mesure finiraient par diverger, et c'est precisement la
+# comparaison avant/apres qui doit etre fiable.
+from .core.monde import sceau as empreinte_arbre
+
 __all__ = ["Recuperation", "empreinte_arbre", "empreinte_accident", "recuperer"]
 
-#: Dossiers qui ne sont PAS du travail : etat local, caches, environnements. Les inclure
-#: ferait echouer la comparaison avant/apres, et surtout mesurerait autre chose que le
-#: travail de l'utilisateur.
-_EXCLUS = frozenset({
-    ".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".ruff_cache",
-    ".mypy_cache", "node_modules", ".jio", "build", "dist",
-})
 
 #: Seuils de l'empreinte de l'accident. Identiques a ceux de `jio doctor` : deux jeux de
 #: seuils pour un meme accident seraient une deuxieme verite.
@@ -88,30 +85,6 @@ def _git(racine: Path, *argv: str) -> tuple[int, str]:
     except (OSError, subprocess.SubprocessError):
         return 1, ""
     return proc.returncode, (proc.stdout or "").strip()
-
-
-def empreinte_arbre(racine: Path) -> str:
-    """Empreinte du CONTENU de l'arbre de travail (hors `.git` et etat local).
-
-    Elle sert a repondre a une seule question, celle qui compte : « les fichiers sur le
-    disque sont-ils exactement les memes apres qu'avant ? ». On hache les chemins ET les
-    contenus, dans un ordre stable, pour que deux arbres differents ne puissent pas donner
-    la meme empreinte.
-    """
-    digest = hashlib.sha256()
-    for chemin in sorted(racine.rglob("*")):
-        if not chemin.is_file() or chemin.is_symlink():
-            continue
-        if any(morceau in _EXCLUS for morceau in chemin.relative_to(racine).parts):
-            continue
-        try:
-            donnees = chemin.read_bytes()
-        except OSError:  # pragma: no cover - fichier disparu pendant la lecture
-            continue
-        digest.update(chemin.relative_to(racine).as_posix().encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(donnees).digest())
-    return digest.hexdigest()
 
 
 def empreinte_accident(racine: Path) -> tuple[int, int] | None:

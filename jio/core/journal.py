@@ -60,9 +60,19 @@ def _compute_digest(
 class Journal:
     """Journal append-only en memoire, capable de miroiter sur disque."""
 
-    def __init__(self, path: str | os.PathLike[str] | None = None) -> None:
+    def __init__(
+        self,
+        path: str | os.PathLike[str] | None = None,
+        racine: str | os.PathLike[str] | None = None,
+    ) -> None:
         self._events: list[Event] = []
         self.path = Path(path) if path is not None else None
+        #: Le monde que les evenements decrivent. Chaque evenement en porte le SCEAU : un
+        #: journal chaine prouve qu'il n'a pas ete altere, pas que le monde n'a pas change
+        #: depuis. Sans le sceau, un verdict obtenu sur un etat A reste « valide » apres
+        #: qu'un `git reset`, un rollback ou un `jio recover` aient ramene un etat B — et
+        #: c'est ainsi qu'on publie B sous une verification faite pour A.
+        self.racine = Path(racine) if racine is not None else Path.cwd()
         #: Ce qu'il faut dire a l'utilisateur sur l'etat du fichier (rotation,
         #: chaine cassee). Un journal ne se repare pas en silence.
         self.notices: list[str] = []
@@ -125,6 +135,37 @@ class Journal:
 
     # -- ecriture ---------------------------------------------------------- #
 
+    def _sceau_du_moment(self) -> dict[str, str]:
+        """Le sceau du monde au moment de l'ecriture, et la revision git si elle existe."""
+        try:
+            from .monde import revision, sceau
+
+            return {"sceau": sceau(self.racine), "revision": revision(self.racine)}
+        except Exception:  # pragma: no cover - un journal ne doit jamais echouer sur ceci
+            return {"sceau": "", "revision": ""}
+
+    def mondes(self) -> list[dict[str, Any]]:
+        """Les etats du monde traverses par ce journal, dans l'ordre, avec leurs evenements.
+
+        Deux sceaux differents signifient que le monde a change EN COURS de mission : une
+        conclusion peut alors s'appuyer sur des observations faites sur deux etats
+        differents, ce que rien d'autre dans le journal ne permet de voir.
+        """
+        vus: list[dict[str, Any]] = []
+        for evenement in self._events:
+            monde = dict(evenement.payload.get("monde") or {})
+            marque = (monde.get("sceau", ""), monde.get("revision", ""))
+            for entree in vus:
+                if (entree["sceau"], entree["revision"]) == marque:
+                    entree["evenements"].append(evenement.seq)
+                    break
+            else:
+                vus.append({
+                    "sceau": marque[0], "revision": marque[1],
+                    "evenements": [evenement.seq],
+                })
+        return vus
+
     def append(
         self,
         kind: str,
@@ -136,6 +177,10 @@ class Journal:
         seq = len(self._events)
         ts = now()
         body: Mapping[str, Any] = dict(payload or {})
+        # Le sceau est ajoute ICI, pas par les appelants : une seule implementation, et
+        # aucun evenement ne peut y echapper par oubli. Cout mesure : ~3 ms (contre 75 ms
+        # avec un parcours qui ne s'elaguait pas en marchant).
+        body.setdefault("monde", self._sceau_du_moment())
         prev = self._events[-1].digest if self._events else GENESIS
         ev = Event(
             seq=seq,

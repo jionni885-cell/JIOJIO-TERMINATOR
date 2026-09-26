@@ -179,7 +179,7 @@ def _simulated_engine(
     ]
     return Engine(
         generators=generateurs,
-        journal=Journal(path=journal_path),
+        journal=Journal(path=journal_path, racine=racine or Path.cwd()),
         panel=panel,
         prover=prover,
         gate=ConformalGate(alpha=alpha),
@@ -253,7 +253,7 @@ def _real_engine(
         prover = ExecutableProver(sandbox=Sandbox(timeout=30))
     return Engine(
         generators=gens,
-        journal=Journal(path=journal_path),
+        journal=Journal(path=journal_path, racine=racine or Path.cwd()),
         panel=AuditPanel.llm(providers, list(DEFAULT_PERSONAS)),
         prover=prover,
         gate=ConformalGate(alpha=float_env("JIO_ALPHA", 0.05)),
@@ -2430,8 +2430,33 @@ def cmd_trace(args: argparse.Namespace) -> int:
     for ev in journal:
         if args.kind and ev.kind != args.kind:
             continue
-        payload = json.dumps(ev.payload, ensure_ascii=False, default=str)
+        # Le sceau est deja lu juste au-dessus, sous une forme lisible : le repeter ici
+        # noierait l'evenement lui-meme sous 130 caracteres de hachage.
+        corps = {cle: valeur for cle, valeur in ev.payload.items() if cle != "monde"}
+        payload = json.dumps(corps, ensure_ascii=False, default=str) if corps else "{}"
         print(f"    {ev.seq:>4}  {ev.kind:<14} {ev.trust.value:<9} {payload[:110]}")
+    print()
+
+    # Le journal prouve que rien n'a ete altere. Il ne prouve pas que le monde n'a pas
+    # change : c'est le role du sceau porte par chaque evenement.
+    mondes = journal.mondes()
+    courant = journal._sceau_du_moment()  # noqa: SLF001 - meme mesure, meme module
+    print(f"  MONDE : {len(mondes)} etat(s) distinct(s) dans ce journal")
+    for entree in mondes:
+        marque = "  (etat actuel)" if entree["sceau"] == courant["sceau"] else ""
+        revision = f"  revision {entree['revision'][:9]}" if entree["revision"] else ""
+        print(f"    sceau {entree['sceau'][:12] or '(absent)'}{revision}"
+              f"  ·  {len(entree['evenements'])} evenement(s){marque}")
+    if len(mondes) > 1:
+        print()
+        print("    ATTENTION : le monde a change PENDANT cette mission. Une conclusion peut")
+        print("    s'appuyer sur des observations faites sur deux etats differents — il faut")
+        print("    la relire avant de l'utiliser comme preuve.")
+    elif mondes and courant["sceau"] and mondes[0]["sceau"] != courant["sceau"]:
+        print()
+        print("    Ces preuves portent sur un etat ANTERIEUR du depot : le contenu a change")
+        print("    depuis. Elles restent valides pour ce qu'elles decrivent, pas pour l'etat")
+        print("    actuel. Pour comparer a coup sur : `jio doctor` puis `jio recover`.")
     print()
 
     report = IntegrityMonitor().audit(journal)

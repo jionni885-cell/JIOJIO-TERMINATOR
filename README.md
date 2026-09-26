@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 546 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 562 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -638,7 +638,7 @@ preuve du calcul faux  7 x 6 vaut 42, le texte annonce 43
 sans affirmation       code != 0 — rien a verifier n'est pas un quitus, et c'est DIT.
 ```
 
-Rejouable : `bash scripts/evidence.sh`, étape **19** (corpus versionné dans
+Rejouable : `bash scripts/evidence.sh`, étape **20**, « La PROSE » (corpus versionné dans
 `evidence/claims/`).
 
 ### Quatre bugs, tous du même genre : une vérification qui ne vérifiait rien
@@ -1216,6 +1216,64 @@ de contexte est survolé, pas lu.
 
 ---
 
+## Une preuve dit sur QUEL monde elle a été produite
+
+Un journal chaîné par hachage prouve qu'un enregistrement **n'a pas été altéré**. Il ne prouve
+pas que le **monde n'a pas changé** depuis. Les deux choses sont différentes, et les confondre
+produit un mode d'échec précis, décrit et exploitable (`arXiv 2608.29381`, *inconsistent
+checkpoint state*) :
+
+1. une vérification `V` est produite sur un état du monde `X` ;
+2. le monde est ensuite restauré — `git reset`, rollback, `jio recover`, édition manuelle —
+   vers un état `Y` ;
+3. `V` reste intacte, vérifiable, **et porte pourtant sur un monde qui n'existe plus**.
+
+Ce n'est pas théorique ici : l'incident `.git` est arrivé **trois fois** pendant ce projet, et
+`jio recover` existe précisément pour restaurer un état antérieur.
+
+JIO scelle donc **chaque événement du journal** avec l'empreinte du monde où il a été écrit, et
+`jio trace` le dit quand deux mondes se succèdent :
+
+```
+  MONDE : 2 etat(s) distinct(s) dans ce journal
+    sceau c3583bcb191b  ·  2 evenement(s)
+    sceau 95bce1907e3b  ·  1 evenement(s)
+
+    ATTENTION : le monde a change PENDANT cette mission. Une conclusion peut
+    s'appuyer sur des observations faites sur deux etats differents — il faut
+    la relire avant de l'utiliser comme preuve.
+```
+
+Le journal reste **intègre** (`chaine INTEGRE`) : les deux constats sont indépendants, et c'est
+tout l'intérêt. Le sceau entre dans le hachage, donc le réécrire après coup casse la chaîne —
+vérifié par un test qui falsifie un sceau et exige la rupture.
+
+### Une optimisation plus rapide, mesurée, puis jetée
+
+La première version hachait les **métadonnées** (chemin, taille, date de modification) plutôt
+que le contenu : un `stat` semble moins cher qu'une lecture. Deux mesures l'ont tuée.
+
+**Elle n'était pas plus rapide.** Le parcours n'élaguait pas les dossiers exclus en marchant :
+il descendait dans `.venv` et les caches **puis** filtrait. Sur ce dépôt : **3 609 fichiers
+parcourus pour 181 retenus**, 75 ms au lieu de 3 ms. En élaguant pendant le parcours, le sceau
+de contenu tombe à **6 ms** — plus rapide que l'ancienne version « rapide ».
+
+**Elle était aveugle.** Sur le système de fichiers de cette machine, `st_mtime_ns` **ne bouge
+pas** après une réécriture : cinq écritures successives du même fichier ont donné la même date
+au nanoseconde près. Taille inchangée + date inchangée ⇒ même sceau. Une modification de
+contenu réelle serait passée inaperçue.
+
+Un test fige explicitement la date (`os.utime`) après une réécriture de même taille : taille
+identique, date identique, contenu différent — **le sceau doit changer quand même**. C'est ce
+qui empêche de « réoptimiser » un jour ce chemin avec des `stat`.
+
+### Une seule mesure, pour deux usages
+
+Le même sceau sert au journal (*sur quel monde cet événement a-t-il été écrit*) et à
+`jio recover` (*aucun octet n'a bougé*). Deux métriques différentes auraient fini par ne plus
+être comparables entre elles — et c'est précisément la comparaison avant/après qui doit être
+fiable.
+
 ## Quand `.git` est réinitialisé : récupérer sans perdre un octet
 
 Ce n'est pas une hypothèse. C'est arrivé **trois fois** pendant le développement de ce
@@ -1371,6 +1429,26 @@ donc un **signalement**, pas une faute :
 L'auto-vérification ne juge que les écarts réparables. Exiger zéro écart *de tout genre*
 revenait à refuser **toutes** les corrections dès qu'un document ne parlait pas de tests —
 c'est-à-dire à rendre l'outil inutilisable sur n'importe quel document partiel.
+
+## Un piège de lancement, rencontré en écrivant la preuve
+
+En écrivant la simulation ci-dessus, une étape a échoué — pas à cause du code testé, mais à
+cause de la façon de lancer l'outil :
+
+```
+$ cd un-projet-qui-contient-un-dossier-jio/ && python -m jio trace ...
+ImportError: cannot import name '__version__' from 'jio' (unknown location)
+```
+
+Quand le répertoire courant contient un dossier nommé `jio`, Python le traite comme un paquet
+(prioritaire sur le paquet installé) : `python -m jio` charge alors **ce dossier-là**, vide, et
+échoue avec un message qui ne dit rien. Ce n'est pas un défaut du projet, c'est ainsi que
+Python résout ses imports — mais le message, lui, n'aide personne.
+
+**Utilisez la commande console `jio`** (`[project.scripts]` dans `pyproject.toml`) : elle passe
+par l'environnement d'installation et n'a pas ce problème. Toutes les commandes de ce document
+s'écrivent donc `jio …`, et les preuves lancent `python -m jio` depuis le dépôt lui-même, où le
+dossier `jio/` est bien le paquet.
 
 ## Documentation
 

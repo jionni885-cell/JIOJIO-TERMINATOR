@@ -80,20 +80,36 @@ def test_les_renvois_des_documents_designent_une_etape_qui_existe() -> None:
     }
     assert numeros, "aucun numero d'etape : le script de preuve a change de forme"
 
-    motif = re.compile(r"\b[ée]tape\s+\*{0,2}(\d+)\*{0,2}")
+    # Le renvoi peut citer le titre : « etape 20, « La PROSE » ». C'est la forme robuste —
+    # un numero seul survit a une renumerotation en designant la MAUVAISE etape, ce qui est
+    # arrive pendant l'ecriture de ce test. Quand le titre est cite, on le verifie.
+    motif = re.compile(
+        r"\b[ée]tape\s+\*{0,2}(\d+)\*{0,2}\s*[,\u2014-]?\s*[«\\\"']([^»\\\"']{4,60})[»\\\"']"
+    )
+    titre_existe = re.compile(r"\b[ée]tape\s+\*{0,2}(\d+)\*{0,2}")
+    titres = _titres()
     documents = [RACINE / "README.md"] + sorted((RACINE / "docs").glob("*.md"))
     vus = 0
     for document in documents:
         if not document.is_file():
             continue
         for indice, ligne in enumerate(document.read_text(encoding="utf-8").splitlines(), 1):
-            for correspondance in motif.finditer(ligne):
+            for correspondance in titre_existe.finditer(ligne):
                 vus += 1
                 cible = int(correspondance.group(1))
                 assert cible in numeros, (
                     f"{document.relative_to(RACINE)} ligne {indice} renvoie a l'etape "
                     f"{cible}, qui n'existe pas dans scripts/evidence.sh "
                     f"(etapes : {sorted(numeros)})"
+                )
+            for correspondance in motif.finditer(ligne):
+                cible, titre = int(correspondance.group(1)), correspondance.group(2).strip()
+                reel = titres[cible - 1] if 0 < cible <= len(titres) else ""
+                assert titre.lower() in reel.lower(), (
+                    f"{document.relative_to(RACINE)} ligne {indice} renvoie a l'etape "
+                    f"{cible} en la nommant {titre!r}, mais cette etape s'appelle "
+                    f"{reel!r}. Citer le titre protege du decalage ; le citer faux ne "
+                    "protege de rien."
                 )
     assert vus, (
         "aucun renvoi d'etape trouve : soit les documents ont cesse de citer la preuve, "

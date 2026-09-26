@@ -41,7 +41,21 @@ for arg in "$@"; do
     esac
 done
 
-titre() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
+# Un registre des etapes : une preuve qui SAUTE une etape sans le dire laisse croire
+# qu'elle a tout couvert. Deux compteurs, et un controle en fin de parcours.
+ETAPES_EXECUTEES=0
+ETAPES_SAUTEES=0
+
+titre() {
+    printf '\n\033[1m== %s\033[0m\n' "$1"
+    ETAPES_EXECUTEES=$((ETAPES_EXECUTEES + 1))
+}
+
+# Sauter est permis ; le taire ne l'est pas.
+sauter() {
+    printf '\n\033[1m== %s\033[0m  (SAUTEE : %s)\n' "$1" "$2"
+    ETAPES_SAUTEES=$((ETAPES_SAUTEES + 1))
+}
 
 if [ "$FAIRE_LOCAL" -eq 1 ]; then
     titre "1. La suite de tests (le comportement est verrouille)"
@@ -366,6 +380,9 @@ if [ "$FAIRE_TIERS" -eq 1 ]; then
     else
         echo "    telechargement impossible (reseau indisponible) : etape ignoree."
     fi
+else
+    sauter "10. Zero fausse accusation sur des paquets publies" \
+        "elle telecharge des paquets (option --third-party)"
 fi
 
 titre "11. Un depot reinitialise se repare sans perdre un octet"
@@ -453,7 +470,56 @@ if [ "$CODE_CHIFFRES" -ne 0 ]; then
     exit 1
 fi
 
-titre "13. Le banc mesure VOTRE modele, et refuse de faire semblant"
+titre "13. Une preuve dit sur QUEL monde elle a ete produite"
+
+# Un journal chaine prouve qu'il n'a pas ete altere. Il ne prouve pas que le monde n'a pas
+# change : une verification produite sur un etat peut rester « valide » apres une
+# restauration vers un autre etat, et c'est ainsi qu'on publie un monde sous la verification
+# d'un autre (arXiv 2608.29381, « inconsistent checkpoint state »).
+SIM_MONDE=$(mktemp -d)
+(
+    cd "$SIM_MONDE"
+    git init -q -b main
+    git config user.email a@b && git config user.name preuve
+    mkdir -p src
+    printf 'def total():\n    return 1\n' > src/total.py
+    git add -A && git commit -q -m "etat initial"
+)
+
+"$PYTHON" - "$SIM_MONDE" "$RACINE" <<'PYEOF'
+import sys
+from pathlib import Path
+# Le depot est passe en ARGUMENT : un heredoc entre apostrophes ne developpe pas les
+# variables, et un chemin litteral « $RACINE » faisait importer le paquet installe par
+# accident — donc une autre version que celle qu'on veut prouver.
+racine, depot = Path(sys.argv[1]), sys.argv[2]
+sys.path.insert(0, depot)
+from jio.core.journal import Journal  # noqa: E402
+journal = Journal(path=racine / ".jio" / "journal.jsonl", racine=racine)
+journal.append("mission", {"objectif": "verifier le total"})
+journal.append("verification", {"resultat": "1+1=2 : conforme"})
+(racine / "src" / "total.py").write_text("def total():\n    return 2\n", encoding="utf-8")
+journal.append("livraison", {"fichier": "src/total.py"})
+print("    sceaux distincts :", len(journal.mondes()))
+print("    chaine integre    :", journal.verify_chain()[0])
+for entree in journal.mondes():
+    print(f"      sceau {entree['sceau'][:12]}  ·  evenements {entree['evenements']}")
+PYEOF
+
+echo "    --- ce que la commande en dit ---"
+# On reste DANS le depot de JIO : lance depuis un projet, `python -m jio` peut importer le
+# dossier local du projet s'il s'appelle `jio` (mesure : ImportError incomprehensible). Le
+# journal porte un chemin absolu, donc rien n'oblige a s'y deplacer.
+"$PYTHON" -m jio trace "$SIM_MONDE/.jio/journal.jsonl" 2>&1 \
+    | grep -A3 "MONDE :" | sed 's/^/  /'
+if ! "$PYTHON" -m jio trace "$SIM_MONDE/.jio/journal.jsonl" 2>&1 \
+       | grep -q "le monde a change PENDANT"; then
+    echo "    ECHEC : le journal n'a pas signale que le monde avait change en cours de mission" >&2
+    rm -rf "$SIM_MONDE"; exit 1
+fi
+rm -rf "$SIM_MONDE"
+
+titre "14. Le banc mesure VOTRE modele, et refuse de faire semblant"
 
 # Un CLI externe est appele par subprocess : un faux modele sert de temoin, et il prouve
 # aussi la regle la plus importante — un modele demande et indisponible ARRETE la mesure.
@@ -486,7 +552,7 @@ assert isinstance(f.provider, CliProvider), f
 print('      binaire resolu :', f.provider.binary, '—', f.instances, 'instances pour le panel')
 "
 
-titre "14. Les commandes citees par les documents existent"
+titre "15. Les commandes citees par les documents existent"
 
 # L'oracle est le parseur de la CLI elle-meme : aucune interpretation possible. Ce controle
 # a deja trouve deux defauts reels dans ce depot (jio sync promis et inexistant, jio
@@ -508,7 +574,7 @@ else
     echo "    aucun document a verifier"
 fi
 
-titre "15. Ecrire des artefacts ne detruit rien"
+titre "16. Ecrire des artefacts ne detruit rien"
 
 # Un fichier de l'utilisateur n'est jamais ecrase : sa version reste, la notre va a cote.
 # Le registre .jio/generated.json signe en plus les fichiers que le format empeche de
@@ -547,7 +613,7 @@ if [ "$ENTREES" -lt 20 ]; then
 fi
 rm -rf "$TMP_ECRITURE"
 
-titre "16. Le budget de contexte : ce que la configuration coute"
+titre "17. Le budget de contexte : ce que la configuration coute"
 
 # Un fichier de contexte trop long est SURVOLE : il occupe la fenetre et n'apporte rien.
 # On mesure donc ce qui est livre, et pas seulement ce qu'un test interne suppose.
@@ -577,7 +643,7 @@ print(f"    competences : {len(mesures)} fichier(s), ~{total} jetons au total "
 print("    cote d'une session reelle : un seul fichier de contexte, pas la somme.")
 FIN
 
-titre "17. Les hooks pre-commit : une promesse ecrite doit avoir une implementation"
+titre "18. Les hooks pre-commit : une promesse ecrite doit avoir une implementation"
 
 # Le defaut trouve dans ce depot : `jio-scan-strict` annoncait « echoue aussi si le projet
 # est incoherent a l'import » avec EXACTEMENT la meme commande que le hook normal. On
@@ -619,7 +685,7 @@ else
 fi
 rm -rf "$TMP_HOOK"
 
-titre "18. Le serveur MCP : ecrit ne veut pas dire BRANCHE"
+titre "19. Le serveur MCP : ecrit ne veut pas dire BRANCHE"
 
 # Deux faits, tous deux verifiables sans cle API :
 #   1. les fragments de configuration respectent le format de chaque outil ;
@@ -654,7 +720,7 @@ else
     echo "PROBLEME : le serveur ne sert pas ses outils."
 fi
 
-titre "19. La PROSE : un document a des affirmations vraies ou fausses"
+titre "20. La PROSE : un document a des affirmations vraies ou fausses"
 # Tout le harness prouvait du CODE. Sur une mission generaliste (rapport, analyse,
 # note) il n'y avait rien a executer, donc JIO s'abstenait. Ce temoin verifie ce qui,
 # dans un texte, se PROUVE au lieu de se relire : un calcul annonce, un bloc presente
@@ -719,7 +785,7 @@ else
 fi
 rm -rf "$TMP_CLAIMS"
 
-titre "20. Une MISSION de document : la prose entre dans la boucle"
+titre "21. Une MISSION de document : la prose entre dans la boucle"
 # Les temoins de prose (3 quinquies) verifient UN document. Il manquait la mission
 # complete : generer, prouver, panel, consensus, porte. Sans cela, une mission
 # generaliste n'avait aucune preuve executable et JIO s'abstenait.
@@ -746,3 +812,16 @@ else
 fi
 
 titre "Termine"
+
+# Le controle qui compte : les etapes DECLAREES dans ce fichier doivent toutes avoir ete
+# rendues — executees ou explicitement sautees. Sans lui, ajouter une etape dans une
+# condition revenait a la faire disparaitre de la preuve en silence.
+DECLAREES=$(grep -cE '^[[:space:]]*titre "' "$0")
+RENDUES=$((ETAPES_EXECUTEES + ETAPES_SAUTEES))
+echo "    etapes : $ETAPES_EXECUTEES executee(s) · $ETAPES_SAUTEES sautee(s) · $DECLAREES declaree(s)"
+if [ "$RENDUES" -ne "$DECLAREES" ]; then
+    echo "    ECHEC : $DECLAREES etape(s) declaree(s) pour $RENDUES rendue(s)." >&2
+    echo "    Une etape non executee doit etre annoncee par `sauter` avec sa raison." >&2
+    exit 1
+fi
+echo "    aucune etape ne disparait en silence."

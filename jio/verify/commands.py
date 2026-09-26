@@ -21,6 +21,12 @@ verifie pas non plus les commandes d'AUTRES outils (`ruff check`, `pytest`) : JI
 connait pas leur surface, et pretendre le contraire produirait exactement les faux positifs
 que ce projet passe son temps a retirer.
 
+Elle ne verifie pas non plus les GABARITS (`` `jio …` ``, `` `jio <objectif>` ``) : ce ne
+sont pas des invocations mais des formes generales. Mesure : la phrase « toutes les commandes
+s'ecrivent `jio …` » etait declaree « commande INCONNUE : `jio …` » — un faux positif
+bloquant, le quatrieme du meme genre dans ce projet, et chaque fois la meme lecon : un
+controle qui accuse doit d'abord s'assurer qu'il a compris ce qu'il lit.
+
 Les commandes peuvent avoir des OPTIONS deja parsees : `jio mcp --prove 2>&1 | grep ...`
 doit etre accepte, et un `--flag` place apres un `|` appartient a l'autre programme : on
 s'arrete au premier caractere de coquille.
@@ -110,6 +116,23 @@ def _decoupe(corps: str) -> tuple[str, tuple[str, ...]]:
     return sous, options
 
 
+#: Un GABARIT n'est pas une invocation. `` `jio …` `` ou `` `jio <objectif>` `` designent
+#: une forme, pas une commande a taper : les verifier produirait « commande INCONNUE :
+#: `jio …` » — un faux positif bloquant, et le quatrieme du meme genre dans ce projet.
+#: Quatrieme mesure, meme lecon : un controle qui accuse doit d'abord s'assurer qu'il a
+#: compris ce qu'il lit.
+_GABARIT = re.compile(r"[<>{}\[\]\u2026*]|\.\.\.")
+
+
+def _est_une_invocation(sous_commande: str) -> bool:
+    """Vrai si ce mot designe une commande reelle, plutot qu'une forme generale."""
+    if not sous_commande or _GABARIT.search(sous_commande):
+        return False
+    if sous_commande.startswith("--"):
+        return True  # option de premier niveau : `jio --version`
+    return bool(re.fullmatch(r"[a-z][a-z0-9_-]*", sous_commande))
+
+
 def commandes_citees(texte: str) -> tuple[CommandeCitee, ...]:
     """Extrait les invocations `jio ...` d'un document, dans l'ordre d'apparition.
 
@@ -143,6 +166,8 @@ def commandes_citees(texte: str) -> tuple[CommandeCitee, ...]:
             if not corps:
                 continue
             sous, options = _decoupe(corps)
+            if not _est_une_invocation(sous):
+                continue
             par_cle.setdefault(
                 (sous, options),
                 CommandeCitee(
@@ -156,6 +181,8 @@ def commandes_citees(texte: str) -> tuple[CommandeCitee, ...]:
         if not corps:
             continue
         sous, options = _decoupe(corps)
+        if not _est_une_invocation(sous):
+            continue
         position = correspondance.start()
         citation = dans_un_bloc(position)
         ancienne = par_cle.get((sous, options))

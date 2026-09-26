@@ -171,3 +171,32 @@ def test_le_genre_commande_est_declare_bloquant() -> None:
     from jio.verify.claims import SEVERITE
 
     assert SEVERITE[Genre.COMMANDE] == "VIOLATION"
+
+
+# --------------------------------------------------------------------------- #
+# Un gabarit n'est pas une invocation
+# --------------------------------------------------------------------------- #
+
+
+def test_un_gabarit_n_est_pas_une_commande() -> None:
+    """« jio … » ou « jio <objectif> » designent une FORME, pas une commande a taper.
+
+    Mesure : la phrase « toutes les commandes de ce document s'ecrivent donc `jio …` » a ete
+    declaree « commande INCONNUE : `jio …` » — une refutation bloquante sur une phrase
+    juste. Quatrieme faux positif du meme genre dans ce projet ; la lecon ne change pas : un
+    controle qui accuse doit d'abord s'assurer qu'il a compris ce qu'il lit.
+    """
+    from jio.verify.commands import commandes_citees
+
+    texte = (
+        "Toutes les commandes s'ecrivent `jio …` avec sa sous-commande.\n"
+        "Pour une mission : `jio run <objectif>`.\n"
+        "Et `jio --version` fonctionne.\n"
+        "Mais `jio scna .` est une faute de frappe.\n"
+    )
+    trouvees = [citation.sous_commande for citation in commandes_citees(texte)]
+
+    assert "…" not in trouvees, "un gabarit a ete pris pour une commande"
+    assert "<objectif>" not in trouvees
+    assert "--version" in trouvees, "une option de premier niveau doit rester verifiee"
+    assert "scna" in trouvees, "une vraie faute doit rester detectee"
