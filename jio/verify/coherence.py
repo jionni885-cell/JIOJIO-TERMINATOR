@@ -54,15 +54,25 @@ DOCUMENTS_CHIFFRES = ("README.md",)
 
 @dataclass(frozen=True)
 class Constat:
-    """Un controle, son verdict, et la preuve de ce verdict."""
+    """Un controle, son verdict, et la preuve de ce verdict.
+
+    `portee` distingue deux choses qu'un booleen confondait : un controle qui a MESURE et
+    trouve le depot coherent, et un controle qui n'AVAIT RIEN A MESURER ici. Le second etait
+    rendu « ok » — donc un depot tiers obtenait un faux vert silencieux sur des controles qui
+    ne s'appliquaient pas a lui. Le portail affiche maintenant `[--]` avec la raison, et
+    `as_dict` les liste a part : hors de portee n'est ni un succes ni un echec.
+    """
 
     controle: str
     ok: bool
     resume: str
     details: tuple[str, ...] = ()
+    portee: bool = True
 
     @property
     def marque(self) -> str:
+        if not self.portee:
+            return "--"
         return "ok" if self.ok else "KO"
 
 
@@ -85,12 +95,19 @@ class RapportCoherence:
     def incoherents(self) -> tuple[Constat, ...]:
         return tuple(c for c in self.constats if not c.ok)
 
+    @property
+    def hors_portee(self) -> tuple[Constat, ...]:
+        """Les controles qui n'avaient rien a mesurer ICI : ni succes, ni echec."""
+        return tuple(c for c in self.constats if not c.portee)
+
     def as_dict(self) -> dict[str, object]:
         return {
             "coherent": self.ok,
             "duree_s": self.duree_s,
+            "hors_portee": [c.controle for c in self.hors_portee],
             "constats": [
-                {"controle": c.controle, "ok": c.ok, "resume": c.resume, "details": list(c.details)}
+                {"controle": c.controle, "ok": c.ok, "resume": c.resume,
+                 "details": list(c.details), "portee": c.portee}
                 for c in self.constats
             ],
         }
@@ -151,7 +168,16 @@ def _controle_nombres(racine: Path) -> Constat:
     """Les chiffres annonces dans les documents sont-ils ceux mesures MAINTENANT ?"""
     from ..chiffres import ecarts, mesurer
 
-    mesures = mesurer(racine)
+    if not (racine / "tests").is_dir():
+        # Sans dossier de tests, il n'y a aucun chiffre a mesurer — et un controle muet rendu
+        # « ok » serait un faux vert. Meme regle que les deux autres : dire hors portee.
+        return Constat("nombres", True, "hors de portee : aucun dossier tests/ dans cette racine",
+                       portee=False)
+    try:
+        mesures = mesurer(racine)
+    except RuntimeError as exc:
+        # Ici, des tests EXISTENT mais la mesure echoue : c'est un echec, pas une absence.
+        return Constat("nombres", False, f"mesure IMPOSSIBLE alors que des tests existent : {exc}"[:150])
     tous: list[str] = []
     for nom in DOCUMENTS_CHIFFRES:
         chemin = racine / nom
@@ -173,9 +199,13 @@ def _controle_documents(racine: Path) -> Constat:
     """Les faits verifiables des documents tiennent-ils ? (calculs, blocs Python, chemins)"""
     from .claims import verifier
 
+    cibles = _documents(racine)
+    if not cibles:
+        return Constat("documents", True, "hors de portee : aucun document a verifier ici",
+                       portee=False)
     refutations: list[str] = []
     verifies = 0
-    for chemin in _documents(racine):
+    for chemin in cibles:
         rapport = verifier(chemin.read_text(encoding="utf-8", errors="replace"), racine=racine)
         verifies += len(rapport.verifications)
         for blocage in rapport.bloquantes[:3]:
@@ -184,7 +214,7 @@ def _controle_documents(racine: Path) -> Constat:
     return Constat(
         "documents",
         ok,
-        f"{verifies} affirmation(s) verifiee(s) sur {len(_documents(racine))} document(s)"
+        f"{verifies} affirmation(s) verifiee(s) sur {len(cibles)} document(s)"
         + ("" if ok else f", {len(refutations)} refutee(s)"),
         tuple(refutations[:6]),
     )
@@ -244,6 +274,10 @@ def _controle_commandes(racine: Path) -> Constat:
         resume = f"{len(inconnues)} commande(s) citee(s) INEXISTANTE(S)"
     if exemptions:
         resume += f" · {len(exemptions)} zone(s) declaree(s) hors controle"
+    if vues == 0 and not inconnues and not sans_raison:
+        return Constat("commandes", True,
+                       "hors de portee : aucune commande `jio ...` citee par un document",
+                       portee=False)
     return Constat(
         "commandes",
         ok,
@@ -263,6 +297,12 @@ def _controle_environnement(racine: Path) -> Constat:
     promesse en l'air.
     """
     import tests.test_env_wiring as wiring  # noqa: PLC0415 - module de test, import paresseux
+
+    # Meme regle que `sources` : ce controle decrit les variables lues par le CODE de JIO.
+    # Sur un autre depot, il n'a rien a dire — et se taire serait un faux vert.
+    if not (racine / "jio" / "__init__.py").is_file():
+        return Constat("environnement", True,
+                       "hors de portee : aucun paquet jio/ dans cette racine", portee=False)
 
     documentees = wiring._documented()                                            # noqa: SLF001
     brutes = wiring._read_by_code()                                               # noqa: SLF001
@@ -299,7 +339,15 @@ def _controle_sources(racine: Path) -> Constat:
     from .imports import check_project
     from .linters import analyse
 
-    fichiers = sorted(p for p in (racine / "jio").rglob("*.py") if "__pycache__" not in p.parts)
+    paquet = racine / "jio"
+    if not (paquet / "__init__.py").is_file():
+        # Absence de paquet `jio/` : le controle n'a rien a mesurer. L'annoncer est le seul
+        # comportement acceptable — rendre « propre » sur zero fichier est un faux vert, et
+        # c'est exactement ce qu'un depot tiers obtenait avant.
+        return Constat("sources", True, "hors de portee : aucun paquet jio/ dans cette racine",
+                       portee=False)
+
+    fichiers = sorted(p for p in paquet.rglob("*.py") if "__pycache__" not in p.parts)
     rapport = analyse(fichiers, root=racine)
     problemes = list(rapport.findings)
     limites: list[str] = []
@@ -389,11 +437,17 @@ def formater(rapport: RapportCoherence, *, largeur: int = 100) -> str:
         if rapport.ok
         else f"INCOHERENT : {len(rapport.incoherents)} controle(s) en echec"
     )
+    hors = len(rapport.hors_portee)
     lignes = [
         "  COHERENCE D'ENSEMBLE  ·  ce que ce depot affirme est-il encore vrai ?",
         f"    {len(rapport.constats)} controle(s) en {rapport.duree_s:.1f}s  ·  VERDICT : {verdict}",
-        "",
     ]
+    if hors:
+        lignes.append(
+            f"    ({hors} controle(s) HORS PORTEE ici : ils ne s'appliquent pas a cette racine, "
+            "donc ils ne comptent ni comme succes ni comme echec)"
+        )
+    lignes.append("")
     for constat in rapport.constats:
         lignes.append(f"    [{constat.marque:<2}] {constat.controle:<13} {constat.resume[:72]}")
         for detail in constat.details:

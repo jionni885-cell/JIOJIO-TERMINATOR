@@ -53,14 +53,17 @@ def test_le_rapport_est_lisible_par_une_machine() -> None:
     """
     rapport = controler(RACINE)
     donnees = json.loads(json.dumps(rapport.as_dict(), ensure_ascii=False))
-    assert set(donnees) == {"coherent", "duree_s", "constats"}
+    assert set(donnees) == {"coherent", "duree_s", "hors_portee", "constats"}
     assert donnees["coherent"] is True
     assert isinstance(donnees["duree_s"], float)
     noms = [c["controle"] for c in donnees["constats"]]
     assert noms == [
         "artefacts", "nombres", "documents", "commandes", "environnement", "sources", "plan",
     ]
-    assert all(set(c) == {"controle", "ok", "resume", "details"} for c in donnees["constats"])
+    assert all(set(c) == {"controle", "ok", "resume", "details", "portee"}
+               for c in donnees["constats"])
+    # Sur CE depot, aucun controle n'est hors portee : ils s'appliquent tous.
+    assert donnees["hors_portee"] == []
 
 
 # --------------------------------------------------------------------------- #
@@ -244,3 +247,145 @@ def test_le_formateur_dit_le_verdict_et_les_PREUVES() -> None:
     assert "INCOHERENT" in texte_ko
     assert "README.md ligne 15" in texte_ko
     assert "Corriger, puis relancer" in texte_ko
+
+
+# --------------------------------------------------------------------------- #
+# 4. Une racine ou le controle ne s'applique PAS : hors portee, jamais un faux vert
+# --------------------------------------------------------------------------- #
+
+
+def test_sur_une_racine_etrangere_aucun_controle_ne_rend_un_FAUX_VERT(tmp_path: Path) -> None:
+    """Un dossier vide ne doit jamais obtenir « propre » sur un controle qui n'a rien mesure.
+
+    Defaut reel : `sources` analysait `racine/jio`, absent d'un depot tiers, et rendait
+    « 0 fichier, 0 constat » — donc **propre**. Le meme trou existait pour les chiffres (aucun
+    dossier `tests/`), les documents (aucun document), les commandes citees (aucune) et les
+    variables d'environnement. Cinq faux verts, tous de la meme famille : confondre « j'ai
+    mesure et c'est bon » avec « je n'avais rien a mesurer ».
+
+    Le contrat : un controle hors portee est marque `[--]`, porte sa raison, et n'est ni un
+    succes ni un echec dans le rapport comme dans le JSON.
+    """
+    rapport = controler(tmp_path)
+    noms = [c.controle for c in rapport.hors_portee]
+    assert noms == ["nombres", "documents", "commandes", "environnement", "sources"]
+    for constat in rapport.hors_portee:
+        assert constat.marque == "--"
+        assert "hors de portee" in constat.resume, constat.resume
+        assert constat.details == ()
+    # Le seul controle qui MESURE ici est `artefacts` : rien n'est integre. Le depot n'est donc
+    # pas coherent — et l'IA a la commande exacte pour le rendre tel.
+    assert not rapport.ok and rapport.code == 1
+    assert [c.controle for c in rapport.incoherents] == ["artefacts"]
+    assert all("jio artifacts --write" in d for d in rapport.incoherents[0].details if "regenerer" in d)
+    assert "HORS PORTEE" in formater(rapport)
+
+
+def test_un_dossier_de_tests_sans_mesure_possible_est_un_ECHEC_pas_une_absence(
+    tmp_path: Path,
+) -> None:
+    """Tests presents mais mesure impossible : echec. Sans tests : hors portee. Deux cas distincts.
+
+    La distinction n'est pas cosmetique : si un dossier `tests/` existe et que la mesure des
+    chiffres echoue, quelque chose est casse dans la mesure elle-meme — et rendre « ok » ferait
+    exactement ce que ce projet refuse, taire un probleme parce qu'il est desagreable.
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "README.md").write_text("---\n\nLe depot compte 12 tests verts.\n",
+                                        encoding="utf-8")
+    constat = _constat(controler(tmp_path), "nombres")
+    assert not constat.ok
+    assert "IMPOSSIBLE" in constat.resume
+
+
+# --------------------------------------------------------------------------- #
+# 5. Ce que le portail apporte, MESURE contre les briques qui existaient deja
+# --------------------------------------------------------------------------- #
+
+
+def test_le_portail_voit_ce_qu_AUCUNE_brique_separee_ne_voit(tmp_path: Path) -> None:
+    """L'apport mesure : trois incoherences reelles, une seule brique les voit toutes.
+
+    Le banc construit un depot ou trois choses sont fausses en meme temps, chacune du genre qui
+    est REELLEMENT arrive dans ce depot :
+
+      1. un artefact genere ne correspond plus a sa doctrine (modifie a la main) ;
+      2. un chiffre annonce n'est plus celui mesure (le compteur a bouge) ;
+      3. une commande citee n'existe pas dans la CLI.
+
+    Puis il interroge chaque brique SEULE et le portail :
+
+    | brique | artefact derive | chiffre faux | commande inventee |
+    |---|---|---|---|
+    | `jio scan` (lint + imports) | non | non | non |
+    | `jio claims` (document seul) | non | non | OUI |
+    | `jio chiffres` | non | OUI | non |
+    | `jio coherence` | OUI | OUI | OUI |
+
+    C'est la definition operatoire de « le portail sert a quelque chose » : sans lui, chacune de
+    ces trois incoherences demande de savoir LAQUELLE des commandes lancer. Avec lui, une seule
+    commande les couvre — et le code de sortie le dit sans lire le texte.
+    """
+    from jio.artifacts import manifest
+    from jio.chiffres import ecarts, mesurer
+    from jio.verify.claims import verifier
+    from jio.verify.imports import check_project
+    from jio.verify.linters import analyse
+
+    # --- un depot minimal, coherent au depart ------------------------------- #
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_un.py").write_text("def test_ok():\n    assert 1 == 1\n",
+                                                   encoding="utf-8")
+    rel = sorted(manifest())[0]
+    artefact = tmp_path / rel
+    artefact.parent.mkdir(parents=True, exist_ok=True)
+    artefact.write_text("ecrit a la main, jamais genere\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text(
+        "Le depot compte 12 tests verts.\n\nEt l'on lance `jio bidule-invente`.\n",
+        encoding="utf-8",
+    )
+
+    # --- 1. le portail les voit TOUTES les trois --------------------------- #
+    rapport = controler(tmp_path)
+    en_echec = {c.controle for c in rapport.incoherents}
+    assert {"artefacts", "nombres", "commandes"} <= en_echec, en_echec
+    assert not rapport.ok
+
+    # --- 2. chaque brique seule n'en voit qu'une partie -------------------- #
+    lint = analyse(sorted((tmp_path / "tests").rglob("*.py")), root=tmp_path)
+    imports = check_project(sorted((tmp_path / "tests").rglob("*.py")), tmp_path / "tests",
+                            limites=[])
+    assert not lint.findings and not imports, "le lint et les imports ne voient aucune des trois"
+
+    prose = verifier((tmp_path / "README.md").read_text(encoding="utf-8"), racine=tmp_path)
+    refutees = {v.affirmation.detail for v in prose.bloquantes}
+    assert refutees == {"bidule-invente"}, refutees  # la commande, et rien d'autre
+
+    mesures = mesurer(tmp_path)
+    perimes = [
+        e for e in ecarts((tmp_path / "README.md").read_text(encoding="utf-8"), mesures)
+        if e.ligne > 0  # les autres chiffres surveilles sont ABSENTS du document : c'est un
+                        # ecart legitime (« le controle ne trouve plus rien a verifier »),
+                        # pas une valeur fausse. On ne mesure ici que les valeurs perimees.
+    ]
+    assert [(e.nom, e.ligne) for e in perimes] == [("tests", 1)], perimes
+
+    # --- 3. le compte, en clair : le portail couvre 3 classes, les briques 2 a elles trois --- #
+    # `documents` recoupe `commandes` (le document cite aussi la commande inventee) : on compte
+    # donc des CLASSES d'incoherence, pas des noms de controles.
+    couvertes_par_le_portail = {
+        "artefact derive" if "artefacts" in en_echec else "",
+        "chiffre perime" if "nombres" in en_echec else "",
+        "commande inventee" if {"commandes", "documents"} & en_echec else "",
+    } - {""}
+    assert len(couvertes_par_le_portail) == 3, couvertes_par_le_portail
+
+    couvertes_par_les_briques = {
+        "artefact derive" if (lint.findings or imports) else "",
+        "commande inventee" if refutees else "",
+        "chiffre perime" if perimes else "",
+    } - {""}
+    # Les briques existantes couvrent DEUX classes sur trois, et jamais celle de l'artefact
+    # derive — qui est la plus frequente (un fichier genere edite a la main).
+    assert couvertes_par_les_briques == {"commande inventee", "chiffre perime"}
+    assert len(couvertes_par_les_briques) < len(couvertes_par_le_portail)
