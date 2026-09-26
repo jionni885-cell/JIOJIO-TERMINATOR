@@ -51,28 +51,15 @@ FERME = "<!-- /chiffres:hors-controle"
 def zones_hors_controle(texte: str) -> tuple[set[int], list[str]]:
     """Rend les numeros de ligne hors controle, et POURQUOI elles le sont.
 
-    Une seule implementation pour DEUX usages : `ecarts` ne doit pas voir ces lignes, et
-    `reparer` ne doit pas y ecrire. Deux fonctions separees auraient fini par diverger — et
-    une reparation qui ecrit la ou le controle ne regarde pas est un trou invisible.
+    La logique vit desormais dans `jio/verify/hors_controle.py` : le besoin a depasse les
+    chiffres (les commandes citees, les calculs d'une prose, les exemples de sortie d'outil),
+    et trois implementations auraient fini par ne plus s'accorder sur ce qui est exempte. Ici,
+    on garde le nom historique : `ecarts` et `reparer` l'appellent, et la compatibilite des
+    marqueurs ecrits dans les documents existants est assuree par le module generique.
     """
-    lignes = texte.splitlines(keepends=True)
-    masquees: set[int] = set()
-    raisons: list[str] = []
-    dedans = False
-    for indice, ligne in enumerate(lignes, start=1):
-        if FERME in ligne:
-            dedans = False
-            masquees.add(indice)
-            continue
-        if OUVRE in ligne:
-            dedans = True
-            masquees.add(indice)
-            raison = ligne.split(OUVRE, 1)[1].lstrip(":").replace("-->", "").strip()
-            raisons.append(raison or "(sans raison ecrite)")
-            continue
-        if dedans:
-            masquees.add(indice)
-    return masquees, raisons
+    from .verify.hors_controle import zones
+
+    return zones(texte)
 
 
 @dataclass(frozen=True)

@@ -3024,6 +3024,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"nombre maximum de questions (defaut {MAX_QUESTIONS})")
     cl.set_defaults(func=cmd_clarify)
 
+    co = sub.add_parser(
+        "coherence",
+        help="LES SEPT CONTROLES d'un coup : tout ce que ce depot affirme est-il encore vrai ?",
+    )
+    co.add_argument("--root", default=".", help="racine du depot a controler")
+    co.add_argument("--json", action="store_true", help="verdict lisible par une machine")
+    co.set_defaults(func=cmd_coherence)
+
     return p
 
 
@@ -3178,6 +3186,32 @@ def cmd_mutants(args: argparse.Namespace) -> int:
     print("    -> la suite attrape chaque mutation mesuree : les affirmations du depot")
     print("       sont tenues par des tests qui savent echouer.")
     return 0
+
+
+def cmd_coherence(args: argparse.Namespace) -> int:
+    """`jio coherence` : sept controles, un verdict, et la preuve de chaque constat.
+
+    Passe d'un coup ce que le depot sait verifier separement — artefacts, chiffres, documents,
+    commandes citees, variables d'environnement, portes du paquet, plan autonome. Le code de
+    sortie vaut 0 seulement si TOUT est coherent : c'est un PORTAIL, donc un appelant
+    automatise peut declarer « fini » sur cette base au lieu de le croire.
+
+    Trois familles d'incoherences, toutes arrivees ici : un document qui annoncait un nombre
+    de tests d'une autre epoque, un artefact qui citait une commande inexistante, un fichier
+    de contexte au-dela de sa propre limite. Aucune n'etait un bug du code — toutes etaient
+    des affirmations devenues fausses que personne ne relisait.
+    """
+    import json as _json
+
+    from .verify.coherence import controler, formater
+
+    print(BANNER)
+    rapport = controler(getattr(args, "root", ".") or ".")
+    if getattr(args, "json", False):
+        print(_json.dumps(rapport.as_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(formater(rapport))
+    return rapport.code
 
 
 def cmd_clarify(args: argparse.Namespace) -> int:
@@ -3378,6 +3412,8 @@ jio clarify "<objectif>"    # les questions ESSENTIELLES ; code 3 si la reponse 
 jio run "<objectif>"        # mission complete : preuve, panel, consensus, reserves
 jio auto "<objectif>"       # plusieurs etapes vers un objectif large : une etape sans
                             # preuve est REFUSEE, un echec non resolu ARRETE le plan
+jio coherence               # LES SEPT CONTROLES : artefacts, chiffres, documents, commandes
+                            # citees, environnement, portes du paquet, plan en suspens
 ```
 
 `jio clarify` sort en **3** quand une question essentielle reste sans reponse. Dans ce cas,

@@ -93,6 +93,13 @@ jobs:
         # que ce controle exige.
         run: python -m jio scan jio --no-learn
 
+      - name: La coherence d'ensemble
+        # Les etapes precedentes regardent chacune UNE chose. Celle-ci regarde ce qui les
+        # relie : les artefacts generes correspondent-ils a leur doctrine, les chiffres
+        # annonces a la mesure, les commandes citees au parseur reel, un plan autonome
+        # laisse-t-il du travail en suspens ? Code 0 seulement si tout est coherent.
+        run: python -m jio coherence
+
       - name: La mesure du banc
         # Le chiffre publie doit etre reproduisible par n'importe qui, sinon ce
         # n'est pas une mesure mais une affirmation.

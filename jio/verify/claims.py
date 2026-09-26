@@ -315,7 +315,18 @@ def _est_cite(fragments: tuple[tuple[int, int], ...], debut: int, fin: int) -> b
 
 
 def extraction(texte: str) -> tuple[Affirmation, ...]:
-    """Toutes les affirmations verifiables d'un document, dans l'ordre du texte."""
+    """Toutes les affirmations verifiables d'un document, dans l'ordre du texte.
+
+    Le texte declare HORS CONTROLE est masque avant l'extraction (espaces de meme longueur,
+    donc les positions restent exactes) : un document doit pouvoir raconter une erreur passee
+    — « l'artefact citait `jio verify`, une commande qui n'existe pas » — sans que ce recit
+    soit pris pour une affirmation du jour. Le masquage est DECLARE dans le document, jamais
+    devine par le controle, et les zones sont affichees par `jio coherence`.
+
+    Le masquage lui-meme vit dans `_extraction_detail`, la fonction de base : l'y mettre deux
+    fois aurait masque deux fois, et surtout un futur appel direct a la fonction de base
+    aurait contourne la regle.
+    """
     return _extraction_detail(texte)[0]
 
 
@@ -339,6 +350,13 @@ def _extraction_detail(texte: str) -> tuple[tuple[Affirmation, ...], int, int]:
     Les deux etaient d'abord silencieux. Un calcul faux de trente-trois termes passait
     alors sans etre ni verifie ni compte : exactement le silence que ce projet refuse.
     """
+    from .hors_controle import masquer
+
+    # Le texte declare HORS CONTROLE est masque ICI, dans la fonction de base : `verifier`
+    # passe par cette fonction, pas par l'enveloppe `extraction`. Un premier jet avait place
+    # le masquage dans l'enveloppe — le recit d'une erreur passee restait alors bloquant, ce
+    # que le portail a immediatement montre sur le README de ce depot.
+    texte = masquer(texte)
     trouvailles: list[Affirmation] = []
     non_evaluees = 0
 

@@ -42,3 +42,15 @@ repos:
         language: system
         files: \.(md|markdown|rst|txt|org|adoc)$
         exclude: ^evidence/
+
+      # Le portail d'ensemble. `scan` regarde le CODE, `claims` regarde les FAITS d'un
+      # document : aucun des deux ne voit qu'un artefact genere a cesse de correspondre a sa
+      # doctrine, qu'un chiffre annonce n'est plus celui mesure, ou qu'une commande citee
+      # n'existe pas. Ces incoherences-la sont des affirmations devenues fausses, et elles
+      # ne se voient qu'en regardant l'ENSEMBLE.
+      - id: jio-coherence
+        name: JIO — coherence d'ensemble (7 controles, un verdict)
+        entry: python -m jio coherence
+        language: system
+        pass_filenames: false
+        always_run: true

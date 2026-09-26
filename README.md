@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 869 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 898 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -29,6 +29,9 @@ jio clarify "<objectif>"      # les 0 à 3 questions ESSENTIELLES — code 3 : i
 jio run "<objectif>"          # mission complète : preuve, panel, consensus, réserves nommées
 jio auto "<objectif>"         # travaille SEUL, étape par étape : chaque étape doit porter sa
                               # preuve ; une étape sans preuve est REFUSÉE, un échec ARRÊTE
+jio coherence                 # LES SEPT CONTRÔLES : artefacts, chiffres, documents, commandes
+                              # citées, variables d'environnement, portes du paquet, plan
+                              # en suspens — code 0 seulement si TOUT est encore vrai
 ```
 
 `jio clarify` existe pour une seule raison : une IA qui part sans question choisit le
@@ -1086,6 +1089,64 @@ code se valide déjà, au standard de l'écosystème :
   Elle porte l'extension `.example` parce que le jeton GitHub de l'agent n'a **pas**
   la permission `workflows` : GitHub refuse la création du fichier, et ce refus est
   écrit dans le fichier lui-même. Installation en deux lignes, indiquée dedans.
+
+---
+
+## `jio coherence` : la porte qui empêche « c'est fini » d'être une opinion
+
+Chaque brique de ce dépôt vérifie **une** chose : `jio scan` le code, `jio claims` les
+faits d'un document, `jio chiffres` un compteur, `jio audit` un artefact. Aucune ne
+répondait à la question qui compte avant de déclarer un travail terminé : **est-ce que
+l'ensemble tient encore ?**
+
+Les trois incohérences qui ont motivé cette commande ne sont pas hypothétiques — elles
+sont arrivées dans ce dépôt, toutes les trois :
+
+<!-- hors-controle: recit d'incoherences passees — ce tableau raconte des faits historiques, il n'affirme rien du jour -->
+| Ce qui était affirmé | Ce qui était vrai | Ce qu'aucun contrôle ne voyait |
+|---|---|---|
+| « 755 tests verts » dans le README | 848 tests | Un compteur n'est relu par personne |
+| `jio verify` cité dans un artefact généré | la commande n'existe pas | La fiche que l'IA lit en premier |
+| AGENTS.md au-delà de 150 lignes | sa propre limite | Un fichier survolé reste « présent » |
+<!-- /hors-controle -->
+
+Aucune n'était un bug du code. Toutes étaient des **affirmations devenues fausses** que
+personne ne relisait. `jio coherence` passe sept contrôles d'un coup et rend **un verdict** :
+
+```
+  COHERENCE D'ENSEMBLE  ·  ce que ce depot affirme est-il encore vrai ?
+    7 controle(s) en 1.5s  ·  VERDICT : COHERENT : tout ce que ce depot affirme est encore vrai
+
+    [ok] artefacts     29 artefact(s) generes, tous a jour
+    [ok] nombres       3 chiffre(s) mesure(s)
+    [ok] documents     93 affirmation(s) verifiee(s) sur 5 document(s)
+    [ok] commandes     69 commande(s) citee(s), toutes existantes
+    [ok] environnement 28 variable(s) lue(s) et documentee(s)
+    [ok] sources       paquet jio/ : 72 fichier(s), 0 constat(s) de lint, 0 d'import
+    [ok] plan          aucun plan autonome en cours
+```
+
+Le code de sortie vaut **0 seulement si tout est cohérent** : une IA peut donc s'en servir
+comme arbitre avant de dire « fini », sans lire le texte. Et le texte dit toujours *quoi*
+corriger :
+
+```
+    [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
+         - README.md ligne 15 : 898 tests verts -> 898 tests verts
+```
+
+Trois propriétés rendent ce portail utilisable plutôt que décoratif :
+
+- **Il interroge le programme réel.** La liste des commandes vient du parseur (`build_parser`),
+  jamais d'une liste recopiée : une liste recopiée finit par décrire un autre programme.
+- **Il sait échouer.** Chaque contrôle a son test côté rouge : un artefact modifié à la main,
+  un chiffre périmé, une commande inventée, un plan resté en suspens. Un contrôle qu'on ne
+  sait pas faire échouer est un affichage, pas une porte.
+- **Il est *fail-closed*.** Un contrôle qui lève devient un constat en échec avec son message,
+  jamais un silence : un portail qui saute l'étape qui plante est un portail ouvert.
+
+Coût mesuré : **1,5 s** sur ce dépôt, et il est branché là où un humain décide — hook
+pre-commit local et CI.
 
 ---
 
