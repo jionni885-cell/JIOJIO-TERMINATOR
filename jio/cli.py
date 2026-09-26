@@ -3366,9 +3366,32 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     # La fiche que l'agent lit en premier. Elle est ECRITE, pas promise : un fichier d'etat
     # qui decrit ce qui a ete fait est la seule chose qu'une IA puisse verifier seule.
+    # L'etat de COHERENCE du depot, mesure maintenant et ecrit dans la fiche. Une IA qui arrive
+    # doit savoir si le depot qu'elle herite tient deja debout : sinon elle prendra pour
+    # references des artefacts perimes, des chiffres faux ou des commandes inexistantes.
+    from .verify.coherence import controler
+
+    rapport = controler(racine)
+    if rapport.ok:
+        etat_coherence = f"COHERENT ({len(rapport.constats)} controles, {rapport.duree_s:.1f}s)"
+    else:
+        noms = ", ".join(c.controle for c in rapport.incoherents)
+        etat_coherence = f"{len(rapport.incoherents)} controle(s) en echec : {noms}"
+
     etat.mkdir(parents=True, exist_ok=True)
     fiche = etat / "ACTIVE.md"
-    fiche.write_text(_fiche_active(racine, detectees, cablages, len(ecrits)), encoding="utf-8")
+    fiche.write_text(
+        _fiche_active(racine, detectees, cablages, len(ecrits), etat_coherence),
+        encoding="utf-8",
+    )
+    print()
+    print(f"    COHERENCE DU DEPOT : {etat_coherence}")
+    if not rapport.ok:
+        for constat in rapport.incoherents:
+            print(f"      [{constat.marque}] {constat.controle:<13} {constat.resume[:60]}")
+            for detail in constat.details[:2]:
+                print(f"           - {detail[:84]}")
+        print("      -> `jio coherence` donne le detail, la ligne et la correction.")
     print()
     print(f"    fiche d'integration : {fiche.relative_to(racine)}  (l'IA la lit en premier)")
     print()
@@ -3381,7 +3404,11 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 
 def _fiche_active(
-    racine: Path, detectees: list[str], cablages: list[str], ecrits: int
+    racine: Path,
+    detectees: list[str],
+    cablages: list[str],
+    ecrits: int,
+    coherence: str = "non mesuree",
 ) -> str:
     """`.jio/ACTIVE.md` : ce qu'une IA doit lire avant de toucher ce projet.
 
@@ -3403,6 +3430,7 @@ def _fiche_active(
 - artefacts natifs ecrits ou mis a jour : {ecrits}
 - outils detectes sur cette machine : {outils}
 - cablage MCP effectue pour : {cable}
+- coherence du depot a l'instant de l'ecriture : {coherence}
 
 ## Avant de travailler : trois commandes, dans cet ordre
 

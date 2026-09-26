@@ -179,6 +179,10 @@ _PLAN_SIMULE = (
      "jio run \"{objectif} — cible {cible}\" --entrypoint {entree}"),
     ("verifier que rien d'autre n'a bouge", "jio scan ."),
     ("verifier les documents qui citent la cible", "jio claims README.md"),
+    # La derniere etape porte sur l'ENSEMBLE : un plan peut reussir chacune de ses etapes et
+    # laisser le depot incoherent (un artefact qui ne correspond plus a sa doctrine, un chiffre
+    # annonce qui n'est plus mesure). C'est la porte qui autorise a dire « fini ».
+    ("verifier que l'ensemble tient encore", "jio coherence"),
 )
 
 

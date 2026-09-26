@@ -311,3 +311,40 @@ def test_l_outil_MCP_d_etat_lit_le_DISQUE_et_ne_devine_rien(tmp_path) -> None:
             os.environ.pop("JIO_ROOT", None)
         else:
             os.environ["JIO_ROOT"] = ancien
+
+
+def test_l_outil_MCP_de_coherence_enonce_les_SEPT_controles(tmp_path: Path) -> None:
+    """L'agent peut demander la porte avant de declarer « fini » — et il obtient les preuves.
+
+    Un dossier vide doit ressortir INCOHERENT : c'est le cas d'une IA qui arrive avant
+    `jio start`. Le contraire (un dossier vide declare coherent) serait le mensonge par
+    omission que tout ce dispositif existe pour rendre impossible.
+    """
+    import os
+
+    from jio.mcp_server import TOOLS, handle
+
+    noms = [outil["name"] for outil in TOOLS]
+    assert "jio_coherence" in noms
+    description = next(o["description"] for o in TOOLS if o["name"] == "jio_coherence")
+    assert "BEFORE declaring work FINISHED" in description
+
+    ancien = os.environ.get("JIO_ROOT")
+    os.environ["JIO_ROOT"] = str(tmp_path)
+    try:
+        reponse = handle({
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": {"name": "jio_coherence", "arguments": {}},
+        })
+        assert reponse is not None
+        texte = str(((reponse.get("result") or {}).get("content") or [{}])[0].get("text", ""))
+    finally:
+        if ancien is None:
+            os.environ.pop("JIO_ROOT", None)
+        else:
+            os.environ["JIO_ROOT"] = ancien
+
+    assert "INCOHERENT" in texte
+    for controle in ("artefacts", "nombres", "documents", "commandes", "environnement",
+                     "sources", "plan"):
+        assert controle in texte, controle

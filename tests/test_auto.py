@@ -98,8 +98,10 @@ def test_le_plan_simule_est_DETERMINISTE_et_annonce_comme_simule() -> None:
         assert item["preuve"].startswith(("jio ", "python "))
         # Chaque preuve porte sur QUELQUE CHOSE de nomme : la cible, ou le depot entier.
         assert "jio/verify/mutation.py" in item["preuve"] or item["preuve"].endswith(
-            ("jio scan .", "jio claims README.md")
+            ("jio scan .", "jio claims README.md", "jio coherence")
         ), item["preuve"]
+    # La derniere etape verifie l'ENSEMBLE, pas une etape : c'est elle qui autorise « fini ».
+    assert premier[-1]["preuve"] == "jio coherence"
     acceptees, refusees = extraire_etapes(json.dumps(premier))
     assert len(acceptees) == len(premier) and not refusees
     assert [e.id for e in acceptees] == [f"E{i:02d}" for i in range(1, len(premier) + 1)]

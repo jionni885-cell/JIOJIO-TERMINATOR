@@ -193,3 +193,19 @@ def test_les_commandes_d_integration_repondent_a_help(commande: str) -> None:
     assert proc.returncode == 0, proc.stderr
     assert "usage:" in proc.stdout
     assert "Traceback" not in proc.stderr
+
+
+def test_la_fiche_active_porte_l_etat_de_COHERENCE_mesure(tmp_path: Path) -> None:
+    """`.jio/ACTIVE.md` dit si le depot tient debout, et il le dit APRES l'avoir mesure.
+
+    Une IA qui herite d'un depot doit savoir s'il est sain : sinon elle prendra pour references
+    des artefacts perimes, des chiffres faux ou des commandes inexistantes — et ses propres
+    travaux partiront de la. La fiche est le premier fichier qu'elle lit, donc l'etat doit y
+    etre, mesure a l'instant de l'ecriture.
+    """
+    from jio.cli import _fiche_active
+
+    fiche = _fiche_active(tmp_path, ["opencode"], ["opencode"], 3, "COHERENT (7 controles, 0.1s)")
+    assert "coherence du depot a l'instant de l'ecriture : COHERENT (7 controles, 0.1s)" in fiche
+    # Sans mesure, la fiche le DIT au lieu d'affirmer : c'est la meme regle que partout ailleurs.
+    assert "non mesuree" in _fiche_active(tmp_path, [], [], 0)
