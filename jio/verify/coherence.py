@@ -145,22 +145,44 @@ def _controle_artefacts(racine: Path) -> Constat:
     """
     from ..artifacts import manifest
 
+    from ..artifacts.write_guard import REGISTRE, _porte_la_marque, lire_registre
+
+    registre = lire_registre(racine) if (racine / REGISTRE).is_file() else {}
     divergents: list[str] = []
     manquants: list[str] = []
+    proteges: list[str] = []
     for rel, attendu in sorted(manifest().items()):
         chemin = racine / rel
         if not chemin.is_file():
             manquants.append(rel)
-        elif chemin.read_text(encoding="utf-8", errors="replace") != attendu:
+            continue
+        sur_disque = chemin.read_text(encoding="utf-8", errors="replace")
+        if sur_disque == attendu:
+            continue
+        # Le fichier diverge. Mais `jio artifacts --write` le REECRIRA-t-il ? Non, si le garde
+        # d'ecriture ne le reconnait pas comme sien : sans marque et hors registre, il est
+        # PRESERVE, et notre version part a cote en `.jio`. Recommander une commande qui ne peut
+        # pas reparer, c'est envoyer l'utilisateur dans une boucle — defaut trouve ici meme, sur
+        # `.hermes/skills/README.md` : divergence signalee, puis « PRESERVE : ecrit par vous ».
+        if rel not in registre and not _porte_la_marque(sur_disque):
+            proteges.append(rel)
+        else:
             divergents.append(rel)
-    ok = not manquants and not divergents
-    resume = (
-        f"{len(manifest())} artefact(s) generes, tous a jour"
-        if ok
-        else f"{len(manquants)} manquant(s), {len(divergents)} divergent(s)"
-    )
+    ok = not manquants and not divergents and not proteges
+    if ok:
+        resume = f"{len(manifest())} artefact(s) generes, tous a jour"
+    else:
+        resume = f"{len(manquants)} manquant(s), {len(divergents)} divergent(s)"
+        if proteges:
+            resume += f", {len(proteges)} non ecrasable(s) par jio"
     details = tuple(f"manquant : {m}" for m in manquants[:4])
     details += tuple(f"a regenerer : {d} (`jio artifacts --write`)" for d in divergents[:4])
+    details += tuple(
+        f"{p} n'est pas marque comme genere par jio : `jio artifacts --write` le PRESERVERA "
+        f"(notre version ira en {p}.jio). Comparez les deux, puis supprimez-le si vous voulez "
+        "que jio le gere."
+        for p in proteges[:3]
+    )
     return Constat("artefacts", ok, resume, details)
 
 

@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 921 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 923 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -851,7 +851,7 @@ Trois choix de méthode, tous dictés par la même règle :
   maintenant ce qu'une **session réelle** paie, et le `doctor` mesure le fichier que l'outil
   lit — pas la source qui le produit, qui contient des commentaires de maintenance jamais
   émis (cette erreur affichait « TROP LONG » pour des fichiers de 133 lignes).
-- **Charger ≠ disponible.** Les 11 compétences et les 7 agents se chargent à la demande
+- **Charger ≠ disponible.** Les 12 compétences et les 7 agents se chargent à la demande
   (révélation progressive) : les compter au démarrage ferait croire à un coût qui n'existe
   pas.
 
@@ -1134,7 +1134,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 921 tests verts -> 921 tests verts
+         - README.md ligne 15 : 923 tests verts -> 923 tests verts
 ```
 
 Trois propriétés rendent ce portail utilisable plutôt que décoratif :
@@ -1299,7 +1299,7 @@ d'écrire un fichier pour pouvoir le vérifier garantirait que la vérification 
 lieu. Tout chemin est **confiné** à `JIO_ROOT` : un serveur d'outils qui lit n'importe
 quel fichier sur demande est une vulnérabilité, pas une fonctionnalité.
 
-Les 7 agents (`.opencode/agents/`) et les 11 compétences Hermes (`.hermes/skills/`)
+Les 7 agents (`.opencode/agents/`) et les 12 compétences Hermes (`.hermes/skills/`)
 partagent la même doctrine. Deux garde-fous structurels : le **vérificateur n'a pas
 le droit d'écrire** (un vérificateur qui peut réparer ce qu'il juge finit toujours par
 le déclarer conforme), et `AGENTS.md` reste **sous 150 lignes** — au-delà, un fichier
@@ -1594,7 +1594,7 @@ deux vérités sur un même chiffre.
 | **Relecture depuis le disque** après écriture ; s'il reste un écart, le fichier est restauré | écrire un document encore faux en croyant l'avoir corrigé |
 
 Le garde du milieu a servi **au premier essai**. La réparation réécrivait aussi les mentions
-*déjà justes* (« les 11 compétences » → « les 11 compétences ») : cinq remplacements calculés
+*déjà justes* (« les 12 compétences » → « les 12 compétences ») : cinq remplacements calculés
 pour un seul écart, refus d'écrire. Sans ce garde, elle aurait réécrit du texte sain — et une
 réparation qui touche des phrases qu'elle n'a pas mesurées finit par en abîmer une.
 

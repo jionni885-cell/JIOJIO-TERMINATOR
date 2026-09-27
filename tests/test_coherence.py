@@ -96,8 +96,11 @@ def test_un_artefact_modifie_a_la_main_est_DETECTE(tmp_path: Path) -> None:
     assert not constat.ok
     # Les artefacts ABSENTS sont attendus dans un dossier vide : le controle le dit aussi,
     # et c'est exact — un artefact manquant est un cablage qui n'aura pas lieu.
-    assert any("a regenerer" in d for d in constat.details)
     assert any("manquant" in d for d in constat.details)
+    # Ce fichier n'est ni marque, ni au registre : il est signale, et le conseil est celui qui
+    # MARCHE (jio ne l'ecrasera pas). La distinction « a regenerer » / « preserve » est
+    # couverte par les deux tests dedies plus bas.
+    assert any("PRESERVERA" in d for d in constat.details), constat.details
 
 
 def test_un_chiffre_perime_est_DETECTE_avec_sa_LIGNE(tmp_path: Path) -> None:
@@ -389,3 +392,54 @@ def test_le_portail_voit_ce_qu_AUCUNE_brique_separee_ne_voit(tmp_path: Path) -> 
     # derive — qui est la plus frequente (un fichier genere edite a la main).
     assert couvertes_par_les_briques == {"commande inventee", "chiffre perime"}
     assert len(couvertes_par_les_briques) < len(couvertes_par_le_portail)
+
+
+def test_un_artefact_derive_NON_MARQUE_recoit_conseil_utile(tmp_path: Path) -> None:
+    """Quand `--write` ne peut pas reparer, le portail doit le dire — pas le recommander.
+
+    Defaut trouve sur ce depot, sur `.hermes/skills/README.md` : le constat signalait la
+    divergence ET recommandait `jio artifacts --write`, alors que le garde d'ecriture, ne
+    reconnaissant pas le fichier comme sien (aucune marque, hors registre), le PRESERVE et
+    ecrit notre version a cote en `.jio`. L'utilisateur suivait le conseil, relancait le
+    portail, et retrouvait le meme constat — une boucle dont on ne sort pas.
+
+    Un diagnostic qui recommande une commande incapable de reparer n'est pas seulement inutile :
+    il fait perdre la confiance dans le reste du rapport. Ici, le conseil devient une procedure
+    complete : comparer, puis supprimer si l'on veut que jio gere le fichier.
+    """
+    from jio.artifacts import manifest
+
+    rel = sorted(manifest())[0]
+    chemin = tmp_path / rel
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    chemin.write_text("fichier ecrit par la main de l'utilisateur\n", encoding="utf-8")
+
+    constat = _constat(controler(tmp_path), "artefacts")
+    assert not constat.ok
+    assert "non ecrasable(s) par jio" in constat.resume, constat.resume
+    assert any("PRESERVERA" in d for d in constat.details), constat.details
+    assert not any(d.startswith(f"a regenerer : {rel}") for d in constat.details)
+
+
+def test_un_artefact_derive_MAIS_MARQUE_reste_reparable(tmp_path: Path) -> None:
+    """L'autre moitie : un artefact marque comme genere doit garder le conseil de reparation.
+
+    Sans ce test, une correction qui marquerait TOUT comme non reparables passerait : le
+    portail deviendrait bavard et inutile.
+    """
+    from jio.artifacts import manifest
+
+    rel = sorted(manifest())[0]
+    chemin = tmp_path / rel
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    chemin.write_text(
+        "> Genere par `jio artifacts`. Source unique : `jio/artifacts/doctrine.py`.\n"
+        "contenu modifie a la main apres generation\n",
+        encoding="utf-8",
+    )
+    constat = _constat(controler(tmp_path), "artefacts")
+    assert not constat.ok
+    assert any(d == f"a regenerer : {rel} (`jio artifacts --write`)" for d in constat.details), (
+        constat.details
+    )
+    assert "non ecrasable" not in constat.resume

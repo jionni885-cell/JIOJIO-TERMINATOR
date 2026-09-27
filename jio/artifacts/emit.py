@@ -133,6 +133,8 @@ def _target_hermes() -> dict[str, str]:
         files[f".hermes/skills/{skill.category}/{skill.name}/SKILL.md"] = _hermes_skill(skill)
     files[".hermes/skills/README.md"] = (
         "# Competences JIO (standard agentskills.io)\n\n"
+        "> Genere par `jio artifacts` — ne pas editer a la main : la source est "
+        "`jio/artifacts/definitions.py`.\n\n"
         "Copier ou lier dans `~/.hermes/skills/` :\n\n"
         "```sh\n"
         "mkdir -p ~/.hermes/skills\n"

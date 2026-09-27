@@ -294,17 +294,43 @@ def test_l_outil_MCP_d_etat_lit_le_DISQUE_et_ne_devine_rien(tmp_path) -> None:
         contenu = (reponse.get("result") or {}).get("content") or [{}]
         return str(contenu[0].get("text", ""))
 
+    def presents(texte: str) -> tuple[int, int]:
+        """Le couple (presents, attendus) de la ligne « artefacts natifs ».
+
+        On LIT cette ligne au lieu de chercher « 0/ » dans tout le texte : le chemin temporaire
+        d'un test contient lui-meme « 0/ » une fois sur dix
+        (`/tmp/pytest-of-user/pytest-120/test_...`), et cette collision faisait echouer ce test
+        environ un run sur dix. Une assertion qui depend du numero de session de pytest n'est
+        pas une assertion — elle s'apprend comme « test instable », donc elle finit ignoree.
+        """
+        ligne = next(
+            ligne for ligne in texte.splitlines() if ligne.startswith("artefacts natifs :")
+        )
+        gauche, droite = ligne.split(":", 1)[1].split("presents")[0].strip().split("/")
+        return int(gauche), int(droite)
+
     ancien = os.environ.get("JIO_ROOT")
     os.environ["JIO_ROOT"] = str(tmp_path)
     try:
         vide = etat()
-        assert "0/" in vide and "jio start" in vide
+        # Aucun artefact ecrit : le rapport doit dire 0 present, et le NOMBRE attendu vient de
+        # la source (`manifest(TARGETS)`), jamais d'un 29 recopie a la main — ce depot a deja
+        # paye ce genre de constante un jour de regeneration.
+        from jio.artifacts import TARGETS, manifest as _manifest
+
+        presents_0, attendus = presents(vide)
+        assert (presents_0, attendus) == (0, len(_manifest(TARGETS))), vide
+        assert "jio start" in vide
         assert "registre : absent" in vide
         assert "ABSENTE" in vide, "la fiche .jio/ACTIVE.md doit etre signalee manquante"
 
         emit.write_manifest(tmp_path, ("claude", "agents"))
         apres = etat()
-        assert "0/" not in apres
+        presents_apres, attendus_apres = presents(apres)
+        assert presents_apres > 0, "les artefacts ecrits doivent etre comptes presents"
+        assert presents_apres < attendus_apres, (
+            "seules les cibles claude et agents ont ete ecrites : le rapport doit le dire"
+        )
         assert ".jio/ACTIVE.md" in apres
     finally:
         if ancien is None:
