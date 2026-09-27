@@ -460,9 +460,34 @@ def _controle_competences(racine: Path) -> Constat:
     total_max = sum(m.jetons_max for m in mesures)
     bibliotheque_trop_grosse = total_min > SEUILS["bibliotheque_jetons"]
 
+    # Deux sources, et il faut les DEUX :
+    #   * les DEFINITIONS qui generent les fichiers (l'audit de la doctrine, pour ne pas auditer
+    #     une copie modifiee a la main) ;
+    #   * les FICHIERS SUR LE DISQUE — parce que c'est ce que l'agent lit vraiment. Une
+    #     competence ajoutee par un « tap » externe, recopiee d'un autre projet ou ecrite par un
+    #     tiers n'existe dans aucune definition, et c'est exactement le scenario documente
+    #     (arXiv 2608.29381) : une competence est une instruction executee avec les droits de
+    #     l'agent, donc son contenu est du contenu a auditer comme le reste.
+    from ..artifacts.audit_skills import analyser_texte
+
     risques = analyser_artefacts()
-    dangereux = [r for r in risques if not r.mise_en_garde]
     lus = len(artefacts_analyses())
+    for chemin in fichiers:
+        nom = str(chemin.relative_to(racine))
+        trouve = analyser_texte(
+            chemin.read_text(encoding="utf-8", errors="replace"), f"fichier:{nom}"
+        )
+        risques.extend(trouve)
+        lus += 1
+    for dossier_agents, motif in ((".opencode/agents", "*.md"), (".claude/agents", "*.md")):
+        for chemin in sorted((racine / dossier_agents).glob(motif)):
+            nom = str(chemin.relative_to(racine))
+            risques.extend(analyser_texte(
+                chemin.read_text(encoding="utf-8", errors="replace"), f"fichier:{nom}"
+            ))
+            lus += 1
+
+    dangereux = [r for r in risques if not r.mise_en_garde]
 
     ok = not certains and not bibliotheque_trop_grosse and not dangereux
     resume = (
@@ -562,6 +587,124 @@ def controler(racine: Path | str = ".") -> RapportCoherence:
             )
     rapport.duree_s = time.monotonic() - depart
     return rapport
+
+
+#: Ce qu'un ordinateur peut reparer SEUL, et ce qu'il ne peut pas.
+#:
+#: La distinction n'est pas technique, elle est de nature :
+#:
+#:   * MECANIQUE — la valeur correcte existe deja dans le code (`artefacts`, `nombres`). Il n'y a
+#:     aucune decision a prendre : regenerer, reecrire la valeur mesuree ;
+#:   * HUMAIN — reparer demanderait d'INVENTER. Un document affirme quelque chose de faux : il
+#:     faut savoir ce qui etait vrai. Une competence contient un motif dangereux : il faut juger
+#:     l'intention. Une commande citee n'existe pas : il faut choisir entre la creer et la retirer ;
+#:   * JAMAIS — le journal. Une chaine cassee est une PREUVE de reecriture. La « reparer », c'est
+#:     effacer la seule trace de ce qui s'est passe. On ne lave pas les pieces a conviction.
+REPARABLES = {
+    "artefacts": (
+        "les artefacts sont GENERES : regenerer est mecanique, aucune decision a prendre",
+        "jio artifacts --write",
+    ),
+    "nombres": (
+        "les chiffres sont MESURES : reecrire la valeur mesuree est mecanique",
+        "jio chiffres --appliquer",
+    ),
+}
+
+#: Ce qu'il ne faut JAMAIS « reparer », meme quand c'est techniquement possible.
+JAMAIS_REPARABLE = {
+    "journal": (
+        "une chaine cassee est la PREUVE qu'un journal a ete reecrit. La reparer effacerait la "
+        "seule trace de ce qui s'est passe : c'est une piece a conviction, pas un fichier"
+    ),
+}
+
+#: Le reste demande un HUMAIN, et le rapport dit pourquoi — un constat qu'on ne peut pas
+#: reparer doit au moins dire quelle decision il attend.
+DECISIONS_HUMAINES = {
+    "documents": "un document affirme quelque chose de faux : il faut savoir ce qui etait vrai",
+    "commandes": "une commande citee n'existe pas : il faut choisir entre la creer et la retirer",
+    "competences": "une competence dangereuse est une INTENTION : elle se relit, elle ne se repare pas",
+    "environnement": "une variable non documentee est un CHOIX de configuration a assumer",
+    "sources": "un constat de lint ou d'import est un defaut de code a comprendre",
+    "plan": "des etapes non tentees attendent une decision : reprendre, ou abandonner",
+}
+
+
+def reparer(
+    racine: Path | str = ".", *, rapport: RapportCoherence | None = None
+) -> tuple[RapportCoherence, list[str], list[str]]:
+    """Répare ce qui est MECANIQUE, puis re-passe la porte. Rend `(rapport, faits, restants)`.
+
+    Trois listes, et la troisieme est la plus importante : ce qui a ete repare, ce qui n'a pas pu
+    l'etre, et POURQUOI. Une reparation qui reussit en silence laisse croire que tout etait
+    mecanique ; une qui echoue en silence laisse croire que tout va bien.
+
+    Le principe : **on ne repare que ce dont la valeur correcte est deja dans le code.** Des qu'il
+    faudrait inventer — quel chiffre etait vrai dans un document, ce que voulait dire une
+    competence — la decision revient a un humain, et le rapport le dit au lieu de deviner.
+    """
+    base = Path(racine).expanduser()
+    avant = rapport if rapport is not None else controler(base)
+    faits: list[str] = []
+    restants: list[str] = []
+
+    for constat in avant.incoherents:
+        if constat.controle in JAMAIS_REPARABLE:
+            restants.append(f"{constat.controle} : NE PAS REPARER — {JAMAIS_REPARABLE[constat.controle]}")
+            continue
+        if constat.controle in REPARABLES:
+            raison, commande = REPARABLES[constat.controle]
+            if constat.controle == "artefacts":
+                from ..artifacts import manifest
+                from ..artifacts.write_guard import ecrire_manifest
+
+                decisions = ecrire_manifest(base, manifest())
+                ecrits = [d for d in decisions if d.action not in {"inchange", "preserve"}]
+                proteges = [d for d in decisions if d.action == "preserve"]
+                faits.append(f"artefacts : {len(ecrits)} fichier(s) regenere(s) — {raison}")
+                for protege in proteges:
+                    restants.append(
+                        f"artefacts : {protege.chemin} PRESERVE (pas marque comme genere par "
+                        "jio) — comparer avec le .jio a cote, puis decider"
+                    )
+            elif constat.controle == "nombres":
+                # On reutilise la fonction de `jio chiffres --appliquer` : une seconde
+                # implementation de la meme reecriture finirait par diverger de la premiere, et
+                # c'est exactement ce que ce depot s'interdit (« un seul ecrivain, une seule
+                # doctrine »). Elle ecrit, relit, et restaure si un ecart subsiste.
+                from ..chiffres import ecarts as ecarts_chiffres, mesurer, reparer as reparer_chiffres
+
+                mesures = mesurer(base)
+                for nom in DOCUMENTS_CHIFFRES:
+                    chemin = base / nom
+                    if not chemin.is_file():
+                        continue
+                    absents = [
+                        e for e in ecarts_chiffres(
+                            chemin.read_text(encoding="utf-8", errors="replace"), mesures
+                        )
+                        if e.ligne == 0
+                    ]
+                    code, restants_ici, message = reparer_chiffres(chemin, mesures, ecrire=True)
+                    if code == 0 and not restants_ici:
+                        faits.append(f"nombres : {nom} — {raison}")
+                    else:
+                        restants.append(f"nombres : {nom} — {message[:90]}")
+                    # Deux cas differents, et les confondre ferait perdre le second : une valeur
+                    # PERIMEE se reecrit (mecanique), un chiffre qui n'apparait NULLE PART demande
+                    # de decider s'il faut l'ecrire dans le document ou retirer le controle.
+                    for absent in absents:
+                        restants.append(
+                            f"nombres : {nom} n'annonce nulle part « {absent.nouveau} » — "
+                            "l'ecrire dans le document, ou retirer ce controle"
+                        )
+            continue
+        motif = DECISIONS_HUMAINES.get(constat.controle, "ce constat demande une decision")
+        restants.append(f"{constat.controle} : {motif} — {constat.resume[:80]}")
+
+    apres = controler(base) if faits else avant
+    return apres, faits, restants
 
 
 def formater(rapport: RapportCoherence, *, largeur: int = 100) -> str:

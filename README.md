@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 928 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 932 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -34,6 +34,9 @@ jio auto --reprendre          # continue le plan interrompu : les étapes déjà
 jio coherence                 # LES NEUF CONTRÔLES : artefacts, chiffres, documents, commandes
                               # citées, compétences, environnement, portes du paquet, journal,
                               # plan en suspens — code 0 seulement si TOUT est encore vrai
+jio coherence --reparer       # répare ce qui est MÉCANIQUE (artefacts générés, valeurs
+                              # mesurées), puis repasse la porte ; tout le reste est nommé, et
+                              # un journal cassé n'est JAMAIS « réparé » (pièce à conviction)
 ```
 
 `jio clarify` existe pour une seule raison : une IA qui part sans question choisit le
@@ -1144,8 +1147,21 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 928 tests verts -> 928 tests verts
+         - README.md ligne 15 : 932 tests verts -> 932 tests verts
 ```
+
+### `--reparer` : réparer le mécanique, nommer le reste
+
+Une porte qui signale sans rien réparer finit par être contournée. `jio coherence --reparer`
+traite les deux cas où **la valeur correcte est déjà dans le code** — artefacts générés, chiffres
+mesurés — puis **repasse la porte** et publie le nouveau verdict. Tout le reste est classé, et le
+classement est la partie utile :
+
+| Catégorie | Exemples | Ce que fait l'outil |
+|---|---|---|
+| **mécanique** | un artefact régénéré, un compteur périmé | il répare, et il relit |
+| **décision humaine** | un document faux, une compétence dangereuse, une commande inexistante, un chiffre *jamais annoncé* | il **nomme la décision attendue**, et ne touche à rien |
+| **jamais** | un **journal dont la chaîne est cassée** | rien — une telle chaîne est la **preuve** qu'on a réécrit l'histoire : la « réparer » effacerait la seule trace du problème |
 
 Trois propriétés rendent ce portail utilisable plutôt que décoratif :
 

@@ -3037,6 +3037,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="LES NEUF CONTROLES d'un coup : tout ce que ce depot affirme est-il encore vrai ?",
     )
     co.add_argument("--root", default=".", help="racine du depot a controler")
+    co.add_argument(
+        "--reparer", action="store_true",
+        help="repare ce qui est MECANIQUE (artefacts generes, valeurs mesurees), puis repasse la "
+             "porte. Ne touche JAMAIS a ce qui demanderait d'inventer : un document faux, une "
+             "competence dangereuse, une commande inexistante, un journal casse (une piece a "
+             "conviction ne se lave pas)",
+    )
     co.add_argument("--json", action="store_true", help="verdict lisible par une machine")
     co.set_defaults(func=cmd_coherence)
 
@@ -3220,10 +3227,27 @@ def cmd_coherence(args: argparse.Namespace) -> int:
     """
     import json as _json
 
-    from .verify.coherence import controler, formater
+    from .verify.coherence import controler, formater, reparer
 
     print(BANNER)
-    rapport = controler(getattr(args, "root", ".") or ".")
+    racine = getattr(args, "root", ".") or "."
+    if getattr(args, "reparer", False):
+        rapport, faits, restants = reparer(racine)
+        print("  REPARATION  ·  ce qui est mecanique seulement")
+        if faits:
+            for fait in faits:
+                print(f"    [fait] {fait[:92]}")
+        else:
+            print("    aucune reparation mecanique n'etait possible")
+        if restants:
+            print()
+            print("    CE QUI ATTEND UNE DECISION HUMAINE (jamais devine a votre place) :")
+            for reste in restants:
+                print(f"      - {reste[:92]}")
+        print()
+        rapport = controler(racine)
+    else:
+        rapport = controler(racine)
     if getattr(args, "json", False):
         print(_json.dumps(rapport.as_dict(), ensure_ascii=False, indent=2))
     else:
@@ -3464,6 +3488,9 @@ jio auto --reprendre        # continue le plan interrompu d'apres `.jio/plan.jso
 jio coherence               # LES NEUF CONTROLES : artefacts, chiffres, documents, commandes
                             # citees, competences, environnement, portes du paquet, journal,
                             # plan en suspens
+jio coherence --reparer     # repare ce qui est MECANIQUE (artefacts generes, valeurs mesurees),
+                            # puis repasse la porte. Ne touche jamais a ce qui demanderait
+                            # d'inventer — et JAMAIS a un journal casse (piece a conviction)
 ```
 
 `jio clarify` sort en **3** quand une question essentielle reste sans reponse. Dans ce cas,
