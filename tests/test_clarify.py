@@ -208,7 +208,7 @@ def test_le_formateur_n_ampute_jamais_une_question() -> None:
 
 
 def test_la_porte_ne_se_trompe_sur_AUCUN_objectif_du_banc() -> None:
-    """Sur 31 objectifs reels annotes a la main : 0 faux positif, 0 faux negatif.
+    """Sur 37 objectifs reels annotes a la main : 0 faux positif, 0 faux negatif.
 
     C'est le test le plus important de ce fichier. Une porte de clarification qui demande a
     tort aprend a l'utilisateur a l'ignorer ; une porte qui ne demande pas quand il faut
@@ -225,6 +225,7 @@ def test_la_porte_ne_se_trompe_sur_AUCUN_objectif_du_banc() -> None:
     assert rapport.faux_positifs == 0, "\n".join(rapport.erreurs)
     assert rapport.faux_negatifs == 0, "\n".join(rapport.erreurs)
     assert rapport.signaux_oublies == 0, "\n".join(rapport.erreurs)
+    assert rapport.signaux_en_trop == 0, "\n".join(rapport.erreurs)
     assert rapport.precision == 1.0 and rapport.rappel == 1.0
     assert rapport.max_questions <= MAX_QUESTIONS
 
@@ -320,3 +321,165 @@ def test_le_classement_des_questions_suit_leur_POIDS() -> None:
     assert dataclasses.fields(Question)[-1].default is dataclasses.MISSING, (
         "un poids par defaut serait une valeur que personne n'utilise"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Le mandat de poursuite : la question est « jusqu'ou », pas « quoi faire »
+# --------------------------------------------------------------------------- #
+
+
+def test_un_mandat_de_poursuite_demande_JUSQU_OU_et_pas_QUELLE_ACTION() -> None:
+    """« Continue » n'est pas une phrase sans verbe : c'est un mandat qui HERITE son action.
+
+    Mesure a l'origine : « continue avec les axes » sortait avec la question « quelle ACTION
+    attends-tu ? (corriger / ecrire / analyser…) ». A un utilisateur qui venait de dire quoi
+    faire, cette question apprend une seule chose : que la porte ne lit pas. Et la vraie
+    question — jusqu'ou continuer — n'etait meme pas posee.
+    """
+    for objectif, cible_ecrite in (
+        ("continue avec les axes et ne t'arrete pas avant que tout soit parfait", True),
+        ("ne t'arrête pas avant que tout soit parfait, continue", False),   # accents
+        ("keep going until the whole thing is solid", False),               # anglais
+        ("carry on", False),                                                # anglais court
+    ):
+        analyse = analyser(objectif)
+        assert analyse.action == "poursuite", (objectif, analyse.action)
+        # La cible est PRESENTE : ecrite si la phrase la nomme, HERITEE sinon — et dans ce cas
+        # c'est ecrit noir sur blanc, pour qu'on puisse contester la lecture.
+        cible = next(s for s in analyse.signaux if s.nom == "cible")
+        assert cible.present, (objectif, cible)
+        assert ("heritee du mandat" in cible.indice) is not cible_ecrite, (objectif, cible)
+        assert "cible" not in [q.signal for q in analyse.questions], objectif
+        signaux = [q.signal for q in analyse.questions]
+        assert "action" not in signaux, (objectif, signaux)
+        if signaux:
+            assert signaux == ["critere"], (objectif, signaux)
+            assert "Jusqu'ou dois-je continuer" in analyse.questions[0].question
+            assert "cycle" in analyse.questions[0].defaut
+
+
+def test_un_mandat_borne_ne_pose_AUCUNE_question() -> None:
+    """Un mandat qui dit sa borne est decidables : zero question.
+
+    On ne se protege pas d'un mandat, on se protege d'un mandat SANS FIN. Celui-ci dit ou il
+    s'arrete : la porte doit le laisser partir.
+    """
+    analyse = analyser("continue jusqu'a ce que 3 cycles ne trouvent plus d'axe")
+    assert analyse.questions == (), [q.signal for q in analyse.questions]
+
+
+# --------------------------------------------------------------------------- #
+# Les verbes : position, langue, et le nom qui n'est pas un verbe
+# --------------------------------------------------------------------------- #
+
+
+def test_l_action_reconnue_est_le_verbe_le_PLUS_TOT_de_la_phrase() -> None:
+    """Le premier verbe de la phrase, pas le premier du dictionnaire.
+
+    Mesure a l'origine : « ameliore la lisibilite du README pour que les nouveaux arrivants
+    trouvent l'installation en moins de 2 minutes » sortait avec l'action « livraison » — le nom
+    « installation » croisait le radical de « installer ». Annoncer une action que l'utilisateur
+    n'a pas ecrite est pire qu'une action manquante : c'est une lecture fausse presentee comme
+    une lecture.
+    """
+    analyse = analyser(
+        "ameliore la lisibilite du README pour que les nouveaux arrivants trouvent "
+        "l'installation en moins de 2 minutes"
+    )
+    assert analyse.action == "vague:amelioration", analyse.action
+    assert analyse.questions == (), "cible nommee + critere observable : rien a demander"
+
+    # Et l'inverse : une phrase mixte est tranchee par la POSITION, pas par l'ordre des tables.
+    mixte = analyser("corrige le bug, puis add a test qui le prouve")
+    assert mixte.action == "correction", mixte.action
+
+
+def test_les_verbes_anglais_sont_reconnus_sans_mordre_sur_les_noms() -> None:
+    """Le depot est bilingue : une porte qui ne lit qu'une langue se tait sur la moitie des cas.
+
+    Les formes anglaises sont cherchees en MOTS ENTIERS, et c'est une decision, pas un detail :
+    par radical, « additional » mordrait sur « add ». Ce test fixe les deux bords.
+    """
+    assert analyser("add a test to tests/test_start.py proving jio start is idempotent").action \
+        == "ecriture"
+    assert analyser("reduce additional latency in the engine").action == "performance"
+    # « additional » n'est PAS une action : le mot entier, pas le radical.
+    assert analyser("the additional latency must stay under 20 ms").action == \
+        "(aucune action reconnue)"
+
+
+def test_le_critere_de_COMPORTEMENT_est_reconnu_meme_elide() -> None:
+    """« pour qu'il compte les jours feries » EST un critere : il est observable.
+
+    L'elision « qu' » echappait au motif « (pour|afin) que » : la porte demandait le critere a un
+    objectif qui venait de le donner. Une lettre manquante, une question inutile.
+    """
+    analyse = analyser(
+        "corrige le calcul de moyenne dans le rapport hebdo pour qu'il compte les jours feries"
+    )
+    assert analyse.actionnable, analyse.manquants
+    assert analyse.questions == ()
+
+
+def test_un_verbe_vague_est_NOMME_comme_tel_et_sans_question_de_confort() -> None:
+    """« ameliore » est reconnu ET declare vague : la famille seule ne promet rien.
+
+    Deux exigences tenues ensemble : l'action doit etre reconnue (sinon la porte affiche « aucune
+    action reconnue » sur un verbe qui existe), et elle doit etre ANNONCEE comme vague (sinon
+    elle ferait passer un souhait pour une mission). Cible nommee + critere observable : malgre
+    le verbe vague, il n'y a rien a demander.
+    """
+    assert analyser(VAGUE).action == "vague:amelioration"
+    assert analyser(VAGUE).actionnable is False
+    assert analyser("ameliore la lisibilite du README en moins de 30 lignes").questions == ()
+
+
+# --------------------------------------------------------------------------- #
+# Le banc : ce qu'il compte, et dans quels sens il regarde
+# --------------------------------------------------------------------------- #
+
+
+def test_le_banc_compte_les_QUESTIONS_posees_et_pas_un_booleen() -> None:
+    """Le seul critere que l'utilisateur ressent : la porte a-t-elle demande quelque chose ?
+
+    Se servir de `Analyse.actionnable` comme intermediaire produisait une accusation fausse : un
+    objectif a verbe vague mais cible nommee et critere observable ne recoit AUCUNE question, et
+    le banc le comptait en faux positif. Un banc qui compte faux ce qui ne coute rien pousse a
+    « corriger » la porte dans le mauvais sens — c'est-a-dire a lui faire poser des questions
+    inutiles.
+    """
+    from jio.bench.objectifs import Objectif, mesurer
+
+    objectif = Objectif(
+        "ameliore la lisibilite du README pour qu'il tienne en moins de 30 lignes",
+        True, frozenset(), "verbe vague, mais cible nommee et critere observable",
+    )
+    analyse = analyser(objectif.texte)
+    assert analyse.actionnable is False, "le verbe reste vague"
+    assert analyse.questions == (), "et pourtant il n'y a rien a demander"
+    rapport = mesurer((objectif,))
+    assert (rapport.vrais_negatifs, rapport.faux_positifs) == (1, 0)
+    assert rapport.exact, rapport.erreurs
+
+
+def test_le_banc_regarde_les_signaux_DANS_LES_DEUX_SENS() -> None:
+    """Voir ce qui manque, ET ne pas croire manquant ce qui est ecrit.
+
+    Le second sens manquait : sur un mandat de boucle, la porte annoncait l'action absente et
+    proposait « quelle action attends-tu ? » a un utilisateur qui venait de la donner. Aucune
+    mesure ne pouvait le voir, puisque le banc ne comparait que dans un sens.
+    """
+    from jio.bench.objectifs import Objectif, mesurer
+
+    # Une annotation qui declare « rien ne manque » sur un objectif qui n'a ni cible ni critere :
+    # l'erreur est dans l'annotation, et le banc doit la nommer.
+    menteur = Objectif("corrige le bug", False, frozenset(), "annotation incomplete, exprès")
+    rapport = mesurer((menteur,))
+    assert rapport.signaux_en_trop >= 2, rapport.erreurs
+    assert not rapport.exact
+    assert any("SIGNAL EN TROP" in e for e in rapport.erreurs)
+
+    # Et le corpus REEL ne contient aucune erreur de ce genre.
+    complet = mesurer()
+    assert complet.signaux_en_trop == 0, "\n".join(complet.erreurs)
+    assert complet.signaux_oublies == 0, "\n".join(complet.erreurs)

@@ -61,6 +61,12 @@ MAX_QUESTIONS = 3
 # --------------------------------------------------------------------------- #
 
 #: Verbes d'ACTION. Le verbe donne la nature du travail ; sans lui, l'objectif est un souhait.
+#:
+#: LIMITE DECLAREE : la recherche par radical laisse un NOM mordre (« l'installation » croise
+#: « installer »). Le departage par position corrige le cas ou un vrai verbe existe ailleurs dans
+#: la phrase ; quand il n'y en a pas, la famille lue reste une LECTURE ANNONCEE — c'est-a-dire une
+#: hypothese, jamais une preuve. Retirer ces formes couterait une question de plus sur des
+#: objectifs decidables : le compromis est assume, ici, et pas decouvert par l'utilisateur.
 _ACTIONS: dict[str, str] = {
     "corriger": "correction",
     "reparer": "correction",
@@ -96,12 +102,52 @@ _ACTIONS: dict[str, str] = {
     "brancher": "livraison",
     "ameliorer": "amelioration",
     "optimise": "amelioration",
+    # « arrange tous les problemes » : la famille est la bonne (amelioration), donc la porte le
+    # range dans les verbes VAGUES — mais sans cette entree, elle affichait « aucune action
+    # reconnue » sur une phrase qui en porte une. Ecrit apres l'avoir vu dans une vraie mission.
+    "arranger": "amelioration",
 }
+
+#: Verbes d'ACTION en anglais, formes flechies ECRITES explicitement.
+#:
+#: Pourquoi une seconde table plutot que des mots de plus dans `_ACTIONS` : la recherche
+#: francaise travaille par RADICAL (« amelior » reconnait « ameliore »), ce qui convient a une
+#: langue aux formes regulieres — mais en anglais, le radical fait mordre « additional » sur
+#: « add » et « tested » sur « test ». Ici on cherche donc des MOTS ENTIERS, avec leurs
+#: flexions nommees une par une. Un radical anglais trop court est un piege, pas un raccourci.
+#:
+#: Cette table existe parce que le depot est bilingue : les prompts de ses agents sont en
+#: anglais, et une porte qui ne comprend qu'une langue se tairait sur la moitie des missions.
+_ACTIONS_EN: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b(fix|fixes|fixed|fixing|repair|repairs|repaired|debug|debugs|debugged)\b"),
+     "correction"),
+    (re.compile(r"\b(add|adds|added|adding|write|writes|writing|created|create|creates|creating|"
+                r"implement|implements|implemented|implementing|generate|generates|generated|"
+                r"generating)\b"), "ecriture"),
+    (re.compile(r"\b(rename|renames|renamed|migrate|migrates|migrated|simplify|simplifies|"
+                r"simplified|delete|deletes|deleted|remove|removes|removed|refactor|refactors|"
+                r"refactored|merge|merges|merged)\b"), "transformation"),
+    (re.compile(r"\b(optimize|optimizes|optimized|optimise|optimised|speed\s+up|accelerate|"
+                r"accelerates|accelerated|reduce|reduces|reduced|reducing)\b"), "performance"),
+    (re.compile(r"\b(analyze|analyzes|analyzed|analyse|analyses|analysed|audit|audits|audited|"
+                r"verify|verifies|verified|measure|measures|measured|compare|compares|compared|"
+                r"review|reviews|reviewed|scan|scans|scanned)\b"), "analyse"),
+    (re.compile(r"\b(explain|explains|explained|document|documents|documented|summarize|"
+                r"summarizes|summarized|describe|describes|described)\b"), "explication"),
+    (re.compile(r"\b(test|tests|tested|testing|cover|covers|covered|covering)\b"), "tests"),
+    (re.compile(r"\b(publish|publishes|published|deploy|deploys|deployed|install|installs|"
+                r"installed|wire\s+up|wires\s+up|wired\s+up)\b"), "livraison"),
+    (re.compile(r"\b(improve|improves|improved|improving|enhance|enhances|enhanced|"
+                r"clean\s+up|cleans\s+up|arrange|arranges|arranged)\b"), "amelioration"),
+)
 
 #: Verbes qui, seuls, ne designent RIEN de verifiable. « Ameliore le projet » : ameliorer quoi,
 #: et a quelle aune ? Ces objectifs demandent une question de CIBLE, meme si le verbe existe.
 _VAGUES = frozenset({"ameliorer", "optimise", "optimiser", "simplifier", "nettoyer", "voir",
-                     "regarder", "aider", "continuer"})
+                     "regarder", "aider", "arranger",
+                     # Anglais : les formes de la ligne « amelioration » de `_ACTIONS_EN`.
+                     "improve", "improves", "improved", "improving", "enhance", "enhances",
+                     "enhanced", "clean", "cleans", "arrange", "arranges", "arranged"})
 
 #: Mots qui designent une CIBLE nommee : un chemin, un module, un objet precis.
 _CIBLES = (
@@ -158,8 +204,18 @@ _CRITERES = (
     re.compile(r"\b(tous?\s+les\s+tests?|les\s+tests?\s+passent|vert|verts|conforme)\b"),
     re.compile(r"\b(en\s+moins\s+de|sous)\s+\d+"),
     re.compile(r"\b\d+\s*(ms|s|secondes?|minutes?|%|points?|lignes?|octets?|ko|mo)\b"),
+    # Une borne de BOUCLE est un critere : « jusqu'a ce que 3 cycles ne trouvent plus d'axe » dit
+    # exactement ou la poursuite s'arrete. Mesure a l'origine : elle sortait avec la question
+    # « jusqu'ou dois-je continuer ? » — a une phrase qui venait de repondre.
+    re.compile(r"\b\d+\s*(cycles?|tours?|passes?|iterations?|etapes?|missions?)\b"),
     re.compile(r"\b(meme|mêmes|identique|egal|egal a)\b"),
     re.compile(r"\b(pour|afin) que\b"),
+    # « corrige le calcul de moyenne pour qu'il compte les jours feries » : le critere est le
+    # COMPORTEMENT attendu, et c'est le meilleur critere qui existe (il est observable). Il
+    # echappait a la porte a cause d'une seule lettre — l'elision « qu' » du francais, que le
+    # motif « (pour|afin) que » ne couvrait pas. Mesure : l'objectif sortait avec la question
+    # « comment saura-t-on que c'est fini ? » alors qu'il venait de le dire.
+    re.compile(r"\b(pour|afin)\s+qu['\u2019]"),
     re.compile(r"\b(attendu|verifiable?|prouve|preuve|critere|seuil|borne)\b"),
     re.compile(r"\b(doit|devra|doivent)\b"),
     # « en points de reussite », « en missions », « en appels » : l'unite annoncee EST le
@@ -204,6 +260,52 @@ def _critere_implique(texte: str, cible: str) -> str:
             # tests » ne dit toujours pas ce qui doit exister a la fin.
             return f"critere implique par l'action ({famille}) et la cible « {cible} »"
     return ""
+
+
+#: Un mandat de POURSUITE : l'utilisateur ne redecrit pas la mission, il dit de CONTINUER.
+#:
+#: Trois raisons de le traiter a part, chacune mesuree sur un objectif REEL :
+#:
+#:   * sans cette reconnaissance, « continue avec les axes » sortait avec la question
+#:     « quelle ACTION attends-tu ? (corriger / ecrire / analyser…) » — a un utilisateur qui
+#:     venait de dire quoi faire. C'est le faux positif le plus couteux qui existe : il apprend
+#:     a ignorer la porte ;
+#:   * la question utile d'un mandat n'est pas « comment saura-t-on que c'est fini » mais
+#:     « jusqu'ou continuer » : une boucle sans critere d'arret ne s'arrete que quand elle
+#:     casse, et c'est alors la panne qui decide ;
+#:   * un mandat HERITE son action du tour precedent : la chercher dans la phrase est une
+#:     erreur de lecture, pas une exigence de precision.
+#:
+#: Le francais et l'anglais sont couverts : les prompts de ce depot sont anglais, les rapports
+#: et les mandats recus sont souvent francais.
+_POURSUITES = re.compile(
+    r"\b(?:continue|continuez|continuer|poursuis|poursuivez|poursuivre|poursuite|"
+    r"reprends|reprenez|reprendre|vas[- ]?y|"
+    r"ne\s+t['\u2019]?arretes?\s+pas|ne\s+vous\s+arretez\s+pas|"
+    r"keep\s+going|carry\s+on|go\s+on|keep\s+at\s+it|don['\u2019]?t\s+stop)\b"
+)
+
+
+def _plat(texte: str) -> str:
+    """Le texte en minuscules et SANS ACCENTS : sert a chercher des formes conjuguees.
+
+    « ne t'arrete pas » s'ecrit aussi « ne t'arrête pas » : chercher la forme accentuee ferait
+    echouer la reconnaissance sur une lettre — et une porte qui echoue sur une lettre n'inspire
+    pas confiance sur le reste.
+    """
+    plat = (texte or "").lower()
+    for accents, simple in (
+        ("àâä", "a"), ("éèêë", "e"), ("îï", "i"), ("ôö", "o"), ("ûü", "u"), ("ç", "c"),
+    ):
+        for lettre in accents:
+            plat = plat.replace(lettre, simple)
+    return plat
+
+
+def _poursuite(texte: str) -> str:
+    """La forme de poursuite reconnue (« continue », « don't stop »), ou la chaine vide."""
+    trouve = _POURSUITES.search(_plat(texte))
+    return trouve.group(0).strip() if trouve else ""
 
 
 #: Mots qui annoncent une SOURCE : d'ou vient ce sur quoi on travaille.
@@ -303,13 +405,7 @@ class Analyse:
 
 def _mots(texte: str) -> set[str]:
     """Mots normalises (sans accents, en minuscules) pour comparer sans piege d'encodage."""
-    plat = (texte or "").lower()
-    for accent, simple in (
-        ("àâä", "a"), ("éèêë", "e"), ("îï", "i"), ("ôö", "o"), ("ûü", "u"), ("ç", "c"),
-    ):
-        for lettre in accent:
-            plat = plat.replace(lettre, simple)
-    return set(re.findall(r"[a-z0-9_]+", plat))
+    return set(re.findall(r"[a-z0-9_]+", _plat(texte)))
 
 
 def _racine(forme: str) -> str:
@@ -325,20 +421,82 @@ def _racine(forme: str) -> str:
     return forme
 
 
-def _action(texte: str, mots: set[str]) -> tuple[str, str]:
-    """Le verbe d'action principal, s'il y en a un. Rend `(action, famille)` + la forme vue.
+def _vague(forme: str) -> bool:
+    """Le verbe reconnu designe-t-il, SEUL, quelque chose de verifiable ?
 
-    La recherche se fait sur le RADICAL : « corriger », « corrige », « corrigez » et
-    « correction » designent le meme travail. Sans cela, la porte manquait l'action et posait
-    une question d'action sur un objectif qui en portait une — le genre de faux positif qui
-    fait perdre confiance dans la porte elle-meme.
+    Compare des FORMES (« ameliore » contre la liste de verbes vagues), par RADICAL, et non des
+    familles : `_action` rend une famille (« amelioration ») alors que `_VAGUES` contient des
+    verbes. La comparaison precedente ne pouvait donc jamais mordre, et la porte affichait
+    « amelioration » — jamais « vague:amelioration » — sur les objectifs que sa propre doctrine
+    decrit comme des souhaits. Une regle qui ne peut pas se declencher n'est pas une securite :
+    c'est une ligne de plus a relire.
     """
-    for forme, famille in _ACTIONS.items():
+    if not forme:
+        return False
+    return any(forme == vague or forme.startswith(_racine(vague)) for vague in _VAGUES)
+
+
+def _action(texte: str, mots: set[str]) -> tuple[str, str]:
+    """L'ACTION PRINCIPALE : le premier verbe, en position, pas le premier du dictionnaire.
+
+    Deux regles, chacune payee par une mesure :
+
+      * la recherche se fait sur le RADICAL — « corriger », « corrige », « corrigez » et
+        « correction » designent le meme travail. Sans cela, la porte manquait l'action et
+        posait une question d'action sur un objectif qui en portait une ;
+      * le verbe retenu est celui qui apparaît le PLUS TOT dans la phrase, et non le premier de
+        `_ACTIONS` qui mord. Mesure a l'origine : « ameliore la lisibilite du README pour que les
+        nouveaux arrivants trouvent l'installation en moins de 2 minutes » sortait avec l'action
+        « livraison » — le mot « installation » croisait le radical de « installer » AVANT que
+        le dictionnaire n'arrive a « ameliorer ». La porte annoncait donc une action que
+        l'utilisateur n'avait pas ecrite, ce qui est pire qu'une action manquante : c'est une
+        lecture fausse, presentee comme une lecture.
+      * a position egale, la forme EXACTE passe avant la forme approchee, puis l'ordre du
+        dictionnaire. Et `mots` est parcouru TRIE : un ensemble n'a pas d'ordre, donc sans ce
+        tri la forme reconnue dependait du hachage de la session, et la porte n'etait plus
+        reproductible.
+    """
+    plat = _plat(texte)
+    anglais = _action_en(plat)
+    meilleur: tuple[int, int, int, str, str] | None = None
+    for ordre, (forme, famille) in enumerate(_ACTIONS.items()):
         radical = _racine(forme)
-        for mot in mots:
-            if mot == forme or mot.startswith(radical):
-                return famille, mot
-    return "", ""
+        for mot in sorted(mots):
+            if mot == forme:
+                exact = 0
+            elif mot.startswith(radical):
+                exact = 1
+            else:
+                continue
+            position = plat.find(mot)
+            if position < 0:
+                position = len(plat)
+            cle = (position, exact, ordre, famille, mot)
+            if meilleur is None or cle[:3] < meilleur[:3]:
+                meilleur = cle
+    if meilleur is None:
+        return ("", "") if anglais is None else (anglais[1], anglais[2])
+    # Les deux lectures sont comparees EN POSITION : le premier verbe de la phrase gagne, quelle
+    # que soit la langue. Sans cette comparaison, une phrase mixte (« corrige le bug, then add a
+    # test ») serait decidee par l'ordre des tables, pas par la phrase.
+    if anglais is not None and anglais[0] < meilleur[0]:
+        return anglais[1], anglais[2]
+    return meilleur[3], meilleur[4]
+
+
+def _action_en(plat: str) -> tuple[int, str, str] | None:
+    """Le premier verbe d'action ANGLAIS de la phrase, en position. Rend `(position, famille, mot)`.
+
+    Deux passes valent mieux qu'une table unique : la table francaise cherche des radicaux (juste
+    pour le francais), la table anglaise des mots entiers (obligatoire en anglais). Les deux
+    candidats sont ensuite departages par leur POSITION dans la phrase.
+    """
+    meilleur: tuple[int, str, str] | None = None
+    for motif, famille in _ACTIONS_EN:
+        trouve = motif.search(plat)
+        if trouve is not None and (meilleur is None or trouve.start() < meilleur[0]):
+            meilleur = (trouve.start(), famille, trouve.group(0))
+    return meilleur
 
 
 def _cherche(motifs: tuple[re.Pattern[str], ...], texte: str) -> str:
@@ -350,8 +508,61 @@ def _cherche(motifs: tuple[re.Pattern[str], ...], texte: str) -> str:
     return ""
 
 
+def _question_de_critere(poursuite: str = "") -> Question:
+    """La question de critere — SPECIALISEE quand l'objectif est un mandat de poursuite.
+
+    « Continue » et « comment saura-t-on que c'est fini ? » ne parlent pas du meme probleme. Un
+    mandat de boucle est deja en cours : ce qui manque n'est pas la definition de « fini », c'est
+    un ARRET. Un objectif borne, lui, a besoin de savoir ce qui doit passer pour etre cru.
+
+    Le defaut du mandat est celui que la mission 8 a reellement negocie avec son utilisateur : un
+    cycle complet (recherche, changement, tests, audit, mesures) PUBLIE avant de reprendre — un
+    seul cycle, verifiable, plutot qu'une promesse d'avancer indefiniment.
+    """
+    if poursuite:
+        return Question(
+            signal="critere",
+            question=(
+                "Jusqu'ou dois-je continuer ? (un nombre de cycles, un seuil a atteindre, ou "
+                "« tant que tu trouves des axes »)"
+            ),
+            pourquoi=(
+                "une poursuite n'a pas de fin en elle-meme : sans critere d'arret, je continue "
+                "jusqu'a ce que quelque chose casse — et c'est la panne qui decide de l'arret, "
+                "pas toi."
+            ),
+            defaut=(
+                "je fais UN cycle complet, je le publie avec ses preuves et ses mesures, puis "
+                "je reprends — et je m'arrete quand un cycle entier ne trouve plus ni "
+                "amelioration ni innovation."
+            ),
+            poids=3,
+        )
+    return Question(
+        signal="critere",
+        question=(
+            "Comment saura-t-on que c'est FINI et CORRECT ? (un test qui doit passer, un "
+            "chiffre a atteindre, un format attendu)"
+        ),
+        pourquoi=(
+            "c'est la seule question qui rend le resultat verifiable : sans critere, je ne "
+            "peux pas me prouver que j'ai fini, seulement te demander de me croire."
+        ),
+        defaut=(
+            "j'exige la suite de tests du depot verte et je publie ce qui reste non "
+            "verifie, en reserve nommee."
+        ),
+        poids=3,
+    )
+
+
 def _questions(
-    texte: str, action: str, manquants: tuple[str, ...], *, max_questions: int
+    texte: str,
+    action: str,
+    manquants: tuple[str, ...],
+    *,
+    max_questions: int,
+    poursuite: str = "",
 ) -> tuple[Question, ...]:
     """Construit les questions manquantes, classees par consequence, bornees.
 
@@ -383,22 +594,7 @@ def _questions(
             ),
             poids=3,
         ),
-        "critere": Question(
-            signal="critere",
-            question=(
-                "Comment saura-t-on que c'est FINI et CORRECT ? (un test qui doit passer, un "
-                "chiffre a atteindre, un format attendu)"
-            ),
-            pourquoi=(
-                "c'est la seule question qui rend le resultat verifiable : sans critere, je ne "
-                "peux pas me prouver que j'ai fini, seulement te demander de me croire."
-            ),
-            defaut=(
-                "j'exige la suite de tests du depot verte et je publie ce qui reste non "
-                "verifie, en reserve nommee."
-            ),
-            poids=3,
-        ),
+        "critere": _question_de_critere(poursuite),
         "source": Question(
             signal="source",
             question=(
@@ -472,9 +668,12 @@ def _questions(
     if "action" in manquants:
         essentielles.append("action")
     questions = [catalogue[nom] for nom in essentielles if nom in manquants]
-    if action in _VAGUES:
-        # Un verbe vague est traite comme une action absente : c'est precise dans le motif.
-        questions.sort(key=lambda q: (q.signal != "cible", q.signal != "critere"))
+    # L'ordre « cible puis critere » n'est PAS obtenu par un tri : il vient de l'ordre du
+    # catalogue et des POIDS (cible et critere valent 3, perimetre 2, action 1), et le tri
+    # ci-dessous est STABLE. Une ligne de tri (« si le verbe est vague, mettre cible et critere
+    # d'abord ») a existe ici : elle comparait une FAMILLE a une liste de VERBES, donc elle ne
+    # pouvait pas se declencher — et meme declenchee, les poids produisaient deja le meme ordre.
+    # Deux raisons de la retirer, et la seconde suffisait.
     # Le departage se fait par POIDS : la question dont l'ignorance coute le plus passe
     # devant. Sans ce tri, `poids` etait une valeur decorative — et une valeur decorative
     # finit par etre fausse sans que personne ne le voie.
@@ -514,8 +713,14 @@ def analyser(
 
     texte = brut + "\n" + (contexte or "")
     mots = _mots(brut)
+    poursuite = _poursuite(brut)
     action, indice_action = _action(brut, mots)
-    if action in _VAGUES:
+    if poursuite:
+        # Un mandat HERITE son action du tour precedent : chercher le verbe dans la phrase est
+        # une erreur de lecture. Il prime donc sur un verbe vague eventuel (« continue
+        # d'ameliorer » n'est pas plus clair qu'un mandat : c'est le mandat qui commande).
+        action, indice_action = "poursuite", poursuite
+    elif _vague(indice_action):
         action = f"vague:{action}"
 
     # Qui fournit quoi, et pourquoi cette repartition n'est pas un detail :
@@ -532,10 +737,19 @@ def analyser(
     # taisait precisement dans le cas ou elle sert.
     cible = _cherche(_CIBLES, brut) or _cible_nommee(brut)
     critere = _cherche(_CRITERES, brut)
+    # Le critere IMPLIQUE se deduit de la cible ECRITE : une cible heritee ne dit rien de ce qui
+    # doit exister a la fin, et s'en servir ferait croire a un critere que personne n'a formule.
     implique = _critere_implique(brut, cible) if not critere else ""
+    # Un mandat de poursuite HERITE sa cible : « continue » renvoie a la mission en cours. La
+    # marquer presente n'est pas une commodite, c'est une lecture — et elle est ECRITE, pour qu'on
+    # puisse la contester. Sans elle, la porte demandait « sur quoi exactement ? » a un utilisateur
+    # qui venait de dire « continue » : la question la plus inutile de tout le catalogue.
+    cible_du_mandat = cible or (
+        f"heritee du mandat : « {poursuite} » renvoie a la mission en cours" if poursuite else ""
+    )
     signaux = (
         Signal("action", bool(action), indice_action),
-        Signal("cible", bool(cible), cible),
+        Signal("cible", bool(cible_du_mandat), cible_du_mandat),
         Signal("critere", bool(critere or implique), critere or implique),
         Signal("source", bool(_cherche(_SOURCES, texte)), _cherche(_SOURCES, brut)),
         Signal("perimetre", bool(_cherche(_PERIMETRES, texte)), _cherche(_PERIMETRES, brut)),
@@ -547,7 +761,13 @@ def analyser(
     noyau = ("action", "cible", "critere")
     actionnable = all(presents[nom] for nom in noyau) and not action.startswith("vague:")
     manquants = tuple(s.nom for s in signaux if not s.present)
-    questions = [] if actionnable else _questions(brut, action, manquants, max_questions=max_questions)
+    questions = (
+        []
+        if actionnable
+        else _questions(
+            brut, action, manquants, max_questions=max_questions, poursuite=poursuite
+        )
+    )
 
     if actionnable:
         motif = (

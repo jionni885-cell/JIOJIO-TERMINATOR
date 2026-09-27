@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 932 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 940 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -44,6 +44,22 @@ périmètre, le format et le critère de réussite **à la place de son utilisat
 quelque chose de plausible qui répond à une autre question. La porte est mesurable, bornée à
 trois questions, et chaque question porte la conséquence de ne pas y répondre ainsi que
 l'hypothèse prise à défaut : `jio clarify --strict` sort en **3** et la mission ne commence pas.
+
+La porte est elle-même **mesurée** sur un banc d'objectifs réels annotés à la main
+(`jio clarify --mesure`) : **38 objectifs, 0 faux positif, 0 faux négatif**. Le banc lit les
+signaux dans **les deux sens** — voir ce qui manque, et ne pas croire manquant ce qui est écrit —
+et il compte les **questions posées**, seul coût que l'utilisateur ressent, plutôt qu'un booléen
+intermédiaire. Six objectifs du terrain (les mandats de boucle réels de ce dépôt, un mandat
+anglais, un critère de comportement, un verbe vague avec cible nommée) y sont entrés après coup :
+le corpus restant, il mesurait ce que la porte savait déjà faire.
+
+**Un mandat de poursuite est lu comme un mandat, pas comme une phrase vague.** « Continue »,
+« ne t'arrête pas avant que tout soit parfait », « keep going » : l'action et la cible sont
+**héritées** de la mission en cours — c'est ce que veut dire « continue » — et la seule question
+vraie est *jusqu'où*. La porte la pose, avec le défaut négocié : **un cycle complet publié**
+(recherche, changement, tests, audit, mesures), puis reprise, et arrêt quand un cycle entier ne
+trouve plus ni amélioration ni innovation. Un mandat qui dit déjà sa borne (`jusqu'à ce que 3
+cycles…`) ne reçoit **aucune** question.
 
 `jio start` écrit `.jio/ACTIVE.md` — la fiche que l'IA lit en premier : état réel, commandes
 utiles, et ce qui reste non vérifié. Elle est **idempotente** : relancée, elle ne réécrit rien.
@@ -1147,7 +1163,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 932 tests verts -> 932 tests verts
+         - README.md ligne 15 : 940 tests verts -> 940 tests verts
 ```
 
 ### `--reparer` : réparer le mécanique, nommer le reste
