@@ -833,10 +833,49 @@ def _jio_meme(_a, _b):
         return True                          # comparaison impossible : on ne condamne pas
 
 
+import re as _jio_re
+
+#: Fragments VOLATILS d'un message : une LECTURE D'HORLOGE ou une adresse memoire, jamais un
+#: comportement. Liste DECLAREE, courte, et c'est le point : la retirer en silence serait une
+#: cecite, l'etendre a tout serait une complaisance.
+#:
+#: Mesure a l'origine : `test_le_depot_est_coherent` s'est fait declarer « non reproductible »
+#: parce que son message d'echec contient le rapport de la porte, qui ANNONCE SA DUREE
+#: (« 9 controle(s) en 0.1s ») — deux appels identiques, deux durees differentes, deux messages
+#: differents. La fonction, elle, est parfaitement reproductible : c'est le TEXTE qui bat.
+#: Une fausse accusation de non-determinisme coute plus qu'un silence : elle apprend a ignorer
+#: la regle A-002, et c'est la seule regle qui attrape les compteurs globaux.
+_JIO_VOLATIL = (
+    _jio_re.compile(r"\\d+(?:[.,]\\d+)?\\s*(?:ns|µs|us|ms|secondes?|secondes?|minutes?|s)\\b"),
+    _jio_re.compile(r"\\b0x[0-9a-fA-F]{6,}\\b"),
+)
+
+
+def _jio_stable(texte):
+    """Le message prive de ses fragments volatils : le COMPORTEMENT, pas l'horloge."""
+    for _motif in _JIO_VOLATIL:
+        texte = _motif.sub("<volatil>", texte)
+    return texte
+
+
+def _jio_volatil_seulement(_x, _y):
+    """Vrai quand deux messages ne different QUE par un fragment volatil (pour le DIRE)."""
+    if _x[0] != "erreur" or _y[0] != "erreur":
+        return False
+    if len(_x) < 3 or len(_y) < 3 or _x[2] == _y[2]:
+        return False
+    return _x[1] == _y[1] and _jio_stable(str(_x[2])) == _jio_stable(str(_y[2]))
+
+
 def _jio_same(_x, _y):
     # Un resultat est un couple ("valeur", v) ou ("erreur", type, message).
     if _x[0] != _y[0]:
         return False
+    if _x[0] == "erreur" and len(_x) >= 3 and len(_y) >= 3:
+        # Meme type d'erreur, et meme message UNE FOIS LES LECTURES D'HORLOGE RETIREES.
+        if _x[1] != _y[1]:
+            return False
+        return _jio_stable(str(_x[2])) == _jio_stable(str(_y[2]))
     return _jio_meme(_x[1:], _y[1:])
 '''
 
@@ -867,6 +906,9 @@ for _combo in _jio_it.islice(_jio_it.product(*_jio_plans), 8):
             "non reproductible : {name}(*%r) a produit %r puis %r"
             % (_combo, _observed[0], _other)
         )
+        if _jio_volatil_seulement(_observed[0], _other):
+            print("[JIO-NOTE] meme comportement : le message ne differait que par une duree ou "
+                  "une adresse memoire, retires avant comparaison")
 assert _jio_checked, "aucune sonde executable pour {name}"
 '''
 
@@ -907,6 +949,9 @@ for _combo in _jio_it.islice(_jio_it.product(*_jio_plans), 4):
             "non reproductible : {name}().{method}(*%r) a produit %r puis %r"
             % (_combo, _observed[0], _other)
         )
+        if _jio_volatil_seulement(_observed[0], _other):
+            print("[JIO-NOTE] meme comportement : le message ne differait que par une duree ou "
+                  "une adresse memoire, retires avant comparaison")
 assert _jio_checked, "aucune sonde executable pour {name}.{method}"
 '''
 
@@ -1259,7 +1304,9 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
                 id=r2,
                 statement=(
                     f"Reproductibilite : appels identiques de {chosen} sur les sondes "
-                    "derivees renvoient le meme resultat, ou la meme erreur."
+                    "derivees renvoient le meme resultat, ou la meme erreur. Les DUREES et les "
+                    "adresses memoire d'un message sont retirees avant comparaison : ce sont des "
+                    "lectures d'horloge, pas des comportements."
                     + (
                         f" [reserve : le module importe `{env_risk}`, une divergence peut "
                         "venir de l'environnement]"

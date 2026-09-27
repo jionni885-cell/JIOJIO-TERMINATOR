@@ -374,3 +374,108 @@ def test_une_fonction_decorée_autrement_reste_auditee() -> None:
     assert "compte" in derived.functions
     assert derived.entrypoint == "compte"
     assert derived.verifiable
+
+
+# --------------------------------------------------------------------------- #
+# La regle A-002 : ce qu'elle compare, et ce qu'elle accuse
+# --------------------------------------------------------------------------- #
+
+
+def test_un_message_qui_PORTE_un_volatil_n_est_pas_une_non_reproductibilite() -> None:
+    """Un message qui porte une adresse memoire bat, et la fonction est reproductible.
+
+    Mesure a l'origine : `tests/test_coherence.py::test_le_depot_est_coherent` a ete declare
+    « non reproductible » par `jio scan` — parce que son message d'echec contient le rapport de la
+    porte, qui ANNONCE SA DUREE (« 9 controle(s) en 0.1s »). Deux appels identiques, deux durees,
+    deux messages. La fonction, elle, ne variait pas d'un iota.
+
+    Une fausse accusation coute plus qu'un silence : elle apprend a ignorer A-002, et A-002 est la
+    seule regle qui attrape les compteurs globaux — la classe de bug la plus courante d'un agent
+    qui garde un etat entre deux appels.
+
+    Ce test-ci utilise une ADRESSE MEMOIRE plutot qu'une duree : elle varie a chaque appel de
+    facon certaine, donc le test PROUVE qu'il exerce la normalisation au lieu de l'esperer. Le
+    premier bloc verifie justement que les messages bruts, eux, different — sans cette
+    verification, un test vert ne dirait rien.
+    """
+    source = '''
+_vivants = []
+
+
+def trace() -> str:
+    # L'objet est GARDE EN VIE : CPython reutilise l'adresse d'un objet libere, donc sans cette
+    # liste les cinq messages seraient identiques et le test serait vert sans rien prouver. Le
+    # premier essai de ce test a echoue exactement la : une seule adresse pour cinq appels.
+    marqueur = object()
+    _vivants.append(marqueur)
+    assert False, f"etat inattendu : {marqueur!r}"
+'''
+    namespace: dict = {}
+    exec(source, namespace)                                        # noqa: S102 — le candidat
+
+    def message_brut() -> str:
+        try:
+            return namespace["trace"]()
+        except AssertionError as exc:
+            return str(exc)
+
+    assert len({message_brut() for _ in range(5)}) > 1, (
+        "les messages doivent varier, sinon ce test ne prouve rien"
+    )
+
+    res = _prove(source)
+    assert res.passed, res.hard_failures
+    # Et la tolerance est DITE, dans le temoin lui-meme : une normalisation silencieuse serait
+    # indiscernable d'une regle qu'on a desactivee.
+    assert any("[JIO-NOTE]" in w.stdout for w in res.witnesses), [
+        (w.rule_id, w.stdout) for w in res.witnesses
+    ]
+
+
+def test_un_compteur_global_reste_ACCUSE_malgre_la_normalisation() -> None:
+    """Le remede ne doit pas devenir une complaisance : le vrai non-determinisme reste attrape.
+
+    La normalisation ne retire que des DUREES et des ADRESSES : un compteur change le message
+    autrement (« 1 », « 2 », « 3 »), et deux appels qui rendent des valeurs differentes le disent
+    par la valeur, pas par le texte.
+    """
+    source = '''
+_counter = {"n": 0}
+
+
+def next_id() -> int:
+    _counter["n"] += 1
+    return _counter["n"]
+'''
+    res = _prove(source)
+    assert not res.passed
+    assert res.hard_failures[0].rule_id == "A-002"
+
+
+def test_la_comparaison_normalise_les_volatils_et_RIEN_d_autre() -> None:
+    """La liste des fragments retires est courte, declaree, et se voit dans le code.
+
+    Ce test fixe les deux bords : ce qui doit etre retire l'est, et ce qui ne doit pas l'etre ne
+    l'est pas. Sans le second bord, « normaliser » finirait par vouloir dire « ignorer ».
+    """
+    from jio.verify.autocheck import _SAME_HELPERS
+
+    espace: dict = {}
+    exec(_SAME_HELPERS, espace)          # noqa: S102 — c'est le code du temoin lui-meme
+    same, stable = espace["_jio_same"], espace["_jio_stable"]
+
+    def erreur(message: str):
+        return ("erreur", "AssertionError", message)
+
+    # Une duree et une adresse differentes : memes comportements, donc identiques.
+    assert same(erreur("x en 0.1s"), erreur("x en 0.2s"))
+    assert same(erreur("adresse 0x7f9c1a2b3c4d"), erreur("adresse 0x7f9c1a2b3c4e"))
+    assert "<volatil>" in stable("x en 0.1s")
+    assert "<volatil>" in stable("duree 12345 ns")
+    # Meme message : identiques, evidemment.
+    assert same(erreur("x en 0.1s"), erreur("x en 0.1s"))
+    # Tout le reste se compare comme avant : un contenu different est une divergence.
+    assert not same(erreur("valeur 1"), erreur("valeur 2"))
+    assert not same(erreur("x en 0.1s"), erreur("x en 0.1s mais autre chose"))
+    assert not same(erreur("meme texte"), ("valeur", "meme texte"))
+    assert not same(erreur("meme texte"), ("erreur", "TypeError", "meme texte"))
