@@ -117,21 +117,113 @@ class Journal:
             self._events = existing._events
             return
 
-        stamp = int(time.time())
-        quarantine = self.path.with_name(f"{self.path.name}.corrompu-{stamp}")
+        self._mettre_en_quarantaine(
+            f"journal precedent incoherent (chaine cassee a l'evenement {bad})",
+            "Refus d'ecrire a la suite d'un journal falsifie : deplacez ou supprimez ce fichier.",
+        )
+        self._events = []
+
+    def _mettre_en_quarantaine(self, motif: str, refus: str) -> None:
+        """Renomme le fichier suspect (jamais supprime) et le DIT.
+
+        Une seule implementation : les deux chemins qui aboutissent ici — chaine cassee, et
+        fichier qui diverge de notre chaine — doivent se comporter pareil, sans quoi l'un des
+        deux finirait par supprimer ce que l'autre conserve.
+        """
+        assert self.path is not None
+        quarantine = self.path.with_name(f"{self.path.name}.corrompu-{int(time.time())}")
         try:
             self.path.rename(quarantine)
         except OSError as exc:
             raise IntegrityViolation(
-                f"le journal {self.path} est incoherent (chaine cassee a l'evenement "
-                f"{bad}) et ne peut pas etre deplace ({exc}). Refus d'ecrire a la "
-                "suite d'un journal falsifie : deplacez ou supprimez ce fichier."
+                f"le journal {self.path} : {motif}, et il ne peut pas etre deplace ({exc}). "
+                + refus
             ) from exc
         self.notices.append(
-            f"journal precedent incoherent (chaine cassee a l'evenement {bad}) : "
-            f"conserve sous {quarantine.name}, une chaine neuve commence. "
+            f"{motif} : conserve sous {quarantine.name}, une chaine neuve commence. "
             "Rien n'a ete supprime."
         )
+
+    # -- suivi du fichier -------------------------------------------------- #
+
+    def _digest_sur_disque(self) -> str:
+        """Le condensat du dernier evenement ECRIT, lu dans la QUEUE du fichier.
+
+        Une lecture de queue, pas du fichier entier : cette verification a lieu a chaque ajout,
+        et un journal de 100 000 evenements relu en entier a chaque ecriture serait un cout
+        quadratique paye pour rien dans le cas courant (un seul ecrivain, fichier inchange).
+        """
+        if self.path is None or not self.path.exists():
+            return ""
+        try:
+            with self.path.open("rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                taille = fh.tell()
+                fenetre = min(taille, 65536)
+                fh.seek(taille - fenetre)
+                bloc = fh.read(fenetre)
+        except OSError:
+            return ""
+        for ligne in reversed(bloc.splitlines()):
+            if not ligne.strip():
+                continue
+            try:
+                return str(json.loads(ligne.decode("utf-8", "replace")).get("digest", ""))
+            except (ValueError, AttributeError):
+                return ""
+        return ""
+
+    def _suivre_le_fichier(self) -> None:
+        """Un AUTRE ecrivain a-t-il avance le fichier depuis notre ouverture ?
+
+        Defaut constate en usage NORMAL, et c'est ce qui le rend grave : deux `Journal` du meme
+        processus — une mission ET le prouveur qu'elle construit — chargeaient la chaine a leur
+        ouverture, puis ajoutaient chacun leur evenement. Le second ecrivait alors
+        `seq=96, prev=<notre tete d'il y a N evenements>` alors que le fichier portait deja
+        `seq=96` : DEUX evenements de meme numero, deux suites concurrentes, et la chaine
+        devenait invérifiable. La porte le disait — « chaine cassee » — mais l'accusation etait
+        FAUSSE : personne n'avait rien reecrit, deux ecrivains honnetes s'etaient ignores.
+
+        Un journal qui se casse tout seul en usage normal ne protege plus rien : il apprend a
+        ignorer l'alerte, et le jour ou la chaine casse pour de vrai, personne ne la regarde.
+        C'est exactement la classe d'erreur que ce depot traque.
+
+        Trois cas, trois comportements :
+
+          * le fichier est LA OU NOUS L'AVONS LAISSE -> rien a faire (cas courant) ;
+          * le fichier a AVANCE et nos evenements en sont le PREFIXE -> un autre ecrivain a
+            ajoute : on adopte sa suite et on ecrit apres elle, le comportement d'un journal
+            d'ecriture standard ;
+          * le fichier a DIVERGE (un recul, ou un contenu dont nous ne sommes pas le prefixe)
+            -> on n'ecrit PAS par-dessus : il est mis en quarantaine (renomme, jamais supprime)
+            et une chaine neuve commence, en le disant. Ecrire a la suite d'une divergence
+            fabriquerait un embranchement — precisement ce qu'une chaine de hachages existe
+            pour rendre VISIBLE.
+        """
+        if self.path is None or not self._events:
+            return
+        if self._digest_sur_disque() == self.head:
+            return
+        try:
+            text = self.path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        existant = Journal.from_jsonl(text)
+        ok, _bad = existant.verify_chain()
+        prefixe = ok and len(existant._events) >= len(self._events) and all(
+            autre.digest == notre.digest
+            for autre, notre in zip(existant._events, self._events)
+        )
+        if prefixe:
+            self._events = existant._events
+            return
+        self._mettre_en_quarantaine(
+            "le journal sur le disque n'est plus la suite de celui que nous tenons "
+            f"(nos {len(self._events)} evenement(s) n'en sont pas le prefixe, ou la chaine "
+            "est cassee)",
+            "Refus d'ecrire a la suite d'un journal dont on ne peut pas dire qu'il est le notre.",
+        )
+        self._events = []
 
     # -- ecriture ---------------------------------------------------------- #
 
@@ -174,6 +266,7 @@ class Journal:
         trust: TrustLevel = TrustLevel.SYSTEM,
     ) -> Event:
         self._resume_from_disk()
+        self._suivre_le_fichier()
         seq = len(self._events)
         ts = now()
         body: Mapping[str, Any] = dict(payload or {})

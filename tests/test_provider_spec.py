@@ -278,6 +278,13 @@ def test_run_avec_un_cli_reel_livre_les_preuves_et_NOMME_la_reserve(
     code = main([
         "run", T_SUM_EVEN.objective, "--task", T_SUM_EVEN.id,
         "--provider", "cli:faux-run", "--state", str(tmp_path / "etat"),
+        # Le journal est NOMME, et ce n'est pas un detail de confort : sans lui, une mission
+        # lancee depuis la racine du depot ecrit dans `.jio/journal.jsonl` — le journal du
+        # PROJET, celui dont `jio coherence` verifie la chaine et compte les evenements. Une
+        # suite de tests qui ecrit dans la preuve qu'elle verifie la fait deriver, et le jour ou
+        # elle casse pour de vrai, personne ne sait plus si c'est le produit ou la suite.
+        # Mesure : 66 evenements ajoutes par execution avant ce changement.
+        "--journal", str(tmp_path / "journal.jsonl"),
     ])
 
     sortie = capsys.readouterr().out
