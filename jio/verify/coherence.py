@@ -19,7 +19,7 @@ que ce depot traque ailleurs, et il ne la traquait pas chez lui.
 
 La reponse : un portail, pas un rapport
 ---------------------------------------
-`controler()` rend un verdict et une liste de constats, chacun avec sa preuve. Sept controles,
+`controler()` rend un verdict et une liste de constats, chacun avec sa preuve. Neuf controles,
 tous executables, aucun avis :
 
   1. `artefacts`     — les artefacts generes sont-ils ceux que la doctrine produit ?
@@ -27,9 +27,19 @@ tous executables, aucun avis :
   2. `nombres`       — les chiffres annonces dans les documents sont-ils ceux mesures ?
   3. `documents`     — les faits verifiables des documents (calculs, blocs, chemins) tiennent-ils ?
   4. `commandes`     — chaque `jio <commande>` cite existe-t-il dans le parseur REEL ?
-  5. `environnement` — toute variable lue par le code est-elle documentee, et inversement ?
-  6. `sources`       — le paquet passe-t-il ses propres portes (lint, imports) ?
-  7. `plan`          — un plan autonome laisse-t-il des etapes NON TENTEES (travail en suspens) ?
+  5. `competences`   — les competences ecrites EN VERTU de la doctrine, et celles ecrites HORS de
+                       la doctrine (un tap externe passe par la meme aune : le contenu lu par un
+                       agent est le contenu lu par un agent)
+  6. `environnement` — toute variable lue par le code est-elle documentee, et inversement ?
+  7. `sources`       — le paquet passe-t-il ses propres portes (lint, imports) ?
+  8. `journal`       — la chaine du journal tient-elle ? Un maillon casse est la seule trace d'une
+                       reecriture : il se CONSTATE, il ne se repare pas
+  9. `plan`          — un plan autonome laisse-t-il des etapes NON TENTEES (travail en suspens) ?
+
+Ces listes sont recopiees a trois endroits qui parlent A UN AGENT (la description de l'outil MCP,
+la doctrine, ce docstring) : elles derivent — c'est mesure, deux fois — donc un test les compare
+desormais a `CONTROLES`, qui est la source. Un texte lu par un modele qui sous-estime la porte
+est pire qu'un texte absent : l'agent conclut qu'il a tout verifie.
 
 `code` vaut 0 seulement si TOUT est coherent. C'est un portail : un appelant automatise (une IA
 qui veut declarer « fini ») peut s'y fier sans lire le texte, et le texte lui dit pourquoi.

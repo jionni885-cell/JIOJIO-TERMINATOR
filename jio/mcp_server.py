@@ -174,14 +174,15 @@ TOOLS: tuple[dict[str, Any], ...] = (
     {
         "name": "jio_coherence",
         "description": (
-            "Call this BEFORE declaring work FINISHED. Runs seven checks over this whole "
+            "Call this BEFORE declaring work FINISHED. Runs NINE checks over this whole "
             "repository — generated artifacts match their doctrine, announced numbers match "
             "the measurement, verifiable claims of the documents hold, every `jio <command>` "
-            "cited by a document or an artifact exists in the REAL parser, environment "
-            "variables are documented, the package passes its own gates, and no autonomous "
-            "plan leaves steps unattempted. Returns one verdict per check WITH its evidence. "
-            "Exit 0 means coherent; anything else names the file, the line and the fix. An "
-            "unchecked state is not a good state."
+            "cited by a document or an artifact exists in the REAL parser, the skills an agent "
+            "will read stay inside the budget and carry no dangerous instruction, environment "
+            "variables are documented, the package passes its own gates, the journal hash chain "
+            "is intact, and no autonomous plan leaves steps unattempted. Returns one verdict per "
+            "check WITH its evidence. Exit 0 means coherent; anything else names the file, the "
+            "line and the fix. An unchecked state is not a good state."
         ),
         "inputSchema": _COHERENCE_SCHEMA,
     },
@@ -483,7 +484,7 @@ def _tool_status(_args: dict[str, Any]) -> str:
 def _tool_coherence(_args: dict[str, Any]) -> str:
     """Le portail d'ensemble, du point de vue de l'agent qui doit declarer « fini ».
 
-    Sept controles sur le depot, un verdict, et la preuve de chaque constat. Un agent qui
+    Neuf controles sur le depot, un verdict, et la preuve de chaque constat. Un agent qui
     s'apprete a rendre son travail a besoin de cette porte : sans elle, « c'est fini » est une
     opinion — et c'est exactement ce que ce serveur existe pour empecher.
     """

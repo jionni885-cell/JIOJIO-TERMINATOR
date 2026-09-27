@@ -12,6 +12,7 @@ Chaque test ci-dessous est ecrit pour une raison mesurable, indiquee dans sa doc
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -371,6 +372,12 @@ def test_l_outil_MCP_de_coherence_enonce_les_NEUF_controles(tmp_path: Path) -> N
             os.environ["JIO_ROOT"] = ancien
 
     assert "INCOHERENT" in texte
-    for controle in ("artefacts", "nombres", "documents", "commandes", "environnement",
-                     "sources", "plan"):
-        assert controle in texte, controle
+    # La liste est lue dans la SOURCE, pas recopiee : une recopie aurait le meme retard que le
+    # texte qu'elle surveille, et c'est ce retard qui a laisse la description annoncer « seven
+    # checks » alors que la porte en executait neuf.
+    from jio.verify.coherence import CONTROLES
+
+    assert "NINE checks" in description, description
+    for controle in CONTROLES:
+        nom = controle.__name__.removeprefix("_controle_")
+        assert nom in texte, f"le rapport ne nomme pas le controle {nom}"

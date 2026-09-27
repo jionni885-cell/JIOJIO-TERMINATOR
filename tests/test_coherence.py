@@ -666,3 +666,62 @@ def main_start(racine: Path) -> int:
     from jio.cli import main
 
     return main(["start", "--root", str(racine)])
+
+
+def test_les_textes_qui_ANNONCENT_le_nombre_de_controles_disent_le_meme_nombre() -> None:
+    """Le compte est lu dans `CONTROLES`, et chaque texte qui l'annonce doit dire le meme.
+
+    Deux derives mesurees, toutes les deux dans des textes qu'un AGENT lit :
+
+      * la description de l'outil MCP annoncait « Runs seven checks » et son enumeration omettait
+        `competences` et `journal` — un agent qui decide d'appeler la porte sur cette description
+        conclut qu'il a tout verifie ;
+      * le docstring du portail numerotait sept controles, et la liste s'arretait a « plan ».
+
+    Ni l'une ni l'autre n'etait fausse « dans le code » : c'est exactement la classe d'erreur que
+    ce depot traque ailleurs — une affirmation vraie un jour, devenue fausse — et il ne la
+    traquait pas dans ses propres textes. Ce test la traque, en lisant la source au lieu de
+    recopier le compte (une recopie aurait le meme retard que le texte qu'elle surveille).
+    """
+    import re
+    from pathlib import Path as _Chemin
+
+    from jio.verify.coherence import CONTROLES
+
+    mots = {7: "sept", 8: "huit", 9: "neuf", 10: "dix", 11: "onze", 12: "douze"}
+    anglais = {7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve"}
+    nombre = len(CONTROLES)
+    assert nombre in mots, (
+        "un controle a ete ajoute ou retire : ajouter son mot ici (francais et anglais), ET le "
+        "texte qui l'annonce dans les fichiers surveilles ci-dessous"
+    )
+
+    def sans_accents(texte: str) -> str:
+        for accents, simple in (("àâä", "a"), ("éèêë", "e"), ("îï", "i"), ("ôö", "o"),
+                                ("ûü", "u"), ("ç", "c")):
+            for lettre in accents:
+                texte = texte.replace(lettre, simple)
+        return texte
+
+    racine = _Chemin(__file__).resolve().parent.parent
+    surveilles = ("jio/mcp_server.py", "jio/verify/coherence.py", "jio/artifacts/emit.py",
+                  "jio/cli.py", "README.md")
+    trouve = 0
+    for relatif in surveilles:
+        texte = sans_accents((racine / relatif).read_text(encoding="utf-8")).lower()
+        for motif, table in (
+            (re.compile(r"\b(\w+)\s+controles?\b"), mots),
+            (re.compile(r"\b(\w+)\s+checks?\b"), anglais),
+        ):
+            for vu in motif.findall(texte):
+                if vu not in table.values():
+                    continue
+                trouve += 1
+                assert vu == table[nombre], (
+                    f"{relatif} annonce « {vu} » controles alors que le portail en execute "
+                    f"{nombre} ({table[nombre]})"
+                )
+    assert trouve >= len(surveilles), (
+        "chaque fichier surveille doit ANNONCER le nombre de controles : un texte qui ne dit plus "
+        f"rien ne peut plus deriver, mais l'agent ne sait plus non plus ce qu'il appelle ({trouve})"
+    )
