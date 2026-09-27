@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 923 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 928 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -31,9 +31,9 @@ jio auto "<objectif>"         # travaille SEUL, étape par étape : chaque étap
                               # preuve ; une étape sans preuve est REFUSÉE, un échec ARRÊTE
 jio auto --reprendre          # continue le plan interrompu : les étapes déjà prouvées sont
                               # sautées SI la révision git n'a pas bougé (sinon : tout rejouer)
-jio coherence                 # LES SEPT CONTRÔLES : artefacts, chiffres, documents, commandes
-                              # citées, variables d'environnement, portes du paquet, plan
-                              # en suspens — code 0 seulement si TOUT est encore vrai
+jio coherence                 # LES NEUF CONTRÔLES : artefacts, chiffres, documents, commandes
+                              # citées, compétences, environnement, portes du paquet, journal,
+                              # plan en suspens — code 0 seulement si TOUT est encore vrai
 ```
 
 `jio clarify` existe pour une seule raison : une IA qui part sans question choisit le
@@ -1105,6 +1105,14 @@ Les trois incohérences qui ont motivé cette commande ne sont pas hypothétique
 sont arrivées dans ce dépôt, toutes les trois :
 
 <!-- hors-controle: recit d'incoherences passees — ce tableau raconte des faits historiques, il n'affirme rien du jour -->
+Les deux derniers contrôles visent ce que l'agent **lit** et ce qui a été **écrit** :
+`competences` audite les 12 compétences Hermes (motifs dangereux, mises en garde distinguées des
+interdits) et vérifie leur coût en contexte en **intervalle** (3,2 à 4,4 caractères par jeton) —
+une compétence au-delà de 5 000 jetons ne se charge plus en une fois ; `journal` vérifie la
+**chaîne de hachage** du journal d'exécution : c'est la seule façon de répondre à « quelqu'un
+a-t-il réécrit l'histoire ? ». Sans journal, le contrôle est *hors portée* — un projet qui n'a
+jamais lancé de mission n'a rien à prouver.
+
 | Ce qui était affirmé | Ce qui était vrai | Ce qu'aucun contrôle ne voyait |
 |---|---|---|
 | « 755 tests verts » dans le README | 848 tests | Un compteur n'est relu par personne |
@@ -1113,18 +1121,20 @@ sont arrivées dans ce dépôt, toutes les trois :
 <!-- /hors-controle -->
 
 Aucune n'était un bug du code. Toutes étaient des **affirmations devenues fausses** que
-personne ne relisait. `jio coherence` passe sept contrôles d'un coup et rend **un verdict** :
+personne ne relisait. `jio coherence` passe neuf contrôles d'un coup et rend **un verdict** :
 
 ```
   COHERENCE D'ENSEMBLE  ·  ce que ce depot affirme est-il encore vrai ?
-    7 controle(s) en 1.5s  ·  VERDICT : COHERENT : tout ce que ce depot affirme est encore vrai
+    9 controle(s) en 1.6s  ·  VERDICT : COHERENT : tout ce que ce depot affirme est encore vrai
 
-    [ok] artefacts     29 artefact(s) generes, tous a jour
+    [ok] artefacts     30 artefact(s) generes, tous a jour
     [ok] nombres       3 chiffre(s) mesure(s)
-    [ok] documents     93 affirmation(s) verifiee(s) sur 5 document(s)
+    [ok] documents     94 affirmation(s) verifiee(s) sur 5 document(s)
     [ok] commandes     69 commande(s) citee(s), toutes existantes
+    [ok] competences   12 competence(s) auditee(s), 19 artefact(s) lus, ~5549-7631 jetons
     [ok] environnement 28 variable(s) lue(s) et documentee(s)
-    [ok] sources       paquet jio/ : 72 fichier(s), 0 constat(s) de lint, 0 d'import
+    [ok] sources       paquet jio/ : 73 fichier(s), 0 constat(s) de lint, 0 d'import
+    [ok] journal       chaine INTEGRE sur 164 evenement(s) — rien n'a ete reecrit
     [ok] plan          aucun plan autonome en cours
 ```
 
@@ -1134,7 +1144,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 923 tests verts -> 923 tests verts
+         - README.md ligne 15 : 928 tests verts -> 928 tests verts
 ```
 
 Trois propriétés rendent ce portail utilisable plutôt que décoratif :

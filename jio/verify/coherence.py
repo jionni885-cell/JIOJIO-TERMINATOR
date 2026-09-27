@@ -417,20 +417,132 @@ def _controle_plan(racine: Path) -> Constat:
     )
 
 
+def _controle_competences(racine: Path) -> Constat:
+    """Les competences et les agents : ce qu'ils DISENT, et ce qu'ils COUTENT.
+
+    Deux questions, et une seule fonction pour les deux, parce qu'elles se repondent au meme
+    endroit — le fichier que l'agent lit avant de travailler :
+
+      * **securite** : une competence est une INSTRUCTION executee avec les droits de l'agent.
+        Son contenu doit passer l'audit des motifs dangereux (`audit_skills`), mises en garde
+        distinguees des interdits : un texte qui INTERDIT `curl | sh` est une protection, pas
+        un risque ;
+      * **budget** : au-dela d'environ 5 000 jetons, une competence ne se charge plus en une
+        fois ; au-dela de 25 000, la bibliotheque ne tient plus dans la fenetre avec la mission.
+        Le cout est rendu en INTERVALLE (3,2 a 4,4 caracteres par jeton) : un seuil depasse
+        sans ambiguite n'est pas la meme chose qu'un seuil peut-etre depasse.
+
+    L'audit porte sur les DEFINITIONS qui generent les fichiers, jamais sur les fichiers ecrits :
+    auditer la copie laisserait passer exactement le cas qu'on veut attraper — un fichier
+    modifie a la main.
+    """
+    from ..artifacts.audit_skills import analyser_artefacts, artefacts_analyses
+    from ..artifacts.budget import SEUILS, mesurer
+
+    dossier = racine / ".hermes" / "skills"
+    if not dossier.is_dir():
+        return Constat("competences", True,
+                       "hors de portee : aucune competence dans cette racine", portee=False)
+
+    fichiers = sorted(p for p in dossier.rglob("*.md") if p.name != "README.md")
+    if not fichiers:
+        return Constat("competences", True,
+                       "hors de portee : le dossier des competences est vide", portee=False)
+
+    mesures = [
+        mesurer(str(p.relative_to(racine)), p.read_text(encoding="utf-8", errors="replace"))
+        for p in fichiers
+    ]
+    certains = [m for m in mesures if m.depasse(SEUILS["competence_jetons"])]
+    doutes = [m for m in mesures if not m.depasse(SEUILS["competence_jetons"])
+              and m.peut_depasser(SEUILS["competence_jetons"])]
+    total_min = sum(m.jetons_min for m in mesures)
+    total_max = sum(m.jetons_max for m in mesures)
+    bibliotheque_trop_grosse = total_min > SEUILS["bibliotheque_jetons"]
+
+    risques = analyser_artefacts()
+    dangereux = [r for r in risques if not r.mise_en_garde]
+    lus = len(artefacts_analyses())
+
+    ok = not certains and not bibliotheque_trop_grosse and not dangereux
+    resume = (
+        f"{len(fichiers)} competence(s) auditee(s), {lus} artefact(s) lus, "
+        f"~{total_min}-{total_max} jetons au total"
+    )
+    if not ok:
+        resume = f"{len(dangereux)} motif(s) dangereux, {len(certains)} competence(s) hors budget"
+    details = tuple(
+        f"{r.artefact} ligne {r.ligne} : {r.nature} — {r.extrait[:70]}" for r in dangereux[:4]
+    ) + tuple(
+        f"{m.chemin} : {m.intervalle()} jetons (seuil {SEUILS['competence_jetons']})"
+        for m in certains[:3]
+    )
+    if doutes:
+        details += tuple(
+            f"a verifier : {m.chemin} fait {m.intervalle()} jetons pour un seuil de "
+            f"{SEUILS['competence_jetons']}" for m in doutes[:2]
+        )
+    if bibliotheque_trop_grosse:
+        details += (
+            f"bibliotheque au-dela de {SEUILS['bibliotheque_jetons']} jetons "
+            f"({total_min} au minimum) : elle ne tient plus dans la fenetre avec la mission",
+        )
+    return Constat("competences", ok, resume, details)
+
+
+def _controle_journal(racine: Path) -> Constat:
+    """Le journal est-il INTEGRE ? (chaine de hachage verifiee, pas une simple relecture)
+
+    Un journal est la piece a conviction de ce systeme : il dit ce qui a ete fait, avec quel
+    niveau de confiance. Sa valeur tient entierement a une propriete — chaque evenement est
+    chaine au precedent par un condensat. Verifier cette chaine prend quelques millisecondes et
+    repond a la seule question qui compte : **quelqu'un a-t-il reecrit l'histoire ?**
+
+    Sans journal, le controle est HORS PORTEE : un projet qui n'a jamais lance de mission n'a
+    rien a prouver. C'est different d'un journal casse, qui est un echec.
+    """
+    import os
+
+    chemin = Path(os.environ.get("JIO_JOURNAL", str(racine / ".jio" / "journal.jsonl")))
+    if not chemin.is_absolute():
+        chemin = racine / chemin
+    if not chemin.is_file():
+        return Constat("journal", True, "hors de portee : aucun journal dans cette racine",
+                       portee=False)
+
+    from ..core.journal import Journal
+
+    journal = Journal.from_jsonl(chemin.read_text(encoding="utf-8"), path=chemin)
+    ok, casse = journal.verify_chain()
+    resume = journal.summary()
+    if ok:
+        return Constat(
+            "journal", True,
+            f"chaine INTEGRE sur {resume['events']} evenement(s) — rien n'a ete reecrit",
+        )
+    return Constat(
+        "journal", False,
+        f"chaine CASSEE a l'evenement {casse} : le journal a ete modifie apres coup",
+        (f"tete annoncee : {journal.head}",),
+    )
+
+
 #: L'ordre est celui du rapport. `artefacts` d'abord : c'est la derive la plus frequente.
 CONTROLES = (
     _controle_artefacts,
     _controle_nombres,
     _controle_documents,
     _controle_commandes,
+    _controle_competences,
     _controle_environnement,
     _controle_sources,
+    _controle_journal,
     _controle_plan,
 )
 
 
 def controler(racine: Path | str = ".") -> RapportCoherence:
-    """Passe LES sept controles et rend le verdict. Aucun controle n'est optionnel.
+    """Passe LES neuf controles et rend le verdict. Aucun controle n'est optionnel.
 
     Un controle qui plante n'est pas « ignore » : il devient un constat en echec avec son
     exception. Un portail qui saute silencieusement l'etape qui echoue est un portail ouvert.

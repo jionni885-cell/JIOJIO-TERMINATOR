@@ -185,8 +185,12 @@ def test_coherence_JSON_est_exploitable_par_une_machine(
     sortie = capsys.readouterr().out
     donnees = json.loads(sortie[sortie.index("{"):])
     assert donnees["coherent"] is True
-    assert set(donnees["hors_portee"]) == {"nombres", "environnement", "sources"}
-    assert {c["controle"] for c in donnees["constats"] if c["ok"]} >= {"artefacts", "plan"}
+    # Ce qui ne s'applique pas au projet tiers est declare : un dossier `tests/` absent, pas de
+    # paquet `jio/`, et aucun journal (le projet n'a jamais lance de mission). Le controle des
+    # COMPETENCES, lui, s'applique : `jio start` vient d'en ecrire douze, et elles sont auditees.
+    assert set(donnees["hors_portee"]) == {"nombres", "environnement", "sources", "journal"}
+    ok = {c["controle"] for c in donnees["constats"] if c["ok"]}
+    assert ok >= {"artefacts", "plan", "competences"}
 
 
 def test_un_artefact_modifie_a_la_main_rend_le_depot_INCOHERENT(

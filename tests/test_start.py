@@ -205,7 +205,7 @@ def test_la_fiche_active_porte_l_etat_de_COHERENCE_mesure(tmp_path: Path) -> Non
     """
     from jio.cli import _fiche_active
 
-    fiche = _fiche_active(tmp_path, ["opencode"], ["opencode"], 3, "COHERENT (7 controles, 0.1s)")
-    assert "coherence du depot a l'instant de l'ecriture : COHERENT (7 controles, 0.1s)" in fiche
+    fiche = _fiche_active(tmp_path, ["opencode"], ["opencode"], 3, "COHERENT (9 controles, 0.1s)")
+    assert "coherence du depot a l'instant de l'ecriture : COHERENT (9 controles, 0.1s)" in fiche
     # Sans mesure, la fiche le DIT au lieu d'affirmer : c'est la meme regle que partout ailleurs.
     assert "non mesuree" in _fiche_active(tmp_path, [], [], 0)

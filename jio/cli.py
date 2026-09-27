@@ -3034,7 +3034,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     co = sub.add_parser(
         "coherence",
-        help="LES SEPT CONTROLES d'un coup : tout ce que ce depot affirme est-il encore vrai ?",
+        help="LES NEUF CONTROLES d'un coup : tout ce que ce depot affirme est-il encore vrai ?",
     )
     co.add_argument("--root", default=".", help="racine du depot a controler")
     co.add_argument("--json", action="store_true", help="verdict lisible par une machine")
@@ -3206,7 +3206,7 @@ def cmd_mutants(args: argparse.Namespace) -> int:
 
 
 def cmd_coherence(args: argparse.Namespace) -> int:
-    """`jio coherence` : sept controles, un verdict, et la preuve de chaque constat.
+    """`jio coherence` : neuf controles, un verdict, et la preuve de chaque constat.
 
     Passe d'un coup ce que le depot sait verifier separement — artefacts, chiffres, documents,
     commandes citees, variables d'environnement, portes du paquet, plan autonome. Le code de
@@ -3461,8 +3461,9 @@ jio auto "<objectif>"       # plusieurs etapes vers un objectif large : une etap
                             # preuve est REFUSEE, un echec non resolu ARRETE le plan
 jio auto --reprendre        # continue le plan interrompu d'apres `.jio/plan.json` : les etapes
                             # deja prouvees sont sautees SI la revision git n'a pas bouge
-jio coherence               # LES SEPT CONTROLES : artefacts, chiffres, documents, commandes
-                            # citees, environnement, portes du paquet, plan en suspens
+jio coherence               # LES NEUF CONTROLES : artefacts, chiffres, documents, commandes
+                            # citees, competences, environnement, portes du paquet, journal,
+                            # plan en suspens
 ```
 
 `jio clarify` sort en **3** quand une question essentielle reste sans reponse. Dans ce cas,

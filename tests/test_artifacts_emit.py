@@ -339,7 +339,7 @@ def test_l_outil_MCP_d_etat_lit_le_DISQUE_et_ne_devine_rien(tmp_path) -> None:
             os.environ["JIO_ROOT"] = ancien
 
 
-def test_l_outil_MCP_de_coherence_enonce_les_SEPT_controles(tmp_path: Path) -> None:
+def test_l_outil_MCP_de_coherence_enonce_les_NEUF_controles(tmp_path: Path) -> None:
     """L'agent peut demander la porte avant de declarer « fini » — et il obtient les preuves.
 
     Un dossier vide doit ressortir INCOHERENT : c'est le cas d'une IA qui arrive avant

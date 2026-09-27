@@ -288,7 +288,7 @@ def _target_mcp() -> dict[str, str]:
             "  reponse manque, l'agent doit DEMANDER a l'humain avant de commencer\n"
             "- `jio_status` — l'etat d'integration du projet, lu sur le disque : artefacts,\n"
             "  registre, cablage MCP, et la commande qui repare ce qui manque\n"
-            "- `jio_coherence` — a appeler AVANT de declarer un travail fini : sept controles\n"
+            "- `jio_coherence` — a appeler AVANT de declarer un travail fini : NEUF controles\n"
             "  sur le depot entier, un verdict, et la preuve de chaque constat\n\n"
             "Transport : stdio, JSON-RPC 2.0, **zero dependance**.\n"
         ),

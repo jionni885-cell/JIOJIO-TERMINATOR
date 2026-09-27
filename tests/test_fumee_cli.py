@@ -122,7 +122,7 @@ SURES: dict[str, list[str]] = {
     # `auto` : la meme chose sans objectif. Sans objectif, elle refuse et explique — aucun
     # effet de bord, aucune ecriture, aucun plan invente.
     "auto": [],
-    # `coherence` : les sept controles sur le depot de test. Elle ne modifie RIEN (elle
+    # `coherence` : les neuf controles sur le depot de test. Elle ne modifie RIEN (elle
     # constate) : c'est ce qui la rend utilisable juste avant un commit.
     "coherence": [],
 }
