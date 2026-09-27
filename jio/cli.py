@@ -2999,6 +2999,10 @@ def build_parser() -> argparse.ArgumentParser:
     au.add_argument("--strict", action="store_true",
                     help="refuse de commencer si la porte de clarification a des questions")
     au.add_argument("--etat", default=".jio/plan.json", help="ou enregistrer l'etat du plan")
+    au.add_argument("--root", default=".",
+                    help="racine du projet (les preuves s'executent LA, l'etat y est ecrit) : "
+                         "une IA peut travailler sur un depot qu'elle n'a pas ouvert comme "
+                         "repertoire courant")
     au.add_argument("--json", action="store_true", help="resultat lisible par une machine")
     au.set_defaults(func=cmd_auto)
 
@@ -3179,10 +3183,19 @@ def cmd_mutants(args: argparse.Namespace) -> int:
     if not rapport.mutants:
         print("    aucun mutant mesure : le score serait un chiffre sans contenu.")
         return 1
-    if rapport.survivants:
-        print(f"    -> {len(rapport.survivants)} ligne(s) du depot sans preuve. Chacune demande")
+    # Le verdict porte sur les survivants CONFIRMES : un survivant apparent a ete tue par la
+    # suite complete, donc il n'y a aucune ligne du depot sans preuve. Sortir en echec pour une
+    # erreur de SELECTION ferait passer un probleme d'outil pour un probleme de code — et
+    # l'utilisateur corrigerait le mauvais.
+    if rapport.confirmes:
+        print(f"    -> {len(rapport.confirmes)} ligne(s) du depot sans preuve. Chacune demande")
         print("       soit un test, soit une raison ECRITE de ne pas en avoir.")
         return 1
+    if rapport.apparents:
+        print(f"    -> aucune ligne sans preuve : les {len(rapport.apparents)} survivant(s) "
+              "apparent(s) viennent")
+        print("       de la SELECTION de tests, pas du code. Relancer avec `--tout` les confirme.")
+        return 0
     print("    -> la suite attrape chaque mutation mesuree : les affirmations du depot")
     print("       sont tenues par des tests qui savent echouer.")
     return 0
@@ -3425,6 +3438,8 @@ def _fiche_active(
 > Fiche ecrite par `jio start`. Elle decrit l'etat REEL au moment de l'ecriture.
 > Pour la reecrire : `jio start`. Pour la contredire : les commandes ci-dessous.
 
+PROJET : {racine}
+
 ## Ce qui a ete fait
 
 - artefacts natifs ecrits ou mis a jour : {ecrits}
@@ -3499,6 +3514,16 @@ def cmd_auto(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 2
 
+    # Une seule racine pour tout : les preuves s'executent la, l'etat y est ecrit, et la
+    # revision lue est celle du depot vise. Le premier jet utilisait `Path.cwd()` — donc
+    # `jio auto` sur un projet qu'on n'a pas ouvert comme repertoire courant ecrivait son etat
+    # ailleurs et lancait ses preuves au mauvais endroit. `jio start`, `jio scan`,
+    # `jio coherence` et `jio artifacts` prennent tous `--root` ; `auto` etait l'exception.
+    racine = Path(getattr(args, "root", ".") or ".").expanduser().resolve()
+    if not racine.is_dir():
+        print(f"  racine introuvable : {racine}", file=sys.stderr)
+        return 2
+
     analyse = None
     if not args.plan:
         from .clarify import analyser as _analyser, formater as _formater
@@ -3545,7 +3570,7 @@ def cmd_auto(args: argparse.Namespace) -> int:
     if not etapes:
         print()
         print(formater(executer((), objective=objectif, lancer=lambda e: (False, "", 0),
-                                racine=Path.cwd(), refusees=refusees)))
+                                racine=racine, refusees=refusees)))
         return 1
 
     def lancer(etape: object) -> tuple[bool, str, int]:
@@ -3560,24 +3585,29 @@ def cmd_auto(args: argparse.Namespace) -> int:
                 f"` sont executees (ni chainage, ni shell). Recu : {commande[:60]}"
             ), 0
         proc = subprocess.run(
-            argv, cwd=Path.cwd(), capture_output=True, text=True, timeout=1800, check=False,
+            argv, cwd=racine, capture_output=True, text=True, timeout=1800, check=False,
         )
         sortie = (proc.stdout or proc.stderr or "").strip().splitlines()
         queue = sortie[-1][:120] if sortie else "(aucune sortie)"
         return proc.returncode == 0, f"code {proc.returncode} · {queue}", 1
 
     resultat = executer(
-        etapes, objective=objectif, lancer=lancer, racine=Path.cwd(),
+        etapes, objective=objectif, lancer=lancer, racine=racine,
         budget_etapes=max(1, min(args.budget, MAX_ETAPES)), refusees=refusees, questions=questions,
     )
-    enregistrer(resultat, Path(args.etat))
+    # L'etat est ecrit DANS le projet vise : `.jio/plan.json` se lit toujours a la racine du
+    # depot concerne, jamais dans le repertoire d'ou l'on a lance la commande.
+    chemin_etat = Path(args.etat)
+    if not chemin_etat.is_absolute():
+        chemin_etat = racine / chemin_etat
+    enregistrer(resultat, chemin_etat)
     print()
     if args.json:
         print(json.dumps(resultat.as_dict(), ensure_ascii=False, indent=2))
     else:
         print(formater(resultat))
         print()
-        print(f"    etat enregistre : {args.etat} (reprise possible apres correction)")
+        print(f"    etat enregistre : {chemin_etat} (reprise possible apres correction)")
     return {"termine": 0, "bloque": 1, "budget": 2, "refuse": 1}.get(resultat.etat, 1)
 
 

@@ -102,6 +102,10 @@ class MutantDeLaSuite:
     preuve: str = ""
     #: Raison ECRITE quand le mutant est declare equivalent (voir `EQUIVALENTS`).
     equivalent: str = ""
+    #: Vrai quand le survivant a ete rejoue sur la suite ENTIERE et qu'il est mort la : le
+    #: score brut le comptait comme survivant, mais la selection de tests avait simplement
+    #: manque le fichier qui le tuait. Un survivant APPARENT n'est pas un manque de test.
+    tue_par_suite_complete: bool = False
 
     @property
     def famille(self) -> str:
@@ -111,6 +115,16 @@ class MutantDeLaSuite:
     def survivant_reel(self) -> bool:
         """Un survivant qui n'est PAS declare equivalent : c'est lui qui demande un test."""
         return not self.tue and not self.equivalent
+
+    @property
+    def survivant_confirme(self) -> bool:
+        """Un survivant qui survit MEME a la suite entiere : la preuve manque vraiment."""
+        return self.survivant_reel and not self.tue_par_suite_complete
+
+    @property
+    def survivant_apparent(self) -> bool:
+        """Un survivant tue par la suite entiere : il vient de la SELECTION, pas du code."""
+        return self.survivant_reel and self.tue_par_suite_complete
 
 
 @dataclass
@@ -133,6 +147,30 @@ class RapportSuite:
     def equivalents(self) -> list[MutantDeLaSuite]:
         """Survivants declares equivalents AVEC leur raison : ils ne comptent pas au score."""
         return [m for m in self.mutants if m.equivalent]
+
+    @property
+    def apparents(self) -> list[MutantDeLaSuite]:
+        """Survivants tues par la suite COMPLETE : la selection avait manque le fichier."""
+        return [m for m in self.mutants if m.survivant_apparent]
+
+    @property
+    def confirmes(self) -> list[MutantDeLaSuite]:
+        """Survivants qui survivent a tout : chacun demande un test, ou une raison ecrite."""
+        return [m for m in self.mutants if m.survivant_confirme]
+
+    @property
+    def score_verifie(self) -> float:
+        """Le score APRES verification de la selection : les survivants apparents comptent tues.
+
+        Les deux scores ne disent pas la meme chose, et c'est pour cela qu'ils sont separes :
+        `score` mesure la suite TELLE QU'ELLE EST LANCEE par l'outil, `score_verifie` mesure ce
+        que la suite sait faire quand on lui donne tous ses fichiers. Le second est toujours
+        superieur ou egal au premier, et l'ecart EST l'erreur de la selection.
+        """
+        if not self.mutants:
+            return 0.0
+        tues = sum(1 for m in self.mutants if m.tue or m.survivant_apparent)
+        return tues / len(self.mutants)
 
     @property
     def score(self) -> float:
@@ -262,6 +300,26 @@ def mesurer(
                     )[:160]
                 else:
                     preuve = "la suite passe AVEC le mutant : aucune preuve de cette ligne"
+                # Le survivant est rejoue sur la suite ENTIERE, et seulement lui. Deux natures de
+                # survivant se ressemblaient dans le rapport :
+                #   * APPARENT  : la selection ne lancait pas le fichier qui le tuait ;
+                #   * CONFIRME  : aucun test du depot ne distingue cette ligne.
+                # Le premier dit « mon heuristique a un trou » (et c'est un fait sur l'OUTIL),
+                # le second dit « cette ligne n'est pas prouvee » (et c'est un fait sur le CODE).
+                # Les confondre donnait un score qui melangeait les deux — donc un chiffre qu'on
+                # ne peut pas corriger. Le cout est nul en pratique : on ne rejoue QUE les
+                # survivants, qui sont l'exception.
+                tue_par_suite = False
+                if not tue and not tous_les_tests:
+                    try:
+                        complet = subprocess.run(
+                            [python, "-m", "pytest", "-q", "-x", "--no-header", "tests"],
+                            cwd=copie, capture_output=True, text=True, timeout=timeout,
+                        )
+                        tue_par_suite = complet.returncode != 0
+                    except subprocess.TimeoutExpired:
+                        tue_par_suite = True
+                    rapport.tests_lances += 1
                 rapport.mutants.append(
                     MutantDeLaSuite(
                         relatif,
@@ -271,6 +329,7 @@ def mesurer(
                         equivalent="" if tue else EQUIVALENTS.get(
                             (str(relatif), mutant.label), ""
                         ),
+                        tue_par_suite_complete=tue_par_suite,
                     )
                 )
                 rapport.tests_lances += 1
@@ -291,7 +350,23 @@ def formater(rapport: RapportSuite) -> str:
     ]
     if rapport.note:
         lignes.append(f"    note : {rapport.note}")
-    for mutant in rapport.survivants:
+
+    # Les deux natures de survivant, separees. Un score qui les melange ne se corrige pas :
+    # on ne sait pas s'il faut ecrire un test (code) ou elargir la selection (outil).
+    if rapport.apparents:
+        lignes.append(
+            f"    {len(rapport.apparents)} survivant(s) APPARENT(S) : tues par la suite COMPLETE, "
+            "la selection de tests avait manque le fichier. Fait sur l'OUTIL, pas sur le code :"
+        )
+        for mutant in rapport.apparents:
+            lignes.append(f"      apparent   {mutant.fichier}  [{mutant.label}]")
+        lignes.append(
+            f"    -> score apres verification de la selection : "
+            f"{rapport.tues + len(rapport.apparents)}/{len(rapport.mutants)} "
+            f"({rapport.score_verifie:.0%}). L'ecart avec {rapport.score:.0%} EST l'erreur de "
+            "l'heuristique."
+        )
+    for mutant in rapport.confirmes:
         lignes.append(f"    SURVIVANT  {mutant.fichier}  [{mutant.label}]")
     if not rapport.survivants:
         lignes.append("    aucun survivant : chaque mutation mesuree a ete attrapee.")
@@ -306,10 +381,14 @@ def formater(rapport: RapportSuite) -> str:
     # fait de constantes de plafond n'a pas la meme significance qu'un score bas fait de
     # comparaisons et de booleens.
     if rapport.mutants:
+        # Compte APRES verification de la selection : c'est la lecture qui n'entre pas en
+        # contradiction avec le score corrige juste au-dessus. Un detail par famille calcule
+        # sur le score brut afficherait « constante 0/1 » sous une ligne annoncant 100 %.
         par_famille: dict[str, list[int]] = {}
         for mutant in rapport.mutants:
             tue, total = par_famille.get(mutant.famille, [0, 0])
-            par_famille[mutant.famille] = [tue + (1 if mutant.tue else 0), total + 1]
+            mort = mutant.tue or mutant.survivant_apparent
+            par_famille[mutant.famille] = [tue + (1 if mort else 0), total + 1]
         detail = " · ".join(
             f"{nom} {tues}/{total}"
             for nom, (tues, total) in sorted(par_famille.items())

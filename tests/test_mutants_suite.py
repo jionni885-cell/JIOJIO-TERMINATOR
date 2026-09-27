@@ -271,3 +271,147 @@ def test_le_rapport_n_ampute_plus_la_liste_des_survivants() -> None:
     for i in range(20):
         assert f"jio/f{i}.py" in texte
     assert "autre(s)" not in texte
+
+
+# --------------------------------------------------------------------------- #
+# Les deux natures de survivant : apparente (outil) ou confirmee (code)
+# --------------------------------------------------------------------------- #
+
+
+def test_un_survivant_TUE_par_la_suite_complete_est_APPARENT_pas_confirme() -> None:
+    """Un survivant qui meurt sur la suite entiere vient de la SELECTION, pas du code.
+
+    Le module le dit depuis le debut : la selection des tests est une heuristique DECLAREE, et
+    un survivant peut en venir. Il ne le MESURAIT pas — donc le rapport melangeait deux choses
+    qui n'appellent pas la meme correction :
+
+      * APPARENT  : la selection ne lancait pas le fichier qui le tuait. C'est un fait sur
+        l'OUTIL ; la reponse est d'elargir la selection, pas d'ecrire un test ;
+      * CONFIRME  : aucun test du depot ne distingue cette ligne. C'est un fait sur le CODE ;
+        la reponse est un test, ou une raison ecrite.
+
+    Melanger les deux donne un score qu'on ne sait pas corriger : on ne sait pas quoi faire de
+    « 75 % » quand il additionne une erreur d'outil et une preuve manquante.
+    """
+    from jio.verify.mutants_suite import MutantDeLaSuite, RapportSuite
+
+    apparent = MutantDeLaSuite(Path("jio/x.py"), "booleen True -> False", tue=False,
+                               tue_par_suite_complete=True)
+    confirme = MutantDeLaSuite(Path("jio/y.py"), "constante 1 -> 2", tue=False)
+    tue = MutantDeLaSuite(Path("jio/z.py"), "bloc conditionnel vide", tue=True)
+    equivalent = MutantDeLaSuite(Path("jio/w.py"), "bloc conditionnel vide", tue=False,
+                                 equivalent="le code retire est repris juste apres")
+
+    rapport = RapportSuite(mutants=[apparent, confirme, tue, equivalent])
+    assert rapport.apparents == [apparent]
+    assert rapport.confirmes == [confirme]
+    # Un declare equivalent n'est ni apparent, ni confirme : il ne demande rien.
+    assert all(m is not equivalent for m in rapport.apparents + rapport.confirmes)
+    # Deux scores, deux significations. L'ecart EST l'erreur de l'heuristique.
+    assert rapport.score == 1 / 4
+    assert rapport.score_verifie == 2 / 4
+    assert rapport.score_verifie >= rapport.score
+
+    texte = formater(rapport)
+    assert "APPARENT" in texte and "apparent" in texte
+    assert "score apres verification de la selection : 2/4" in texte
+    assert "L'ecart avec 25% EST l'erreur de l'heuristique" in texte
+    assert "SURVIVANT  jio/y.py" in texte
+    assert "SURVIVANT  jio/x.py" not in texte, "un apparent n'est pas un survivant a corriger"
+
+
+def test_le_rejeu_ne_coute_rien_quand_tout_est_TUE(tmp_path: Path) -> None:
+    """Aucun survivant : aucun rejeu de suite complete, donc aucune seconde de perdue.
+
+    Le rejeu est reserve aux survivants (l'exception) : c'est ce qui rend l'information
+    disponible sans allonger la campagne. Ce test mesure la promesse — un module qui rejoue
+    tout le temps serait inutilisable sur un depot reel.
+    """
+    from jio.verify.mutants_suite import mesurer
+
+    # Un module dont la ligne mutee EST couverte par un test present : le mutant meurt tout de
+    # suite, donc rien n'est rejoue.
+    (tmp_path / "jio").mkdir()
+    (tmp_path / "jio" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "jio" / "plafond.py").write_text("MAX = 2\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_plafond.py").write_text(
+        "from jio.plafond import MAX\n\n\ndef test_max():\n    assert MAX == 2\n",
+        encoding="utf-8",
+    )
+    rapport = mesurer(
+        tmp_path, fichiers=[tmp_path / "jio" / "plafond.py"], budget_par_fichier=2, timeout=120
+    )
+    assert rapport.mutants and rapport.tues == len(rapport.mutants)
+    assert rapport.apparents == [] and rapport.confirmes == []
+    assert rapport.tests_lances == len(rapport.mutants), "un seul lancement par mutant, pas deux"
+
+
+def test_un_survivant_SANS_test_du_tout_est_JOUE_sur_la_suite_complete(tmp_path: Path) -> None:
+    """Le cas ou la selection ne trouve rien : on rejoue, et le survivant reste CONFIRME.
+
+    Sur un module que personne ne mentionne, la selection rend une liste vide et le document le
+    dit (« le mutant est compte SURVIVANT »). Le rejeu de la suite entiere confirme que c'est
+    bien le depot entier qui ne distingue pas la ligne — pas l'heuristique.
+    """
+    from jio.verify.mutants_suite import mesurer
+
+    (tmp_path / "jio").mkdir()
+    (tmp_path / "jio" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "jio" / "orphelin.py").write_text("SEUIL = 7\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_ailleurs.py").write_text(
+        "def test_rien():\n    assert True\n", encoding="utf-8"
+    )
+    rapport = mesurer(
+        tmp_path, fichiers=[tmp_path / "jio" / "orphelin.py"], budget_par_fichier=1, timeout=120
+    )
+    assert rapport.confirmes, rapport.mutants
+    assert not rapport.apparents
+    assert "aucun test ne mentionne" in rapport.note
+
+
+def test_le_verdict_de_LA_CLI_ne_confond_pas_outil_et_code(tmp_path: Path) -> None:
+    """Un survivant apparent ne fait PAS echouer la commande : ce n'est pas un defaut du code.
+
+    C'est la consequence pratique de la distinction, et elle est mesurable de bout en bout : le
+    depot de test est construit pour produire exactement ce cas — un test qui mentionne le
+    module muté (donc la selection n'est pas vide) mais qui ne peut pas tuer le mutant, et un
+    second test, non mentionnant, qui le tue. Avec `--plafond-tests 1`, la selection ne garde
+    que le premier : le mutant survit au score brut et meurt a la suite complete.
+
+    Sortir en echec ici ferait corriger le mauvais probleme : l'utilisateur ecrirait un test
+    de plus alors que son depot en a deja un qui couvre la ligne.
+    """
+    from jio.cli import main
+
+    (tmp_path / "jio").mkdir()
+    (tmp_path / "jio" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "jio" / "piece.py").write_text("SEUIL = 7\n", encoding="utf-8")
+    (tmp_path / "jio" / "agrege.py").write_text(
+        "from jio.piece import SEUIL\n\nTOTAL = SEUIL * 2\n", encoding="utf-8"
+    )
+    (tmp_path / "tests").mkdir()
+    # Ce test mentionne le module : il entre dans la selection, et ne tue rien.
+    (tmp_path / "tests" / "test_piece.py").write_text(
+        "from jio.piece import SEUIL\n\n\ndef test_positif():\n    assert SEUIL > 0\n",
+        encoding="utf-8",
+    )
+    # Ce test tue le mutant, sans jamais nommer le module : il est hors selection.
+    (tmp_path / "tests" / "test_systeme.py").write_text(
+        "from jio.agrege import TOTAL\n\n\ndef test_total():\n    assert TOTAL == 14\n",
+        encoding="utf-8",
+    )
+
+    code = main([
+        "mutants", "--root", str(tmp_path), "--budget", "1", "--plafond-tests", "1",
+        "--fichiers", "jio/piece.py",
+    ])
+    assert code == 0, "un survivant APPARENT ne doit pas faire echouer la commande"
+
+    # Et le meme depot, mesure sur la suite entiere : le survivant disparait tout simplement.
+    code_exact = main([
+        "mutants", "--root", str(tmp_path), "--budget", "1", "--tout",
+        "--fichiers", "jio/piece.py",
+    ])
+    assert code_exact == 0
