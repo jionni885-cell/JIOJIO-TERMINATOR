@@ -3003,6 +3003,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="racine du projet (les preuves s'executent LA, l'etat y est ecrit) : "
                          "une IA peut travailler sur un depot qu'elle n'a pas ouvert comme "
                          "repertoire courant")
+    au.add_argument("--reprendre", action="store_true",
+                    help="reprend le plan enregistre dans --etat : les etapes deja PROUVEES sont "
+                         "sautees SI la revision git n'a pas bouge ; sinon le plan est rejoue "
+                         "ENTIER, parce qu'une preuve obtenue dans un autre monde ne vaut rien")
     au.add_argument("--json", action="store_true", help="resultat lisible par une machine")
     au.set_defaults(func=cmd_auto)
 
@@ -3455,6 +3459,8 @@ jio clarify "<objectif>"    # les questions ESSENTIELLES ; code 3 si la reponse 
 jio run "<objectif>"        # mission complete : preuve, panel, consensus, reserves
 jio auto "<objectif>"       # plusieurs etapes vers un objectif large : une etape sans
                             # preuve est REFUSEE, un echec non resolu ARRETE le plan
+jio auto --reprendre        # continue le plan interrompu d'apres `.jio/plan.json` : les etapes
+                            # deja prouvees sont sautees SI la revision git n'a pas bouge
 jio coherence               # LES SEPT CONTROLES : artefacts, chiffres, documents, commandes
                             # citees, environnement, portes du paquet, plan en suspens
 ```
@@ -3474,6 +3480,9 @@ la bonne action est de POSER la question a l'utilisateur, pas de commencer.
 4. **Une etape sans preuve n'existe pas.** En mode autonome (`jio auto`), chaque etape du plan
    porte la commande qui peut echouer ; un echec non resolu ARRETE le plan au lieu de
    l'enchainer, et ce qui reste est declare NON TENTE.
+5. **Une preuve ne se reprend pas d'un autre monde.** `jio auto --reprendre` saute les etapes
+   deja prouvees SEULEMENT si la revision git n'a pas bouge. Sinon le plan est rejoue entier :
+   re-verifier coute une commande par etape, croire coute une mission batie sur du vide.
 
 ## Ce que "fini" veut dire ici
 
@@ -3504,14 +3513,16 @@ def cmd_auto(args: argparse.Namespace) -> int:
     reprendre un plan apres un changement de revision, c'est changer de monde.
     """
     from .loop.auto import (
-        MAX_ETAPES, enregistrer, executer, extraire_etapes, formater, plan_simule,
+        MAX_ETAPES, enregistrer, executer, extraire_etapes, formater, lire_etat,
+        plan_simule,
     )
 
     objectif = args.objective.strip()
-    if not objectif:
+    if not objectif and not getattr(args, "reprendre", False):
         print("  objectif requis : jio auto \"<objectif>\"", file=sys.stderr)
         print("  exemple : jio auto \"corrige la borne de mutation\" --cible jio/verify/mutation.py",
               file=sys.stderr)
+        print("  pour continuer un plan interrompu : jio auto --reprendre", file=sys.stderr)
         return 2
 
     # Une seule racine pour tout : les preuves s'executent la, l'etat y est ecrit, et la
@@ -3535,10 +3546,41 @@ def cmd_auto(args: argparse.Namespace) -> int:
             print("  PLAN NON COMMENCE (--strict) : reponds aux questions, puis relance.")
             return 3
 
+    # L'etat vise, calcule une fois pour toutes : il sert a reprendre, a lire la revision, et a
+    # ecrire le resultat. `.jio/plan.json` se lit toujours a la racine du projet concerne.
+    chemin_etat = Path(args.etat)
+    if not chemin_etat.is_absolute():
+        chemin_etat = racine / chemin_etat
+    from .loop.auto import _revision as _revision_de
+
+    revision = _revision_de(racine)
+
     # Le plan : un fichier fourni, ou le plan de reference deterministe — ANNONCE.
     texte = ""
     simule = False
-    if args.plan:
+    reprise = None
+    if getattr(args, "reprendre", False):
+        from .loop.auto import reprendre as _reprendre
+
+        reprise = _reprendre(chemin_etat, revision_courante=revision)
+        print(BANNER)
+        print("  REPRISE DE PLAN  ·  on ne croit sur parole aucune preuve")
+        print(f"    {reprise.motif}")
+        print()
+        if not reprise.utilisable:
+            print("    rien a reprendre : relance sans --reprendre pour un plan neuf.")
+            return 1
+        if reprise.sautees == len(reprise.etapes):
+            print(f"    rien a faire : les {len(reprise.etapes)} etape(s) sont deja prouvees.")
+            return 0
+        if not objectif:
+            # L'objectif vient de l'etat : c'est celui du plan, pas un texte invente ici.
+            try:
+                objectif = str(lire_etat(chemin_etat).get("objectif") or "").strip()
+            except (OSError, ValueError):
+                objectif = ""
+            objectif = objectif or "(objectif de l'etat enregistre)"
+    elif args.plan:
         chemin = Path(args.plan).expanduser()
         if not chemin.is_file():
             print(f"  plan introuvable : {chemin}", file=sys.stderr)
@@ -3550,7 +3592,13 @@ def cmd_auto(args: argparse.Namespace) -> int:
         texte = _json.dumps(plan_simule(objectif, cible=args.cible, entree=args.entrypoint))
         simule = True
 
-    etapes, refusees = extraire_etapes(texte, max_etapes=MAX_ETAPES)
+    if reprise is not None:
+        # Les etapes de la reprise viennent de l'ETAT, pas d'un texte a re-analyser : elles ont
+        # deja ete validees (chacune porte sa preuve) et les re-valider ici risquerait de les
+        # faire disparaitre en silence — exactement ce que ce module interdit.
+        etapes, refusees = reprise.etapes, ()
+    else:
+        etapes, refusees = extraire_etapes(texte, max_etapes=MAX_ETAPES)
 
     print(BANNER)
     print("  MISSION AUTONOME  ·  chaque etape doit porter sa preuve")
@@ -3574,8 +3622,16 @@ def cmd_auto(args: argparse.Namespace) -> int:
         return 1
 
     def lancer(etape: object) -> tuple[bool, str, int]:
-        """Execute UNE etape : la preuve est une commande reelle, dans le depot."""
+        """Execute UNE etape : la preuve est une commande reelle, dans le depot.
+
+        En reprise, une etape DEJA PROUVEE n'est pas relancee (meme revision) : on rend son
+        resultat sans cout, en le declarant « deja prouvee ». La confiance ne vient pas d'un
+        raccourci : elle vient de la revision, verifiee avant de commencer.
+        """
         import subprocess
+
+        if reprise is not None and getattr(etape, "id", "") in reprise.deja_prouvees:
+            return True, "deja prouvee (reprise : meme revision)", 0
 
         commande = getattr(etape, "preuve", "")
         argv = _argv_de_preuve(commande)

@@ -334,3 +334,164 @@ def test_le_banc_mesure_l_apport_de_la_VALIDATION_des_etapes() -> None:
     assert len(lances) == len(acceptees), "aucune etape supplementaire ne doit avoir ete lancee"
     assert len(jamais.refusees) == len(sans_preuve)
     assert all("aucune preuve" in r.raison for r in jamais.refusees)
+
+
+# --------------------------------------------------------------------------- #
+# 5. Reprendre un plan interrompu — sans jamais croire une preuve sur parole
+# --------------------------------------------------------------------------- #
+
+
+def _etat(
+    etapes: list[tuple[str, str, str, str]], *, revision: str, etat: str = "bloque",
+    objectif: str = "objectif enregistre",
+) -> str:
+    """Un `.jio/plan.json` minimal : `(id, objectif, preuve, etat)` par etape."""
+    return json.dumps({
+        "objectif": objectif, "etat": etat, "revision": revision,
+        "prouvees": sum(1 for e in etapes if e[3] == "prouvee"), "total": len(etapes),
+        "etapes": [
+            {"id": i, "objectif": o, "preuve": p, "etat": e, "motif": ""}
+            for i, o, p, e in etapes
+        ],
+    }, ensure_ascii=False)
+
+
+def test_une_reprise_de_meme_revision_SAUTE_les_etapes_prouvees(tmp_path: Path) -> None:
+    """Meme revision : ce qui est prouve est saute, le reste est rejoue. C'est le sens de l'axe.
+
+    Le plan bloque laisse un etat, l'humain corrige l'etape fautive, et la reprise doit
+    continuer SANS refaire ce qui a deja ete prouve — sinon « reprendre » serait un synonyme de
+    « recommencer », et l'etat enregistre ne servirait a rien.
+    """
+    from jio.loop.auto import reprendre
+
+    chemin = tmp_path / "plan.json"
+    chemin.write_text(_etat([
+        ("E01", "localiser", "jio scan .", "prouvee"),
+        ("E02", "corriger", "jio run \"x\"", "bloquee"),
+        ("E03", "verifier", "jio coherence", "non_tentee"),
+    ], revision="abc123"), encoding="utf-8")
+
+    reprise = reprendre(chemin, revision_courante="abc123")
+    assert reprise.utilisable
+    assert reprise.deja_prouvees == frozenset({"E01"})
+    assert [e.id for e in reprise.etapes] == ["E01", "E02", "E03"]
+    assert "revision identique" in reprise.motif
+    assert "1 etape(s) deja prouvee(s) sont sautees" in reprise.motif
+
+
+def test_une_revision_DIFFERENTE_rejoue_tout_et_le_DIT(tmp_path: Path) -> None:
+    """Revision changee : « les preuves obtenues decrivent un monde qui n'existe plus ».
+
+    C'est le mecanisme d'attaque documente (arXiv 2608.29381) : une reprise qui restaure un etat
+    tout en conservant une verification faite sur un AUTRE etat. La seule reponse sure est de
+    rejouer — re-verifier coute une commande par etape, croire coute une mission entiere batie
+    sur du vide.
+    """
+    from jio.loop.auto import reprendre
+
+    chemin = tmp_path / "plan.json"
+    chemin.write_text(_etat([
+        ("E01", "localiser", "jio scan .", "prouvee"),
+        ("E02", "corriger", "jio run \"x\"", "bloquee"),
+    ], revision="ancienne"), encoding="utf-8")
+
+    reprise = reprendre(chemin, revision_courante="nouvelle")
+    assert reprise.utilisable
+    assert reprise.deja_prouvees == frozenset(), "aucune etape ne doit etre crue sur parole"
+    assert "revision differente" in reprise.motif
+    assert "rejoue ENTIER" in reprise.motif
+    assert "ancienne" in reprise.motif and "nouvelle" in reprise.motif
+
+
+def test_un_etat_SANS_revision_ne_permet_aucun_raccourci(tmp_path: Path) -> None:
+    """Etat d'avant la revision : meme traitement qu'une revision differente.
+
+    Un etat qui ne dit pas sur quel monde il a ete obtenu ne peut rien garantir. L'absence
+    d'information n'est pas une autorisation — c'est exactement l'inverse.
+    """
+    from jio.loop.auto import reprendre
+
+    chemin = tmp_path / "plan.json"
+    chemin.write_text(_etat([("E01", "localiser", "jio scan .", "prouvee")], revision=""),
+                      encoding="utf-8")
+    reprise = reprendre(chemin, revision_courante="abc")
+    assert reprise.deja_prouvees == frozenset()
+    assert "n'indique pas la revision" in reprise.motif
+
+
+def test_une_reprise_SANS_etat_refuse_et_explique(tmp_path: Path) -> None:
+    """Pas de fichier, pas de plan : on refuse au lieu d'inventer un plan vide.
+
+    Une reprise qui rendrait un plan vide serait pire qu'un refus : l'appelant croirait avoir
+    continue quelque chose.
+    """
+    from jio.loop.auto import reprendre
+
+    reprise = reprendre(tmp_path / "absent.json", revision_courante="abc")
+    assert not reprise.utilisable
+    assert reprise.etapes == ()
+    assert "aucun etat a reprendre" in reprise.motif
+    assert str(tmp_path / "absent.json") in reprise.motif
+
+
+def test_un_etat_ILLISIBLE_ne_devient_pas_un_plan_invente(tmp_path: Path) -> None:
+    """Fichier tronque : on refuse. « Reparer » un etat, c'est inventer un plan."""
+    from jio.loop.auto import reprendre
+
+    chemin = tmp_path / "plan.json"
+    chemin.write_text('{"etapes": [{"id": "E01"', encoding="utf-8")
+    reprise = reprendre(chemin, revision_courante="abc")
+    assert not reprise.utilisable
+    assert "illisible" in reprise.motif
+    assert "reprendre serait deviner" in reprise.motif
+
+
+def test_un_plan_TERMINE_n_a_rien_a_reprendre(tmp_path: Path) -> None:
+    """Termine : toutes les etapes sont declarees deja prouvees, et on le dit."""
+    from jio.loop.auto import reprendre
+
+    chemin = tmp_path / "plan.json"
+    chemin.write_text(_etat([
+        ("E01", "localiser", "jio scan .", "prouvee"),
+        ("E02", "corriger", "jio run \"x\"", "prouvee"),
+    ], revision="abc", etat="termine"), encoding="utf-8")
+    reprise = reprendre(chemin, revision_courante="abc")
+    assert reprise.sautees == len(reprise.etapes) == 2
+    assert "deja TERMINE" in reprise.motif
+
+
+def test_la_reprise_de_BOUT_EN_BOUT_ne_relance_pas_les_etapes_prouvees(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le chemin complet : plan bloque, puis reprise — et le compte des executions le prouve.
+
+    Ce que le test mesure, c'est le nombre d'APPELS reels : les etapes deja prouvees ne
+    declenchent aucune commande, les autres si. Un raccourci qui relancerait tout passerait tous
+    les tests d'etat ci-dessus et echouerait ici.
+    """
+    from jio.loop.auto import executer, reprendre
+
+    chemin = tmp_path / "plan.json"
+    chemin.write_text(_etat([
+        ("E01", "localiser", "jio scan .", "prouvee"),
+        ("E02", "corriger", "jio run \"x\"", "bloquee"),
+        ("E03", "verifier", "jio coherence", "non_tentee"),
+    ], revision="rev-1"), encoding="utf-8")
+
+    reprise = reprendre(chemin, revision_courante="rev-1")
+    lances: list[str] = []
+
+    def lancer(etape: Etape) -> tuple[bool, str, int]:
+        if etape.id in reprise.deja_prouvees:          # le contrat du lanceur reel
+            return True, "deja prouvee (reprise : meme revision)", 0
+        lances.append(etape.id)
+        return True, "code 0", 1
+
+    resultat = executer(reprise.etapes, objective="objectif enregistre", lancer=lancer,
+                        racine=tmp_path)
+    assert lances == ["E02", "E03"], "E01 etait prouvee : elle ne doit pas avoir ete relancee"
+    assert resultat.etat == "termine"
+    assert resultat.prouvees == 3
+    # Les appels comptes sont ceux du LANCEUR : 0 pour l'etape reprise, 1 pour les autres.
+    assert resultat.appels == 2

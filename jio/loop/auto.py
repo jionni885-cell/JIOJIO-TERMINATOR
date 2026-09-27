@@ -49,6 +49,9 @@ __all__ = [
     "plan_simule",
     "executer",
     "formater",
+    "enregistrer",
+    "lire_etat",
+    "reprendre",
 ]
 
 #: Au-dela, le plan n'est plus un plan : c'est une liste de souhaits. Une etape coute une
@@ -366,6 +369,120 @@ def enregistrer(resultat: ResultatAuto, chemin: Path) -> None:
     chemin.parent.mkdir(parents=True, exist_ok=True)
     chemin.write_text(
         json.dumps(resultat.as_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+@dataclass(frozen=True)
+class Reprise:
+    """La decision de reprise, et sa raison — jamais un simple booleen.
+
+    Trois cas, et le troisieme est celui qui compte :
+
+      * le fichier d'etat manque ou est illisible -> rien a reprendre, et on le DIT ;
+      * la revision a change -> les preuves obtenues decrivent un monde qui n'existe plus
+        (arXiv 2608.29381 : une reprise qui restaure un etat hostile tout en conservant une
+        verification faite ailleurs est le mecanisme d'attaque documente). On reprend donc a
+        ZERO, et on ecrit pourquoi : re-verifier coute une commande par etape, croire coute une
+        mission entiere batie sur du vide ;
+      * la revision est la meme -> les etapes deja PROUVEES sont sautees, les autres sont
+        rejouees.
+
+    `deja_prouvees` est l'ensemble des identifiants a ne PAS relancer. Il n'est jamais devine :
+    il vient de l'etat enregistre, et chaque entree doit porter sa preuve.
+    """
+
+    etapes: tuple[Etape, ...]
+    deja_prouvees: frozenset[str]
+    motif: str
+    revision_etat: str = ""
+    revision_courante: str = ""
+
+    @property
+    def utilisable(self) -> bool:
+        return bool(self.etapes)
+
+    @property
+    def sautees(self) -> int:
+        return len(self.deja_prouvees)
+
+
+def lire_etat(chemin: Path) -> dict:
+    """Lit un etat de plan, en refusant de deviner quoi que ce soit.
+
+    On rend le dictionnaire BRUT, et l'appelant decide. Une fonction qui « repare » un fichier
+    tronque ferait exactement ce que ce module interdit : inventer un plan que personne n'a
+    ecrit.
+    """
+    donnees = json.loads(chemin.read_text(encoding="utf-8"))
+    if not isinstance(donnees, dict):
+        raise ValueError("l'etat n'est pas un objet JSON")
+    return donnees
+
+
+def reprendre(chemin: Path, *_, revision_courante: str = "") -> Reprise:
+    """Decide de quoi reprendre un plan interrompu, et pourquoi.
+
+    Regle unique, et elle est stricte : **une reprise ne fait jamais confiance a une preuve
+    obtenue dans un autre monde.** Si la revision a bouge, on rejoue tout — et on le dit. Si le
+    fichier d'etat ne dit pas sur quelle revision il a ete obtenu, c'est un etat d'avant la
+    revision : meme traitement.
+    """
+    if not chemin.is_file():
+        return Reprise((), frozenset(), f"aucun etat a reprendre ({chemin} absent)")
+
+    try:
+        donnees = lire_etat(chemin)
+    except (OSError, ValueError) as exc:
+        return Reprise((), frozenset(), f"etat illisible ({exc}) : reprendre serait deviner")
+
+    brut = donnees.get("etapes") or []
+    etapes: list[Etape] = []
+    for index, item in enumerate(brut, start=1):
+        try:
+            etapes.append(Etape(
+                id=str(item.get("id") or f"E{index:02d}"),
+                objectif=str(item.get("objectif") or ""),
+                preuve=str(item.get("preuve") or ""),
+            ))
+        except AttributeError:
+            continue
+    if not etapes:
+        return Reprise((), frozenset(), "l'etat ne contient aucune etape : rien a reprendre")
+
+    etat = str(donnees.get("etat") or "")
+    revision_etat = str(donnees.get("revision") or "")
+
+    if etat == "termine":
+        return Reprise(
+            tuple(etapes), frozenset(e.id for e in etapes),
+            "plan deja TERMINE : rien a reprendre",
+            revision_etat, revision_courante,
+        )
+
+    if not revision_etat or revision_etat != revision_courante:
+        raison = (
+            "l'etat n'indique pas la revision du depot"
+            if not revision_etat
+            else f"revision differente ({revision_etat[:8]} -> {revision_courante[:8]})"
+        )
+        return Reprise(
+            tuple(etapes), frozenset(),
+            f"{raison} : les preuves obtenues decrivent un monde qui n'existe plus, "
+            "donc le plan est rejoue ENTIER (rien n'est cru sur parole)",
+            revision_etat, revision_courante,
+        )
+
+    # Même revision : on saute ce qui a ete PROUVE, et rien d'autre. Une etape bloquee ou non
+    # tentee est rejouee — c'est le sens d'une reprise.
+    prouvees = frozenset(
+        str(item.get("id")) for item in brut
+        if isinstance(item, dict) and item.get("etat") == "prouvee" and item.get("preuve")
+    )
+    return Reprise(
+        tuple(etapes), prouvees,
+        f"revision identique ({revision_courante[:8]}) : {len(prouvees)} etape(s) deja prouvee(s) "
+        "sont sautees, le reste est rejoue",
+        revision_etat, revision_courante,
     )
 
 

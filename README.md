@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 914 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 921 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -29,6 +29,8 @@ jio clarify "<objectif>"      # les 0 à 3 questions ESSENTIELLES — code 3 : i
 jio run "<objectif>"          # mission complète : preuve, panel, consensus, réserves nommées
 jio auto "<objectif>"         # travaille SEUL, étape par étape : chaque étape doit porter sa
                               # preuve ; une étape sans preuve est REFUSÉE, un échec ARRÊTE
+jio auto --reprendre          # continue le plan interrompu : les étapes déjà prouvées sont
+                              # sautées SI la révision git n'a pas bougé (sinon : tout rejouer)
 jio coherence                 # LES SEPT CONTRÔLES : artefacts, chiffres, documents, commandes
                               # citées, variables d'environnement, portes du paquet, plan
                               # en suspens — code 0 seulement si TOUT est encore vrai
@@ -1132,7 +1134,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 914 tests verts -> 914 tests verts
+         - README.md ligne 15 : 921 tests verts -> 921 tests verts
 ```
 
 Trois propriétés rendent ce portail utilisable plutôt que décoratif :
