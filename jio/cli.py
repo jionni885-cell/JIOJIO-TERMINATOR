@@ -2068,6 +2068,31 @@ def cmd_memory(args: argparse.Namespace) -> int:
         print(f"  enregistre : {rec.fingerprint} (evenement {rec.seq})")
         print()
         return 0
+    if args.integrity:
+        # Sortie MACHINE : une phrase, un code. C'est ce qu'un pre-commit ou une CI peut lire,
+        # et c'est la seule raison d'avoir une option distincte du rapport.
+        #
+        # `notices` compte autant que la chaine : le CHARGEMENT a pu REFUSER un fichier
+        # (chaine cassee, fichier illisible) et le mettre en quarantaine — le fichier actif est
+        # alors vide et parfaitement valide. Se fier au seul `verify()` aurait donc affiche
+        # « chaine valide » sur une memoire qui vient d'etre rejetee : un vert sur un fichier
+        # ecarte. Toute notice signifie qu'une memoire a ete refusee ; c'est un echec du
+        # controle, pas un detail.
+        ok, cassee = memory.verify()
+        if ok and not memory.journal.notices:
+            print(f"  integrite : chaine valide ({memory.size} evenement(s), tete {memory.head})")
+            return 0
+        for notice in memory.journal.notices:
+            print(f"  INTEGRITE : {notice}", file=sys.stderr)
+        if not ok:
+            print(f"  INTEGRITE : CHAINE CASSEE @ {cassee} — le fichier a ete reecrit hors de JIO.",
+                  file=sys.stderr)
+        print("  La chaine est la preuve que rien n'a ete modifie en silence : une rupture ne se",
+              file=sys.stderr)
+        print("  repare pas, elle s'inspecte. Le fichier refuse est CONSERVE (suffixe",
+              file=sys.stderr)
+        print("  `.corrompu-<horodatage>`) : comparez-le, puis decidez.", file=sys.stderr)
+        return 1
     if args.recall:
         found = memory.recall(args.recall)
         print(f"  rappel pour : {args.recall}")
@@ -3080,6 +3105,13 @@ def build_parser() -> argparse.ArgumentParser:
     me = sub.add_parser("memory", help="memoire des echecs (rappel, ajout, integrite)")
     me.add_argument("--state", default=".jio/failures.jsonl", help="journal de memoire")
     me.add_argument("--recall", default="", help="objectif pour rappeler les souvenirs")
+    # L'option existait dans le rapport (« integrite : chaine valide ») mais pas dans la
+    # commande : un utilisateur qui voulait VERIFIER la chaine — et obtenir un code de sortie
+    # exploitable en CI — tombait sur `error: unrecognized arguments: --integrity`, code 2,
+    # apres avoir lu que l'integrite etait quelque chose que l'outil savait dire.
+    me.add_argument("--integrity", action="store_true",
+                    help="verifie la chaine d'integrite et sort en 1 si elle est cassee "
+                         "(pour un pre-commit ou une CI)")
     me.add_argument("--add", action="store_true", help="enregistre un echec")
     me.add_argument("--objective", default="", help="objectif concerne")
     me.add_argument("--symptom", default="", help="ce qui a ete observe")

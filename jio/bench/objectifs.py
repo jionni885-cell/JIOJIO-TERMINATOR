@@ -255,6 +255,31 @@ CORPUS: tuple[Objectif, ...] = (
         "le meme mandat, mais BORNE : « 3 cycles » est un critere d'arret. Un mandat qui dit ou "
         "il s'arrete doit partir au travail, pas se faire interroger",
     ),
+    # Les trois objectifs suivants viennent d'un DEFAUT trouve en cherchant ailleurs : le verbe
+    # « fusionner » manquait a la table francaise, et « sans casser les tests » — le critere le
+    # plus ecrit en francais — n'etait reconnu que par accident (via le motif des unites, quand
+    # la phrase disait « de tests »). Ces trois phrases sont ecrites ici pour que le banc les
+    # tienne : sans elles, les deux trous pouvaient se rouvrir sans qu'aucune mesure ne bouge.
+    Objectif(
+        "fusionner jio/bench/temes.py et jio/bench/objectifs.py sans casser les tests",
+        True, frozenset(),
+        "action (fusionner) + DEUX cibles (chemins) + critere (« sans casser les tests »). Le "
+        "verbe inconnu laissait la place au mot « tests » plus loin dans la phrase : la porte "
+        "annoncait une action que l'utilisateur n'avait pas ecrite",
+    ),
+    Objectif(
+        "fusionne les deux modules de calcul dans jio/core/math.py, la suite doit rester verte",
+        True, frozenset(),
+        "la meme action, en imperatif, avec cible et critere : la porte sortait avec « aucune "
+        "action reconnue » ET une question d'action sur un objectif qui nomme son action",
+    ),
+    Objectif(
+        "fix jio/verify/entropy.py without breaking the tests",
+        True, frozenset(),
+        "anglais, action + cible + critere : « without breaking the tests » est le meme critere "
+        "que « sans casser les tests », et la porte ne le connaissait dans aucune des deux "
+        "langues",
+    ),
     Objectif(
         "corrige le calcul de moyenne dans le rapport hebdo pour qu'il compte les jours feries",
         True, frozenset(),

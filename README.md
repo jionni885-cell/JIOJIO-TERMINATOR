@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 963 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 965 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -46,7 +46,7 @@ trois questions, et chaque question porte la conséquence de ne pas y répondre 
 l'hypothèse prise à défaut : `jio clarify --strict` sort en **3** et la mission ne commence pas.
 
 La porte est elle-même **mesurée** sur un banc d'objectifs réels annotés à la main
-(`jio clarify --mesure`) : **38 objectifs, 0 faux positif, 0 faux négatif**. Le banc lit les
+(`jio clarify --mesure`) : **41 objectifs, 0 faux positif, 0 faux négatif**. Le banc lit les
 signaux dans **les deux sens** — voir ce qui manque, et ne pas croire manquant ce qui est écrit —
 et il compte les **questions posées**, seul coût que l'utilisateur ressent, plutôt qu'un booléen
 intermédiaire. Six objectifs du terrain (les mandats de boucle réels de ce dépôt, un mandat
@@ -1169,7 +1169,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 963 tests verts -> 963 tests verts
+         - README.md ligne 15 : 965 tests verts -> 965 tests verts
 ```
 
 ### `--reparer` : réparer le mécanique, nommer le reste

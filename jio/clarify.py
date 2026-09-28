@@ -80,6 +80,15 @@ _ACTIONS: dict[str, str] = {
     "refactoriser": "transformation",
     "refactor": "transformation",
     "renommer": "transformation",
+    # « fusionner » manquait, et le trou etait visible en une commande. DEUX defauts pour un
+    # seul mot absent, mesures tous les deux :
+    #   * « fusionne les deux modules ... la suite doit rester verte » sortait avec « aucune
+    #     action reconnue » ET une question d'action — sur un objectif qui nomme son action ;
+    #   * « fusionner X et Y sans casser les tests » etait lu comme une action « tests » : le
+    #     verbe INCONNU laissait la place a un mot plus loin dans la phrase, et la porte
+    #     annoncait une action que l'utilisateur n'avait pas ecrite. Pire qu'une action
+    #     manquante : une lecture fausse presentee comme une lecture.
+    "fusionner": "transformation",
     "migrer": "transformation",
     "supprimer": "transformation",
     "simplifier": "transformation",
@@ -216,6 +225,16 @@ _CRITERES = (
     # motif « (pour|afin) que » ne couvrait pas. Mesure : l'objectif sortait avec la question
     # « comment saura-t-on que c'est fini ? » alors qu'il venait de le dire.
     re.compile(r"\b(pour|afin)\s+qu['\u2019]"),
+    # « sans casser les tests », « sans rien casser », « sans casser l'existant » : en francais,
+    # c'est le critere le PLUS ecrit, et il n'etait reconnu qu'PAR ACCIDENT. Quand la phrase
+    # contenait « de tests » (« sans casser la suite de tests »), le motif des UNITES
+    # (« en points de reussite », « de tests ») le prenait pour une unite — et l'objectif etait
+    # juge borne par un motif ecrit pour autre chose. Les six autres formulations mesuraient le
+    # defaut : « corrige X sans casser les tests » et « fix X without breaking the tests »
+    # sortaient tous les deux avec la question « comment saura-t-on que c'est FINI ? », a des
+    # objectifs qui venaient de repondre.
+    re.compile(r"\bsans\s+(?:rien\s+)?cass\w*"),
+    re.compile(r"\bwithout\s+breaking\b"),
     re.compile(r"\b(attendu|verifiable?|prouve|preuve|critere|seuil|borne)\b"),
     re.compile(r"\b(doit|devra|doivent)\b"),
     # « en points de reussite », « en missions », « en appels » : l'unite annoncee EST le

@@ -97,6 +97,17 @@ CHIFFRES: tuple[Chiffre, ...] = (
         motif=r"[Ll]es (\d+) agents",
         description="les agents generes (jio/artifacts/definitions.py)",
     ),
+    # Le banc d'objectifs est entre dans le README comme un argument (« 0 faux positif, 0 faux
+    # negatif »), avec son nombre. Ce nombre etait le seul chiffre du README que RIEN ne
+    # mesurait : il a donc pu passer de 38 a 41 sans que le controle des nombres bronche —
+    # exactement le defaut que ce module existe pour supprimer. Trois objectifs y sont entres
+    # le jour ou la porte a appris a lire « fusionner » et « sans casser les tests » ; la
+    # phrase du README, elle, annoncait toujours 38.
+    Chiffre(
+        nom="objectifs",
+        motif=r"(\d+) objectifs",
+        description="le banc d'objectifs de la porte de clarification (jio/bench/objectifs.py)",
+    ),
 )
 
 
@@ -135,10 +146,16 @@ def mesurer(racine: Path | str) -> dict[str, int]:
     plutot qu'une estimation de ce module.
     """
     racine = Path(racine)
+    # `objectifs` : import LOCAL, comme partout ailleurs dans ce depot. Le banc d'objectifs
+    # importe la porte de clarification, qui importe ce qu'elle veut de verifier : un import
+    # en tete de module ferait dependre le comptage des chiffres de toute la chaine.
+    from .bench.objectifs import CORPUS
+
     return {
         "tests": _compter_tests(racine),
         "competences": len(SKILLS),
         "agents": len(AGENTS),
+        "objectifs": len(CORPUS),
     }
 
 
@@ -183,6 +200,16 @@ def ecarts(texte: str, mesures: dict[str, int]) -> list[Ecart]:
     hors_controle, _ = zones_hors_controle(texte)
     lignes = texte.splitlines()
     for chiffre in CHIFFRES:
+        if chiffre.nom not in mesures:
+            # Un appelant a le droit de ne mesurer QU'UNE PARTIE des grandeurs : c'est ce que
+            # font les tests de la reparation, qui travaillent sur un document de trois lignes.
+            # Exiger la mesure complete levait un KeyError sur un appel parfaitement legitime.
+            #
+            # Mais ce saut doit rester MESURE, sinon il devient le silence qu'un controle
+            # existe pour empecher. La couverture de `mesurer()` est donc verrouillee par
+            # `test_mesurer_couvre_TOUS_les_chiffres_surveilles` : un chiffre surveille qui
+            # n'est pas mesure pour de vrai fait echouer la suite.
+            continue
         motif = re.compile(chiffre.motif)
         vu_quelque_part = False
         for indice, ligne in enumerate(lignes, start=1):
@@ -259,6 +286,11 @@ def reparer(
     hors_controle, raisons = zones_hors_controle(original)
     remplacements = 0
     for chiffre in CHIFFRES:
+        if chiffre.nom not in mesures:
+            # Meme regle que dans `ecarts` : ce qu'on ne mesure pas, on ne le reecrit pas.
+            # Les deux fonctions SAUTENT la meme chose, sinon la reparation ecrirait la ou le
+            # controle ne regarde pas — exactement le trou que le test suivant interdit.
+            continue
         motif = re.compile(chiffre.motif)
         attendue = mesures[chiffre.nom]
         for indice, ligne in enumerate(lignes):

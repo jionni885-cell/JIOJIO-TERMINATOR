@@ -16,6 +16,8 @@ ecrite est une question de confort, et ce test la refuse.
 
 from __future__ import annotations
 
+import inspect
+
 from jio.clarify import MAX_QUESTIONS, analyser, formater, resume
 
 #: Un objectif VAGUE : un souhait, sans cible, sans critere, sans perimetre.
@@ -208,7 +210,7 @@ def test_le_formateur_n_ampute_jamais_une_question() -> None:
 
 
 def test_la_porte_ne_se_trompe_sur_AUCUN_objectif_du_banc() -> None:
-    """Sur 37 objectifs reels annotes a la main : 0 faux positif, 0 faux negatif.
+    """Sur 41 objectifs reels annotes a la main : 0 faux positif, 0 faux negatif.
 
     C'est le test le plus important de ce fichier. Une porte de clarification qui demande a
     tort aprend a l'utilisateur a l'ignorer ; une porte qui ne demande pas quand il faut
@@ -228,6 +230,17 @@ def test_la_porte_ne_se_trompe_sur_AUCUN_objectif_du_banc() -> None:
     assert rapport.signaux_en_trop == 0, "\n".join(rapport.erreurs)
     assert rapport.precision == 1.0 and rapport.rappel == 1.0
     assert rapport.max_questions <= MAX_QUESTIONS
+    # ET le nombre annonce dans la docstring ci-dessus est verifie. Ce chiffre a deja menti
+    # une fois (il annoncait 37 pour 38) : un nombre ecrit dans un test qui MESURE est le
+    # pire endroit pour un nombre faux, parce qu'il est lu comme une mesure. Il est
+    # desormais mesure lui aussi — la docstring se relit avec le banc."""
+    nombre = f"Sur {len(CORPUS)} objectifs"
+    texte = inspect.getdoc(test_la_porte_ne_se_trompe_sur_AUCUN_objectif_du_banc) or ""
+    assert texte.startswith(nombre), (
+        f"la docstring annonce {texte.splitlines()[0][:40]!r} et le banc en compte "
+        f"{len(CORPUS)} : `jio chiffres --appliquer` ne corrige pas les docstrings, "
+        "corrigez-la a la main"
+    )
 
 
 def test_le_banc_contient_LES_DEUX_cas_et_des_objectifs_des_deux_langues() -> None:

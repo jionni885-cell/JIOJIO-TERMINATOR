@@ -255,3 +255,31 @@ def test_la_reparation_n_ecrit_jamais_dans_une_zone(tmp_path: Path) -> None:
     assert "187 tests verts (autrefois)" in resultat, "le recit a ete reecrit"
     assert "533 tests verts\n" in resultat, "l'affirmation du jour n'a pas ete corrigee"
     assert "zone(s) hors controle" in message, "l'exemption n'est pas citee dans le rapport"
+
+
+def test_mesurer_couvre_TOUS_les_chiffres_surveilles() -> None:
+    """Le saut de `ecarts` doit rester MESURE, sinon il devient le silence qu'on combat.
+
+    `ecarts` et `reparer` sautent un chiffre qui n'est pas dans le dictionnaire de mesures :
+    les tests de reparation travaillent sur un document de trois lignes et n'ont pas a
+    mesurer le banc d'objectifs. Mais ce saut ouvre une porte : un chiffre SURVEILLE que
+    `mesurer()` n'alimente pas serait saute dans le depot REEL, et le controle de
+    documentation deviendrait vert sans rien verifier — précisement le defaut que ce module
+    existe pour supprimer (« un controle qui ne trouve plus rien a verifier devient vert
+    sans rien prouver »).
+
+    Ce test ferme cette porte : il compare l'ENSEMBLE des noms surveilles a l'ensemble
+    reellement mesure sur le depot. Ajouter un chiffre a `CHIFFRES` sans l'ajouter a
+    `mesurer()` casse ici, pas six mois plus tard dans un README faux.
+    """
+    surveilles = {c.nom for c in CHIFFRES}
+    mesures = set(mesurer(Path(__file__).resolve().parents[1]))
+
+    assert surveilles <= mesures, (
+        "ces chiffres sont surveilles dans les documents mais AUCUNE mesure ne les alimente : "
+        f"{sorted(surveilles - mesures)} — `jio chiffres` sauterait leur controle en silence."
+    )
+    # Et dans l'autre sens : une mesure que personne ne surveille est du travail mort.
+    assert mesures <= surveilles, (
+        f"mesures sans chiffre surveille : {sorted(mesures - surveilles)}"
+    )
