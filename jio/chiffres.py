@@ -271,9 +271,11 @@ def reparer(
     if not reparables:
         if not trouves:
             return 0, [], f"aucun ecart : {chemin.name} dit vrai."
-        return 0, trouves, (
+        return 1, trouves, (
             f"rien a corriger dans {chemin.name} : les valeurs annoncees sont justes, mais "
-            f"{len(trouves)} chiffre(s) n'apparaisse(nt) plus sous la forme surveillee."
+            f"{len(trouves)} chiffre(s) n'apparaisse(nt) plus sous la forme surveillee — "
+            "a ecrire, ou a retirer du controle. Un controle qui ne trouve plus rien a "
+            "verifier devient vert sans rien prouver."
         )
 
     if not ecrire:
@@ -357,6 +359,13 @@ def reparer(
     if signalements:
         message += (
             f" · {len(signalements)} chiffre(s) reste(nt) sans mention surveillee "
-            "(a ecrire, ou a retirer du controle)"
+            "(a ecrire, ou a retirer du controle) — le fichier a bien ete ECRIT, c'est le "
+            "document qui reste incomplet"
         )
-    return 0, [], message
+    # LE CODE DE SORTIE DIT CE QUE VAUT LE DOCUMENT, PAS CE QUE LA REPARATION A FAIT.
+    # Mesure a l'origine : un chiffre surveille qui n'apparait PLUS nulle part faisait sortir
+    # `jio chiffres` en 0 — « tout va bien » — alors que `jio coherence` traite exactement le
+    # meme constat comme une incoherence et sort en 1. Deux commandes qui mesurent la meme
+    # chose ne peuvent pas rendre deux verdicts opposes : celle qu'on met dans un pre-commit
+    # serait celle qui se tait.
+    return (1 if signalements else 0), signalements, message

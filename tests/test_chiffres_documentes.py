@@ -111,7 +111,10 @@ def test_un_chiffre_qui_disparait_est_signale(mesures: dict[str, int]) -> None:
 
 def test_la_reparation_corrige_et_sauvegarde(tmp_path: Path) -> None:
     cible = tmp_path / "doc.md"
-    original = "**Statut :** 187 tests verts, et les 3 compétences.\n"
+    # Le document DECLARE les trois grandeurs mesurees : sinon le controle signalerait, a
+    # juste titre, que « les 3 agents » n'apparait nulle part — et ce test mesure la
+    # reparation, pas le signalement (il a son propre test plus bas).
+    original = "**Statut :** 187 tests verts, et les 3 compétences, et les 2 agents.\n"
     cible.write_text(original, encoding="utf-8")
     mesures = {"tests": 533, "competences": 11, "agents": 7}
 
@@ -121,6 +124,7 @@ def test_la_reparation_corrige_et_sauvegarde(tmp_path: Path) -> None:
     assert not restants
     assert "533 tests verts" in cible.read_text(encoding="utf-8")
     assert "les 11 compétences" in cible.read_text(encoding="utf-8")
+    assert "les 7 agents" in cible.read_text(encoding="utf-8")
     sauvegarde = tmp_path / "doc.md.avant-jio"
     assert sauvegarde.read_text(encoding="utf-8") == original
 
@@ -283,3 +287,75 @@ def test_mesurer_couvre_TOUS_les_chiffres_surveilles() -> None:
     assert mesures <= surveilles, (
         f"mesures sans chiffre surveille : {sorted(mesures - surveilles)}"
     )
+
+
+def test_un_chiffre_qui_n_apparait_PLUS_NULLE_PART_nest_pas_un_succes(tmp_path: Path) -> None:
+    """Un controle qui ne trouve plus rien a verifier devient vert sans rien prouver.
+
+    Mesure a l'origine : un chiffre surveille qui disparaissait entierement du document
+    faisait sortir `jio chiffres` en **0** — « tout va bien » — alors que `jio coherence`
+    traite exactement le meme constat comme une incoherence et sort en **1**. Deux commandes
+    qui mesurent la meme chose ne peuvent pas rendre deux verdicts opposes : celle qu'on met
+    dans un pre-commit serait justement celle qui se tait.
+    """
+    mesures = {"tests": 533, "competences": 11, "agents": 7}
+
+    # 1. Un chiffre mesure dont le document ne parle PLUS : ce n'est pas « rien a faire ».
+    cible = tmp_path / "doc.md"
+    cible.write_text("les 11 compétences, les 7 agents\n", encoding="utf-8")
+    code, trouves, message = reparer(cible, mesures)
+    assert code == 1, message
+    assert [e.nom for e in trouves] == ["tests"]
+    assert "n'apparait" in message or "n'apparaisse" in message
+    # Rien n'a ete ecrit : il n'y avait rien de mecanique a corriger.
+    assert not (tmp_path / "doc.md.avant-jio").exists()
+
+    # 2. Une valeur PERIMEE et une mention MANQUANTE dans le meme document : la partie
+    #    mecanique doit avoir lieu, et le code doit quand meme dire que le document reste
+    #    incomplet — les deux informations sont distinctes, et les confondre ferait perdre
+    #    l'une ou l'autre.
+    cible.write_text("187 tests verts\nles 11 compétences\n", encoding="utf-8")
+    code, restants, message = reparer(cible, mesures, ecrire=True)
+    assert "533 tests verts" in cible.read_text(encoding="utf-8"), "la valeur perimee n'a pas ete ecrite"
+    assert [e.nom for e in restants] == ["agents"], [str(e) for e in restants]
+    assert code == 1, message
+    assert "a bien ete ECRIT" in message, message
+
+
+def test_chiffres_et_coherence_rendent_le_MEME_verdict_sur_le_meme_document(
+    tmp_path: Path,
+) -> None:
+    """L'invariant qui manquait, verifie sur les deux commandes a la fois.
+
+    `jio chiffres` et le controle `nombres` de `jio coherence` mesurent la MEME chose. Tant
+    qu'ils peuvent diverger, l'un des deux ment — et c'est celui qu'on met dans un pre-commit
+    qui decide lequel. On verifie donc l'equivalence, dans les trois etats d'un document :
+    juste, perime, et ampute d'une mention.
+
+    Le depot de test est CONSTRUIT pour etre mesurable : un fichier de test reel (sinon
+    `mesurer` refuse de rendre un chiffre qu'il n'a pas su lire) et un README qui annonce
+    exactement les valeurs mesurees. Un banc qui n'est pas mesurable ne mesure rien.
+    """
+    from jio.verify.coherence import controler
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_rien.py").write_text("def test_ok():\n    assert True\n",
+                                                     encoding="utf-8")
+    mesures = mesurer(tmp_path)
+    juste = (f"{mesures['tests']} tests verts, les {mesures['competences']} compétences, "
+             f"les {mesures['agents']} agents, {mesures['objectifs']} objectifs\n")
+
+    perime = juste.replace(f"{mesures['tests']} tests", f"{mesures['tests'] + 7} tests", 1)
+    ampute = juste.replace(f"{mesures['tests']} tests verts, ", "", 1)   # mention disparue
+    assert perime != juste and ampute != juste, "les deux cas doivent DIFFERER du document juste"
+
+    cible = tmp_path / "README.md"
+    for contenu, coherent in ((juste, True), (perime, False), (ampute, False)):
+        cible.write_text(contenu, encoding="utf-8")
+        code = reparer(cible, mesures)[0]
+        constat = next(c for c in controler(tmp_path).constats if c.controle == "nombres")
+        assert constat.portee, "le controle doit etre DANS sa portee, sinon il ne juge rien"
+        assert (code == 0) == bool(constat.ok) == coherent, (
+            f"desaccord sur {contenu!r} : `jio chiffres` code={code}, "
+            f"coherence nombres ok={constat.ok} ({constat.resume[:80]})"
+        )

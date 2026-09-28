@@ -690,25 +690,34 @@ def reparer(
                     chemin = base / nom
                     if not chemin.is_file():
                         continue
-                    absents = [
-                        e for e in ecarts_chiffres(
-                            chemin.read_text(encoding="utf-8", errors="replace"), mesures
-                        )
-                        if e.ligne == 0
-                    ]
+                    avant_ici = ecarts_chiffres(
+                        chemin.read_text(encoding="utf-8", errors="replace"), mesures
+                    )
+                    absents = [e for e in avant_ici if e.ligne == 0]
+                    perimes = [e for e in avant_ici if e.reparable]
+
                     code, restants_ici, message = reparer_chiffres(chemin, mesures, ecrire=True)
-                    if code == 0 and not restants_ici:
+                    # DEUX QUESTIONS DIFFERENTES, et les confondre faisait disparaitre un fait :
+                    #   * la partie MECANIQUE a-t-elle eu lieu ? Elle a eu lieu si des valeurs
+                    #     etaient perimees et qu'aucune ne l'est plus apres l'ecriture ;
+                    #   * le DOCUMENT est-il coherent ? Non, s'il reste un chiffre sans mention.
+                    # Le code de sortie repond a la seconde (c'est ce qu'une CI lit) ; compter les
+                    # faits avec lui faisait passer une reparation REUSSIE pour un echec des
+                    # qu'une mention manquait quelque part dans le document.
+                    mecanique_faite = bool(perimes) and not any(e.reparable for e in restants_ici)
+                    if mecanique_faite:
                         faits.append(f"nombres : {nom} — {raison}")
-                    else:
-                        restants.append(f"nombres : {nom} — {message[:90]}")
-                    # Deux cas differents, et les confondre ferait perdre le second : une valeur
-                    # PERIMEE se reecrit (mecanique), un chiffre qui n'apparait NULLE PART demande
-                    # de decider s'il faut l'ecrire dans le document ou retirer le controle.
+                    elif perimes:
+                        restants.append(f"nombres : {nom} — rien n'a ete ecrit : {message[:90]}")
+                    # Un chiffre qui n'apparait NULLE PART demande de decider s'il faut l'ecrire
+                    # dans le document ou retirer le controle : ce n'est pas mecanique.
                     for absent in absents:
                         restants.append(
                             f"nombres : {nom} n'annonce nulle part « {absent.nouveau} » — "
                             "l'ecrire dans le document, ou retirer ce controle"
                         )
+                    if not code and not absents and not perimes:
+                        faits.append(f"nombres : {nom} — {raison} (deja juste)")
             continue
         motif = DECISIONS_HUMAINES.get(constat.controle, "ce constat demande une decision")
         restants.append(f"{constat.controle} : {motif} — {constat.resume[:80]}")
