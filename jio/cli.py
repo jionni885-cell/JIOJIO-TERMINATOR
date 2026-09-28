@@ -3262,6 +3262,23 @@ def build_parser() -> argparse.ArgumentParser:
     sk.add_argument("--json", action="store_true", help="verdict lisible par une machine")
     sk.set_defaults(func=cmd_skills)
 
+    so = sub.add_parser(
+        "sorties",
+        help="les exemples de sortie declares dans les documents sont-ils ENCORE la sortie "
+             "reelle des outils ?",
+    )
+    so.add_argument("--root", default=".", help="racine du depot (.)")
+    so.add_argument("--document", default="",
+                    help="un seul document (defaut : les documents du depot)")
+    so.add_argument("--appliquer", action="store_true",
+                    help="reecrire les blocs `sortie-exacte` perimes, avec sauvegarde "
+                         "`.avant-jio`. Les extraits ne sont JAMAIS reecrits : choisir les "
+                         "lignes a montrer demanderait de deviner l'intention")
+    so.add_argument("--liste", action="store_true",
+                    help="ce que chaque document promet, sans rien executer")
+    so.add_argument("--json", action="store_true", help="verdict lisible par une machine")
+    so.set_defaults(func=cmd_sorties)
+
     co = sub.add_parser(
         "coherence",
         help="LES NEUF CONTROLES d'un coup : tout ce que ce depot affirme est-il encore vrai ?",
@@ -3625,6 +3642,122 @@ def cmd_skills(args: argparse.Namespace) -> int:
     print(f"  cout d'injection : {cout(choix)} jetons, contre {fiches} pour la fiche tier 0 des 12")
     print("  competences et environ 6424 pour leurs corps : le choix est ce qui rend la")
     print("  bibliotheque abordable, pas sa taille.")
+    print()
+    return 0
+
+
+def cmd_sorties(args: argparse.Namespace) -> int:
+    """`jio sorties` : les exemples de sortie des documents contre la sortie REELLE.
+
+    Un document qui montre `jio artifacts --budget` affirme ce que l'outil repond. Cette
+    affirmation vieillit toute seule : elle est longue, datee, pleine de chiffres, et personne
+    ne relit une capture d'ecran. Ce depot en a fait l'experience — le README annoncait
+    « 11 fichier(s), ~5715 jetons » alors que l'outil disait 12 et 6424, pendant que la porte
+    annoncait neuf controles verts.
+
+    Un `<!-- sortie: jio ... -->` est donc un CONTRAT : soit les lignes montrees se retrouvent
+    dans la sortie reelle (extrait, coupures declarees par `...`), soit le document est faux.
+    Les commandes sont executees en LISTE d'arguments, sans shell, et seules les commandes
+    `jio` sans option d'ecriture sont acceptees : un document est un contenu hostile par defaut.
+    """
+    import json as _json
+
+    from .verify.sorties import blocs, liste as lister, reparer, verifier
+
+    racine = Path(getattr(args, "root", ".") or ".").expanduser()
+    document = (getattr(args, "document", "") or "").strip()
+
+    if document:
+        chemins = [Path(document) if Path(document).is_absolute() else racine / document]
+    else:
+        from .verify.coherence import _documents
+
+        chemins = [c for c in _documents(racine)]
+    chemins = [c for c in chemins if c.is_file()]
+
+    if getattr(args, "liste", False):
+        print()
+        print("  CE QUE CHAQUE DOCUMENT PROMET  ·  aucun effet de bord")
+        print()
+        total = 0
+        for chemin in chemins:
+            lignes = lister(chemin.read_text(encoding="utf-8", errors="replace"))
+            if not lignes:
+                continue
+            print(f"    {chemin.name}")
+            for ligne in lignes:
+                print(f"    {ligne}")
+            total += len(lignes)
+        print()
+        print(f"    TOTAL : {total} exemple(s) declare(s) sur {len(chemins)} document(s)")
+        if not total:
+            print("    Un exemple non declare n'est verifie par RIEN : c'est ainsi qu'un")
+            print("    README a pu annoncer « 11 fichier(s), ~5715 jetons » sans que")
+            print("    personne ne le relise.")
+        print()
+        return 0
+
+    if getattr(args, "appliquer", False):
+        code_total = 0
+        print()
+        for chemin in chemins:
+            code, signalements, message = reparer(chemin, racine)
+            code_total = max(code_total, code)
+            print(f"    [{ 'ok ' if code == 0 else 'ko ' }] {chemin.name} : {message}")
+            for signalement in signalements[:8]:
+                print(f"          {signalement}")
+        print()
+        return code_total
+
+    divergences: list[tuple[str, str]] = []
+    total_blocs = 0
+    for chemin in chemins:
+        texte = chemin.read_text(encoding="utf-8", errors="replace")
+        total_blocs += len(blocs(texte))
+        for divergence in verifier(texte, racine):
+            divergences.append((chemin.name, str(divergence)))
+
+    if getattr(args, "json", False):
+        print(_json.dumps(
+            {
+                "documents": [str(c) for c in chemins],
+                "blocs": total_blocs,
+                "divergences": [{"document": d, "detail": t} for d, t in divergences],
+            },
+            ensure_ascii=False, indent=2,
+        ))
+        return 1 if divergences else 0
+
+    print()
+    print("  EXEMPLES DE SORTIE D'OUTIL  ·  ce que le document montre est-il encore vrai ?")
+    print()
+    if not total_blocs:
+        print("    aucun exemple declare dans ces documents.")
+        print()
+        print("    Un bloc se declare en nommant la commande qui doit le produire :")
+        print()
+        print("        <!-- sortie: jio artifacts --budget -->")
+        print("        ... les lignes de la sortie ...")
+        print("        <!-- /sortie -->")
+        print()
+        print("    `sortie:` accepte un extrait, les coupures etant declarees par `...` ;")
+        print("    `sortie-exacte:` exige la sortie complete (celui-la se repare tout seul).")
+        print()
+        return 0
+    if divergences:
+        print(f"    {len(divergences)} bloc(s) sur {total_blocs} ne correspondent plus :")
+        print()
+        for document, detail in divergences[:10]:
+            print(f"    {document} · {detail}")
+        print()
+        print("    Relancez avec --appliquer pour reecrire les blocs `sortie-exacte`.")
+        print("    Les extraits ne sont pas reecrits : choisir les lignes a montrer")
+        print("    demanderait de deviner — le document doit etre corrige a la main.")
+        print()
+        return 1
+    print(f"    {total_blocs} exemple(s) verifie(s) : chacun est un EXTRAIT fidele de la")
+    print("    sortie reelle de sa commande. Les lignes sautees sont celles declarees par")
+    print("    `...`, et les commandes tournent sans shell, en liste d'arguments.")
     print()
     return 0
 

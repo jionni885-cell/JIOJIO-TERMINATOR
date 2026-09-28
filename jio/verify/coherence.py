@@ -228,8 +228,16 @@ def _controle_nombres(racine: Path) -> Constat:
 
 
 def _controle_documents(racine: Path) -> Constat:
-    """Les faits verifiables des documents tiennent-ils ? (calculs, blocs Python, chemins)"""
+    """Les faits verifiables des documents tiennent-ils ? (calculs, blocs Python, chemins)
+
+    Ce controle porte AUSSI les exemples de sortie declares (`<!-- sortie: jio ... -->`). Ils
+    sont exactement de la meme nature que le reste : une affirmation du document, verifiable
+    contre l'outil. Un dixieme controle aurait separe deux choses que l'utilisateur lit au meme
+    endroit — et le README a deja affirme « 11 fichier(s), ~5715 jetons » pendant que la porte
+    annoncait neuf controles verts.
+    """
     from .claims import verifier
+    from .sorties import blocs, verifier as verifier_sorties
 
     cibles = _documents(racine)
     if not cibles:
@@ -237,16 +245,23 @@ def _controle_documents(racine: Path) -> Constat:
                        portee=False)
     refutations: list[str] = []
     verifies = 0
+    sorties = 0
     for chemin in cibles:
-        rapport = verifier(chemin.read_text(encoding="utf-8", errors="replace"), racine=racine)
+        texte = chemin.read_text(encoding="utf-8", errors="replace")
+        rapport = verifier(texte, racine=racine)
         verifies += len(rapport.verifications)
         for blocage in rapport.bloquantes[:3]:
             refutations.append(f"{chemin.name} : {str(blocage)[:110]}")
+        for bloc in blocs(texte):
+            sorties += 1
+        for divergence in verifier_sorties(texte, racine)[:3]:
+            refutations.append(f"{chemin.name} : {str(divergence)[:170]}")
     ok = not refutations
     return Constat(
         "documents",
         ok,
         f"{verifies} affirmation(s) verifiee(s) sur {len(cibles)} document(s)"
+        + (f", {sorties} exemple(s) de sortie d'outil verifie(s)" if sorties else "")
         + ("" if ok else f", {len(refutations)} refutee(s)"),
         tuple(refutations[:6]),
     )

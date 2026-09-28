@@ -125,6 +125,9 @@ SURES: dict[str, list[str]] = {
     # `coherence` : les neuf controles sur le depot de test. Elle ne modifie RIEN (elle
     # constate) : c'est ce qui la rend utilisable juste avant un commit.
     "coherence": [],
+    # `sorties` : les exemples de sortie declares des documents, confrontes a l'outil. Sans
+    # document ni bloc declare, elle ENSEIGNE le contrat au lieu de rendre un faux vert.
+    "sorties": [],
     # `skills` : le routeur de competences. Sans objectif, elle dit comment s'en servir et
     # combien coute la bibliotheque — aucune ecriture, aucune dependance au depot courant.
     "skills": [],

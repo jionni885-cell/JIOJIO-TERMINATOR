@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1016 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1037 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -37,6 +37,10 @@ jio coherence                 # LES NEUF CONTRÔLES : artefacts, chiffres, docum
 jio coherence --reparer       # répare ce qui est MÉCANIQUE (artefacts générés, valeurs
                               # mesurées), puis repasse la porte ; tout le reste est nommé, et
                               # un journal cassé n'est JAMAIS « réparé » (pièce à conviction)
+jio skills "<objectif>"       # QUELLES compétences charger pour cet objectif, et pourquoi —
+                              # ou « aucune » ; 39 objectifs de routage mesurent le classement
+jio sorties                   # les exemples de sortie des documents sont-ils ENCORE la sortie
+                              # réelle des outils ? (le README en a menti pendant des semaines)
 ```
 
 `jio clarify` existe pour une seule raison : une IA qui part sans question choisit le
@@ -850,6 +854,7 @@ n'apporte rien — c'est pire que de ne pas l'avoir. Le budget n'existait ici qu
 forme d'un test vert, ce qui ne dit rien à l'utilisateur. `jio artifacts --budget` le rend
 visible :
 
+<!-- sortie: jio artifacts --budget -->
 ```
   CHARGE AU DEMARRAGE — un outil n'en lit qu'UN (celui de son dialecte)
 
@@ -862,8 +867,10 @@ visible :
     Cote d'une session REELLE : ~2117 a 2201 jetons selon l'outil, pas la somme.
 
   DISPONIBLE A LA DEMANDE — competences
+...
     TOTAL : 12 fichier(s), ~6424 jetons (estimation)
 ```
+<!-- /sortie -->
 
 Trois choix de méthode, tous dictés par la même règle :
 
@@ -893,8 +900,7 @@ une sélection **ciblée** bat un résumé du même contenu (la précision en t�
 passe de 0,14 à 0,48). Les 12 compétences tiennent donc en réserve, et une commande répond à
 la seule question qui rend cette réserve utile : *pour cet objectif, lesquelles, et pourquoi ?*
 
-```
-$ jio skills "Ajouter un test qui échoue quand sum_even compte les nombres impairs"
+<!-- sortie: jio skills "Ajouter un test qui échoue quand sum_even compte les nombres impairs" -->
 
   OBJECTIF  Ajouter un test qui échoue quand sum_even compte les nombres impairs
 
@@ -903,10 +909,12 @@ $ jio skills "Ajouter un test qui échoue quand sum_even compte les nombres impa
   2. prose-witnesses  [verification]  score 5.4426  53 jetons
      pourquoi : prose (2.59), claims (1.30), documents (1.30)
 
+...
+
   cout d'injection : 152 jetons, contre 583 pour la fiche tier 0 des 12
   competences et environ 6424 pour leurs corps : le choix est ce qui rend la
   bibliotheque abordable, pas sa taille.
-```
+<!-- /sortie -->
 
 Quatre décisions, et aucune n'est un goût personnel — chacune a été **mesurée** sur un banc de
 **39 objectifs de routage** annotés à la main (`jio skills --banc`), puis payée quand elle
@@ -1217,20 +1225,22 @@ jamais lancé de mission n'a rien à prouver.
 Aucune n'était un bug du code. Toutes étaient des **affirmations devenues fausses** que
 personne ne relisait. `jio coherence` passe neuf contrôles d'un coup et rend **un verdict** :
 
+<!-- prose:hors-controle: illustration datee d'une sortie dont les compteurs bougent a chaque commit (30 artefacts, 70 commandes, 79 fichiers) : la verifier en dur obligerait a reecrire le README a chaque commit, et un exemple fige serait faux le jour suivant. Ce qui est VERIFIABLE, lui, se declare `sortie:` et l'est -->
 ```
   COHERENCE D'ENSEMBLE  ·  ce que ce depot affirme est-il encore vrai ?
-    9 controle(s) en 1.6s  ·  VERDICT : COHERENT : tout ce que ce depot affirme est encore vrai
+    9 controle(s) en 2.2s  ·  VERDICT : COHERENT : tout ce que ce depot affirme est encore vrai
 
     [ok] artefacts     30 artefact(s) generes, tous a jour
-    [ok] nombres       3 chiffre(s) mesure(s)
-    [ok] documents     94 affirmation(s) verifiee(s) sur 5 document(s)
-    [ok] commandes     69 commande(s) citee(s), toutes existantes
-    [ok] competences   12 competence(s) auditee(s), 19 artefact(s) lus, ~5549-7631 jetons
+    [ok] nombres       6 chiffre(s) mesure(s)
+    [ok] documents     99 affirmation(s) verifiee(s) sur 5 document(s), 2 exemple(s) de sortie
+    [ok] commandes     70 commande(s) citee(s), toutes existantes · 3 zone(s) declaree(s) hors
+    [ok] competences   12 competence(s) auditee(s), 39 artefact(s) lus, ~5549-7631 jetons
     [ok] environnement 28 variable(s) lue(s) et documentee(s)
-    [ok] sources       paquet jio/ : 73 fichier(s), 0 constat(s) de lint, 0 d'import
-    [ok] journal       chaine INTEGRE sur 164 evenement(s) — rien n'a ete reecrit
+    [ok] sources       paquet jio/ : 79 fichier(s), 0 constat(s) de lint, 0 d'import
+    [ok] journal       hors de portee : aucun journal dans cette racine
     [ok] plan          aucun plan autonome en cours
 ```
+<!-- /prose:hors-controle -->
 
 Le code de sortie vaut **0 seulement si tout est cohérent** : une IA peut donc s'en servir
 comme arbitre avant de dire « fini », sans lire le texte. Et le texte dit toujours *quoi*
@@ -1238,8 +1248,50 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1016 tests verts -> 1016 tests verts
+         - README.md ligne 15 : 1037 tests verts -> 1037 tests verts
 ```
+
+### Les exemples de sortie sont vérifiés, comme le reste
+
+Le README montrait `jio artifacts --budget` avec « 11 fichier(s), ~5715 jetons » et des
+fichiers de contexte à 136/133/134 lignes. L'outil en disait **12**, **6424**, et 150/145/148.
+La porte annonçait pourtant neuf contrôles verts : elle vérifiait que la commande **citée**
+existe, que les chiffres **comptés** sont justes, que les calculs de la prose tiennent — mais
+pas qu'une **sortie recopiée** est encore la sortie réelle. C'était la seule classe
+d'affirmation du dépôt que rien ne relisait, et la plus fragile : longue, datée, pleine de
+chiffres, et personne ne relit une capture d'écran.
+
+Un bloc se déclare donc en nommant la commande qui doit le produire :
+
+```html
+<!-- sortie: jio artifacts --budget -->
+  CHARGE AU DEMARRAGE — un outil n'en lit qu'UN (celui de son dialecte)
+...
+    TOTAL : 12 fichier(s), ~6424 jetons (estimation)
+<!-- /sortie -->
+```
+
+- `sortie:` — les lignes montrées sont un **extrait** de la sortie réelle, et les coupures
+  sont **déclarées** par `...`. Chaque morceau contigu est cherché dans la sortie, dans
+  l'ordre, après la fin du précédent : un extrait qui remettrait les sections dans un autre
+  ordre que l'outil ne serait pas un extrait, ce serait une citation arrangée.
+- `sortie-exacte:` — le bloc est la sortie **complète**. Celui-là se **répare** :
+  `jio sorties --appliquer` le réécrit avec la sortie du jour, après sauvegarde `.avant-jio`.
+  L'extrait, lui, est **signalé et jamais réécrit** : choisir les lignes à montrer demanderait
+  de deviner l'intention de l'auteur.
+
+Trois choses changent d'une machine à l'autre sans rien dire, et sont masquées **avant** la
+comparaison : les couleurs ANSI, les chemins absolus (`<racine>`), les durées (`<duree>`).
+Masquer davantage serait s'exempter soi-même du contrôle.
+
+**Un document est un contenu hostile par défaut** — c'est ici que cela se prouve, parce que le
+contrôle *exécute* ce qu'il lit. La liste blanche n'est donc pas un filtre de politesse : seul
+le programme `jio` est lancé, sans shell (arguments en liste), sans métacaractère
+(`; | & < > $ \` ` `` ` `` `), et sans option qui écrit (`--write`, `--appliquer`, `--fix`,
+`--sortie`). Un refus est **signalé**, jamais silencieux : l'ignorer reviendrait à croire le
+document sur parole. Quand un exemple ne peut pas être vérifié parce que ses compteurs bougent
+à chaque commit, il est déclaré **hors contrôle avec sa raison** — ce qui est dit, jamais
+deviné.
 
 ### `--reparer` : réparer le mécanique, nommer le reste
 
