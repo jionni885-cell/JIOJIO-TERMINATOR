@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1059 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1070 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1286,7 +1286,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1059 tests verts -> 1059 tests verts
+         - README.md ligne 15 : 1070 tests verts -> 1070 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2354,6 +2354,65 @@ croire qu'un réglage plus dur aurait changé le verdict.
 
 Codes de sortie : **0** si le moteur complet n'a livré aucune erreur sans réserve, **1** s'il
 en a livré une — un levier non distingué n'est pas une panne, c'est une mesure honnête.
+
+## Le duel portable : ce que TON IA gagne, mesuré chez toi
+
+Tout ce qui précède se mesure **ici**, avec un modèle simulé dont le comportement est déclaré.
+Cela prouve l'architecture, pas ton IA. La question qui compte — *mon agent, avec ce harness,
+atteint-il puis dépasse-t-il un modèle frontière ?* — ne peut se mesurer que sur ta machine,
+avec ton outil et ta clé. Une seule commande la pose :
+
+```console
+$ python -m jio bench --provider cli:opencode --runs 10 --rapport duel-opencode.md
+$ python -m jio bench --provider cli:hermes   --runs 10 --rapport duel-hermes.md
+```
+
+`--provider` accepte `cli:opencode`, `cli:hermes`, `cli:claude`, `cli:codex`, `cli:gemini`,
+n'importe quel `cli:<autre>` (avec `JIO_CLI_<AUTRE>_ARGV`), ou `openai:<modèle>`. Si le binaire
+demandé est absent, la mesure **s'arrête et le dit** : aucun repli silencieux sur la simulation,
+parce qu'un rapport qui annonce ton modèle sans l'avoir fait tourner serait un mensonge — et
+c'est le pire résultat possible, un chiffre crédible et faux.
+
+### Ce que le rapport contient
+
+Il s'écrit en Markdown (pour toi) **et** en JSON à côté (pour comparer deux exécutions), signé
+par le commit mesuré et la date. Il porte les dix bras, chacun avec son **intervalle de
+confiance à 95 %**, son coût en appels et le **nombre d'essais** — parce qu'un pourcentage sans
+son intervalle ne se lit pas :
+
+| bras | ce qu'il isole |
+| --- | --- |
+| `S0` modèle brut | un seul appel : le point de départ |
+| `S1` échantillonnage seul | best-of-3, sans rien vérifier |
+| `S1b` **contrôle apparié** | **autant d'appels que la vérification, mais sans vérifier** |
+| `S2` preuve exécutable + reprise | ce que la vérification change |
+| `S3` JIO complet | livraison auditée : le moteur doit *savoir* qu'il a fini |
+| `S4`/`S4b`/`S4c` sans oracle | règles traduites en témoins, à trois fidélités déclarées |
+| `S4r` **sans oracle, ton modèle** | le cas réel : c'est TON modèle qui traduit les règles |
+| `S4rc` **contrôle apparié sans oracle** | même budget d'appels, aucune vérification |
+
+Le contrôle apparié est la pièce qui rend le gain **attribuable** : sans lui, un meilleur score
+pourrait simplement venir de plus d'essais. Avec lui, la différence restante ne peut venir que
+de la vérification. C'est aussi ce qui répond aux chiffres de la littérature (Vérification :
++9,5 points de SWE-bench Pro attribués au harness plutôt qu'au modèle) — sans avoir à les croire
+sur parole.
+
+### Ce qu'un bon rapport s'interdit
+
+Trois règles y sont appliquées, et elles viennent de défauts vus ici même :
+
+- **« non mesuré » n'est pas « 0 % ».** Un bras sans données est déclaré tel quel. La première
+  version affichait `1000000000.00x` de gain quand le modèle brut ne réussissait rien : un ratio
+  sur une base nulle. On écrit `n/a`, qui est la vérité.
+- **Un intervalle qui contient zéro signifie INDÉTERMINÉ**, pas « positif ». Le rapport le dit,
+  et calcule en plus **combien d'essais il faudrait** pour trancher *cette* taille d'effet :
+  la différence entre « je ne sais pas » et « voici ce qu'il faudrait ».
+- **Un intervalle de largeur nulle est signalé DÉGENERE.** À un essai, il n'annonce pas une
+  précision : il avoue un échantillon trop petit pour qu'une variance existe. Vu en écrivant ce
+  rapport : `[+100 ; +100]`.
+
+Un écart **négatif** s'affiche aussi. Un rapport qui ne montre que ses gains n'est pas une
+mesure, c'est une plaidoirie.
 
 ## Toutes les commandes répondent, et c'est testé
 

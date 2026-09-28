@@ -1187,6 +1187,16 @@ def cmd_bench(args: argparse.Namespace) -> int:
               "  <- le seul chiffre qui doit rester a zero")
         print(f"    duree : {elapsed:.1f}s")
         print()
+        if getattr(args, "rapport", ""):
+            _ecrire_rapport_du_bench(
+                args, results, calls, labels, modele, skill, runs, len(taches), args.rounds,
+                elapsed, integrite={
+                    "exploits d'integrite detectes": integrity_hits,
+                    "abstentions sans oracle": abstentions_sans_oracle,
+                    "candidats CORRECTS rejetes": rejets_faux,
+                    "ERREURS LIVREES SANS RESERVE": erreurs_silencieuses,
+                },
+            )
         return 0
 
     print("  QUAND LA MISSION NE FOURNIT AUCUN ORACLE — le cas de toute mission reelle")
@@ -1215,7 +1225,93 @@ def cmd_bench(args: argparse.Namespace) -> int:
     print("    - la verification n'aide que si la tache EST verifiable. Ailleurs : abstention.")
     print("    - aucun harness ne cree de connaissance absente du modele.")
     print()
+    if getattr(args, "rapport", ""):
+        _ecrire_rapport_du_bench(
+            args, results, calls, labels, modele, skill, runs, len(taches), args.rounds, elapsed,
+            integrite={
+                "exploits d'integrite detectes": integrity_hits,
+                "abstentions sans oracle": abstentions_sans_oracle,
+                "regles contrefaites par un traducteur faux": contrefacons,
+                "candidats CORRECTS rejetes": rejets_faux,
+                "ERREURS LIVREES SANS RESERVE": erreurs_silencieuses,
+            },
+        )
     return 0
+
+
+def _ecrire_rapport_du_bench(
+    args, results, calls, labels, modele, skill, runs, taches, rounds, elapsed, *,
+    integrite=None, ecarts=(), hypotheses=(),
+) -> None:
+    """Ecrit le rapport du duel — la MEME mesure, sous une forme qui se garde.
+
+    Ce helper ne mesure rien : il met en forme ce que `cmd_bench` vient de calculer, par les
+    fonctions testees de `jio.bench.incertitude`. Deux implementations d'une mesure feraient
+    deux verites possibles.
+    """
+    from .bench.incertitude import essais_necessaires as _essais
+    from .bench.rapport import construire, ecrire
+
+    def _commit_court() -> str:
+        """Le commit mesure — un rapport sans lui ne se rattache a aucune version du harness.
+
+        Si git est absent ou le depot non initialise, on ecrit `inconnu` : un identifiant
+        invente serait pire qu'une absence declaree.
+        """
+        import subprocess
+
+        try:
+            sortie = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"], cwd=Path.cwd(),
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return "inconnu"
+        return sortie.stdout.strip() if sortie.returncode == 0 else "inconnu"
+
+    ordre = ("S0", "S1", "S1b", "S2", "S3", "S4", "S4c", "S4b", "S4r", "S4rc")
+
+    def _ecart_sur(gauche: str, droite: str, question: str) -> tuple:
+        if not results.get(gauche) or not results.get(droite):
+            return (gauche, droite, question, None, None, False)
+        delta, (bas, haut), tranche = _ecart(results[gauche], results[droite])
+        return (gauche, droite, question, delta, (bas, haut), tranche)
+
+    mesures = list(ecarts)
+    mesures = [e for e in mesures if e[3] is not None]
+    mesures.append(_ecart_sur("S1b", "S2",
+                              "budget d'appels EGAL : verification vs echantillonnage"))
+    mesures.append(_ecart_sur("S0", "S3", "gain total du harness (modele brut -> JIO)"))
+    if results.get("S4rc") and results.get("S4r"):
+        mesures.append(_ecart_sur("S4rc", "S4r",
+                                  "sans oracle : harness vs meme budget sans verification"))
+
+    if modele.genre == "simule":
+        hypotheses = (
+            "les reponses du modele sont SIMULEES : ce rapport mesure l'ARCHITECTURE du "
+            "harness, pas un modele reel. Le meme rapport avec `--provider cli:<votre outil>` "
+            "mesure votre modele.",
+        )
+
+    rapport = construire(
+        resultats=results, appels=calls, libelles=labels, ordre=ordre, modele=modele,
+        skill=skill, runs=runs, taches=taches, rounds=rounds, duree_s=elapsed,
+        commit=_commit_court(), integrite=integrite, hypotheses=hypotheses,
+        ecarts=[m for m in mesures if isinstance(m, tuple) and len(m) == 6],
+    )
+    md, js = ecrire(rapport, args.rapport)
+    print(f"  RAPPORT ECRIT : {md}")
+    print(f"    JSON a cote  : {js}")
+    bases = [e for e in mesures if isinstance(e, tuple) and e[3] is None]
+    for gauche, droite, question, *_ in bases:
+        print(f"    non mesurable ici (bras sans donnees) : {question}")
+    besoin = _essais(_mean(results["S1b"]), _mean(results["S2"])) \
+        if results.get("S1b") and results.get("S2") else 0
+    if besoin > 0:
+        par_tache = max(1, len(results["S0"]) // max(1, runs))
+        print(f"    pour trancher l'ecart de verification : ~{besoin} essai(s) par bras, "
+              f"soit --runs {math.ceil(besoin / par_tache)} sur ce jeu de {par_tache} tache(s)")
+    print()
 
 
 def _attach_learning(engine, state_dir: Path, *, disable: bool = False) -> None:
@@ -2952,6 +3048,15 @@ def build_parser() -> argparse.ArgumentParser:
                         "toute mission reelle)")
     b.add_argument("--prose", action="store_true",
                    help="mesure le harness sur des DOCUMENTS (rapports) au lieu de code")
+    b.add_argument(
+        "--rapport", default="", metavar="CHEMIN.md",
+        help=(
+            "ECRIT le resultat de la mesure a cet emplacement (Markdown + JSON a cote). "
+            "Un chiffre qui ne vit que dans un terminal ne se compare pas : le rapport date, "
+            "porte les intervalles, les bras temoins et ce qu'il ne prouve PAS. C'est lui "
+            "qu'on archive et qu'on transmet."
+        ),
+    )
     b.set_defaults(func=cmd_bench)
 
     cl = sub.add_parser(
