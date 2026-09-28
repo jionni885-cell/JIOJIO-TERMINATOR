@@ -110,10 +110,10 @@ def test_start_integre_un_depot_ETRANGER_sans_rien_casser(
     assert _lire(depot_tiers / "src" / "calcul.py") == avant_code
     assert (depot_tiers / "test_calcul.py").is_file()
 
-    # 3. la fiche d'etat dit ce qui a ete fait, et sur QUOI elle porte
+    # 3. la fiche d'etat dit l'ETAT, et sur QUOI il porte
     fiche = _lire(depot_tiers / ".jio" / "ACTIVE.md")
-    assert "artefacts natifs ecrits ou mis a jour" in fiche
-    assert "coherence du depot a l'instant de l'ecriture" in fiche
+    assert "artefacts natifs : 30/30 present(s)" in fiche, fiche[:600]
+    assert "coherence du depot a l'instant de l'ecriture : COHERENT" in fiche
     assert str(depot_tiers) in fiche
 
     # Le cablage est PROUVE par demarrage reel du serveur, pas affirme.
@@ -124,17 +124,24 @@ def test_start_integre_un_depot_ETRANGER_sans_rien_casser(
 def test_start_est_idempotent_sur_un_depot_etranger(
     depot_tiers: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Deux `jio start` d'affilee : le second n'ecrit RIEN de neuf.
+    """Deux `jio start` d'affilee : le second n'ecrit RIEN de neuf — fiche d'etat comprise.
 
     Un integrateur qu'on ne peut pas relancer sans bruit n'est pas relancable : git afficherait
     des modifications a chaque fois, et l'agent croirait que quelque chose a change. Le second
-    passage doit donc rendre « deja a jour » partout.
+    passage doit donc rendre « deja a jour » partout, ET laisser les dates de modification
+    intactes.
+
+    `.jio/ACTIVE.md` est dans la liste, et c'est ce qui a paye ce test : la fiche portait la DUREE
+    du portail et le nombre d'artefacts ECRITS PAR CETTE EXECUTION, donc elle changeait a chaque
+    passage alors que le README promettait « relancee, elle ne reecrit rien ». Un fichier d'ETAT
+    qui raconte l'ACTIVITE d'une commande est un fichier qui bat — et un fichier qui bat finit
+    par faire croire que le projet a bouge.
     """
     assert main(["start", "--root", str(depot_tiers)]) == 0
     capsys.readouterr()
     empreintes = {
         rel: (depot_tiers / rel).stat().st_mtime_ns
-        for rel in ("AGENTS.md", "CLAUDE.md", "opencode.json", ".mcp.json")
+        for rel in ("AGENTS.md", "CLAUDE.md", "opencode.json", ".mcp.json", ".jio/ACTIVE.md")
     }
 
     assert main(["start", "--root", str(depot_tiers)]) == 0

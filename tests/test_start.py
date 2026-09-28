@@ -86,25 +86,41 @@ def test_start_ne_detruit_jamais_le_travail_de_l_utilisateur(tmp_path: Path) -> 
 
 
 def test_start_est_IDEMPOTENTE_et_le_dit(tmp_path: Path) -> None:
-    """Deuxieme passage : rien de neuf. Un generateur qui reecrit produit du bruit et ment.
+    """Deuxieme passage : rien de neuf — y compris la fiche d'etat, et jusqu'a sa DATE.
 
     La deuxieme execution met a jour les dates de modification de 29 fichiers : dans git, cela
     ressemble a un changement. La bonne reponse est « deja a jour », et ce test l'exige.
+
+    CE TEST EXCLUAIT `.jio/ACTIVE.md` DE LA COMPARAISON, avec une justification fausse : « c'est
+    un RAPPORT, pas un artefact, donc il change legitimement ». Il ne changeait pas legitimement :
+    la fiche portait la DUREE du portail (« COHERENT (9 controles, 1.2s) »), donc deux executions
+    identiques produisaient deux fiches differentes — et le README promettait, noir sur blanc,
+    « relancee, elle ne reecrit rien ». Le test avait ete ecrit pour convenir au comportement au
+    lieu de tenir la promesse, ce qui est la facon la plus discrete de laisser passer un defaut.
+
+    L'exclusion est retiree, et la DATE est comparee aussi : « ne reecrit rien » veut dire que le
+    fichier n'est pas touche du tout. Ecrire un contenu identique laisse git propre et fait
+    quandt meme bouger la date de modification — donc apparait comme un changement pour tout
+    outil qui la regarde (git status ne la voit pas, un cache de build si).
     """
     def contenu() -> dict[Path, str]:
-        # `.jio/ACTIVE.md` est un RAPPORT, pas un artefact : il decrit ce que CETTE execution
-        # vient de faire, donc il change legitimement (0 fichier ecrit au second passage).
-        # Ce qui doit etre stable, ce sont les fichiers lus par les outils.
+        # TOUS les fichiers, la fiche d'etat comprise : c'est elle qui a menti le plus longtemps.
         return {
             p: p.read_text(encoding="utf-8")
             for p in sorted(tmp_path.rglob("*"))
-            if p.is_file() and p.name != "ACTIVE.md"
+            if p.is_file()
         }
 
     cmd_start(_args(tmp_path))
     etat = contenu()
+    fiche = tmp_path / ".jio" / "ACTIVE.md"
+    date_avant = fiche.stat().st_mtime_ns
     assert cmd_start(_args(tmp_path)) == 0
     assert contenu() == etat, "un deuxieme `jio start` a modifie des fichiers"
+    assert fiche.stat().st_mtime_ns == date_avant, (
+        "la fiche d'etat a ete REEECRITE a l'identique : la promesse « ne reecrit rien » porte "
+        "sur le fichier, pas sur son contenu"
+    )
 
 
 def test_start_ne_touche_pas_aux_configurations_personnelles(tmp_path: Path) -> None:
@@ -203,9 +219,50 @@ def test_la_fiche_active_porte_l_etat_de_COHERENCE_mesure(tmp_path: Path) -> Non
     travaux partiront de la. La fiche est le premier fichier qu'elle lit, donc l'etat doit y
     etre, mesure a l'instant de l'ecriture.
     """
+    import re
+
     from jio.cli import _fiche_active
 
-    fiche = _fiche_active(tmp_path, ["opencode"], ["opencode"], 3, "COHERENT (9 controles, 0.1s)")
-    assert "coherence du depot a l'instant de l'ecriture : COHERENT (9 controles, 0.1s)" in fiche
+    fiche = _fiche_active(
+        tmp_path, ["opencode"], ["opencode"], presents=30, total=30, a_jour=30,
+        coherence="COHERENT (9 controles)",
+    )
+    assert "coherence du depot a l'instant de l'ecriture : COHERENT (9 controles)" in fiche
     # Sans mesure, la fiche le DIT au lieu d'affirmer : c'est la meme regle que partout ailleurs.
     assert "non mesuree" in _fiche_active(tmp_path, [], [], 0)
+    # AUCUNE DUREE dans la fiche. C'est ce qui la rendait non-idempotente : deux executions
+    # identiques ecrivaient « 1.2s » puis « 1.4s ». Une duree n'est pas un fait dont un agent a
+    # besoin, et elle transforme un fichier d'etat en fichier qui bat.
+    # La verification porte sur la LIGNE du verdict, pas sur toute la fiche : le texte cite
+    # « sort en 1 » (le code de sortie de `jio clarify`), et une recherche globale sur « 1 s »
+    # y voit une duree. Une recherche trop large est une fausse alerte qui apprend a elargir
+    # les exceptions ; une recherche trop etroite ne voit rien. Celle-ci vise la ligne.
+    ligne = next(
+        l for l in fiche.splitlines()
+        if l.startswith("- coherence du depot a l'instant de l'ecriture :")
+    )
+    assert not re.search(r"\d+([.,]\d+)?\s*(s|ms)\b", ligne), (
+        f"la ligne du verdict porte une duree ({ligne!r}) : `jio start` redeviendra "
+        "non-idempotent, parce que deux executions identiques produiront deux fiches differentes"
+    )
+
+
+def test_la_fiche_est_reecrite_quand_l_etat_CHANGE(tmp_path: Path) -> None:
+    """L'idempotence ne doit pas etre obtenue en gelant la fiche.
+
+    Le risque d'un « on n'ecrit que si c'est different » : un generateur qui n'ecrit plus jamais
+    et laisse une fiche perimee — c'est-a-dire un mensonge de retard, la classe d'erreur que ce
+    depot traque partout. Ce test tient l'autre bord : quand l'etat mesurable change, la fiche
+    change, et le DIT.
+    """
+    from jio.cli import _fiche_active
+
+    avant = _fiche_active(tmp_path, [], [], 0, coherence="COHERENT (9 controles)")
+    apres = _fiche_active(
+        tmp_path, ["opencode"], ["opencode"], presents=12, total=30, a_jour=12,
+        coherence="2 controle(s) en echec : sources",
+    )
+    assert avant != apres
+    assert "2 controle(s) en echec : sources" in apres, "le verdict de la porte doit suivre"
+    assert "artefacts natifs : 12/30 present(s)" in apres
+    assert "cablage MCP : opencode" in apres

@@ -3334,7 +3334,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     Elle est IDEMPOTENTE : relancee, elle ne reecrit rien et le dit.
     """
     from .artifacts import TARGETS, manifest
-    from .artifacts.wiring import DIALECTES, brancher, prouver_branchement
+    from .artifacts.wiring import DIALECTES, NOM_SERVEUR, brancher, prouver_branchement
     from .artifacts.write_guard import ecrire_manifest
     from .providers.registry import detect_clis
 
@@ -3373,7 +3373,19 @@ def cmd_start(args: argparse.Namespace) -> int:
                       decision.action, decision.action)
         print(f"      {marque:<38} {decision.chemin}")
 
+    # L'ETAT, et pas seulement l'activite de cette execution. La fiche d'integration est lue par
+    # la prochaine IA : ce qu'elle doit savoir, c'est ce qui est en place — pas ce que la
+    # commande qui l'a ecrite a eu besoin de faire. Mesure a l'origine, et c'est le defaut qui a
+    # paye ce commentaire : la fiche disait « artefacts natifs ecrits ou mis a jour : 30 » au
+    # premier passage et « : 0 » au second. Deux executions identiques, deux fiches differentes,
+    # alors que le README promet « relancee, elle ne reecrit rien ». Un rapport d'ACTIVITE dans
+    # un fichier d'ETAT, c'est un fichier qui bat.
+    preserves = [d for d in decisions if d.action == "preserve"]
+    presents = sum(1 for d in decisions if (racine / d.chemin).is_file())
+    a_jour = len(decisions) - len(preserves)
+
     cablages: list[str] = []
+    cables: list[str] = []      # l'ETAT du cablage, toutes cibles confondues
     if not args.sans_mcp:
         print()
         print("    cablage MCP (jamais dans un fichier qui existe sans nous)")
@@ -3389,6 +3401,7 @@ def cmd_start(args: argparse.Namespace) -> int:
                 continue
             if ecrit is True:
                 cablages.append(dialecte)
+                cables.append(dialecte)
                 print(f"      {dialecte:<12} BRANCHE  ({description})")
             elif _fichier is None:
                 # Rien a ecrire : la configuration appartient a l'utilisateur. Le fragment
@@ -3397,6 +3410,12 @@ def cmd_start(args: argparse.Namespace) -> int:
                 for ligne in str(message).rstrip().splitlines():
                     print(f"                   {ligne}")
             else:
+                # « laisse tel quel » recouvre deux cas qu'un fichier d'ETAT doit separer :
+                # un cablage DEJA en place, et un fichier de l'utilisateur que ce depot ne
+                # touche pas. Le premier est un fait du monde (« ce projet est cable pour
+                # Cursor »), le second n'en est pas un.
+                if f"contient deja `{NOM_SERVEUR}`" in str(message):
+                    cables.append(dialecte)
                 print(f"      {dialecte:<12} laisse tel quel ({description}) : {message}")
 
     print()
@@ -3414,19 +3433,32 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     rapport = controler(racine)
     if rapport.ok:
-        etat_coherence = f"COHERENT ({len(rapport.constats)} controles, {rapport.duree_s:.1f}s)"
+        # La DUREE est affichee a l'ecran, jamais ecrite dans la fiche. Mesure : avec la duree
+        # dans le fichier, deux `jio start` consecutifs ecrivaient `1.2s` puis `1.4s` — la fiche
+        # changeait a chaque execution, et la promesse « relancee, elle ne reecrit rien » etait
+        # fausse. Une duree n'est pas un fait dont un agent a besoin ; le VERDICT, si.
+        etat_coherence = f"COHERENT ({len(rapport.constats)} controles)"
+        ecran_coherence = f"{etat_coherence[:-1]}, {rapport.duree_s:.1f}s)"
     else:
         noms = ", ".join(c.controle for c in rapport.incoherents)
         etat_coherence = f"{len(rapport.incoherents)} controle(s) en echec : {noms}"
+        ecran_coherence = etat_coherence
 
     etat.mkdir(parents=True, exist_ok=True)
     fiche = etat / "ACTIVE.md"
-    fiche.write_text(
-        _fiche_active(racine, detectees, cablages, len(ecrits), etat_coherence),
-        encoding="utf-8",
+    texte_fiche = _fiche_active(
+        racine, detectees, cables, presents, len(decisions), a_jour, etat_coherence
     )
+    # « Ne reecrit rien » se mesure sur le contenu ET sur la date : ecrire un texte identique
+    # laisse git propre mais fait bouger la date de modification, donc un generateur qui
+    # « ne change rien » finit quand meme par apparaitre comme un changement. On ne touche pas
+    # le fichier quand son contenu est le meme — et on le DIT, parce que « rien n'a ete ecrit »
+    # et « une fiche a ete ecrite » doivent pouvoir se distinguer depuis la sortie.
+    fiche_inchangee = fiche.is_file() and fiche.read_text(encoding="utf-8") == texte_fiche
+    if not fiche_inchangee:
+        fiche.write_text(texte_fiche, encoding="utf-8")
     print()
-    print(f"    COHERENCE DU DEPOT : {etat_coherence}")
+    print(f"    COHERENCE DU DEPOT : {ecran_coherence}")
     if not rapport.ok:
         for constat in rapport.incoherents:
             print(f"      [{constat.marque}] {constat.controle:<13} {constat.resume[:60]}")
@@ -3434,7 +3466,10 @@ def cmd_start(args: argparse.Namespace) -> int:
                 print(f"           - {detail[:84]}")
         print("      -> `jio coherence` donne le detail, la ligne et la correction.")
     print()
-    print(f"    fiche d'integration : {fiche.relative_to(racine)}  (l'IA la lit en premier)")
+    print(
+        f"    fiche d'integration : {fiche.relative_to(racine)}  (l'IA la lit en premier)"
+        + ("  — inchangee, rien n'a ete reecrit" if fiche_inchangee else "")
+    )
     print()
     print("    PROCHAINES ETAPES")
     print("      1. `jio doctor`               etat reel : ce qui marche, ce qui manque")
@@ -3447,8 +3482,10 @@ def cmd_start(args: argparse.Namespace) -> int:
 def _fiche_active(
     racine: Path,
     detectees: list[str],
-    cablages: list[str],
-    ecrits: int,
+    cables: list[str],
+    presents: int,
+    total: int = 0,
+    a_jour: int = 0,
     coherence: str = "non mesuree",
 ) -> str:
     """`.jio/ACTIVE.md` : ce qu'une IA doit lire avant de toucher ce projet.
@@ -3460,7 +3497,12 @@ def _fiche_active(
         ne contient donc que ce qui a ete verifie a l'instant de son ecriture.
     """
     outils = ", ".join(detectees) if detectees else "aucune CLI detectee (ce n'est pas bloquant)"
-    cable = ", ".join(cablages) if cablages else "aucun (--sans-mcp)"
+    cable = ", ".join(cables) if cables else "aucun (--sans-mcp)"
+    # L'ETAT des artefacts, jamais l'activite de l'execution qui a ecrit cette fiche : c'est la
+    # difference entre un fichier qui bat et un fichier qui informe.
+    artefacts = f"{presents}/{total} present(s)" + (
+        f", {a_jour} a jour" if total and a_jour != presents else ""
+    )
     return f"""# JIO est actif sur ce projet
 
 > Fiche ecrite par `jio start`. Elle decrit l'etat REEL au moment de l'ecriture.
@@ -3470,9 +3512,9 @@ PROJET : {racine}
 
 ## Ce qui a ete fait
 
-- artefacts natifs ecrits ou mis a jour : {ecrits}
+- artefacts natifs : {artefacts}
 - outils detectes sur cette machine : {outils}
-- cablage MCP effectue pour : {cable}
+- cablage MCP : {cable}
 - coherence du depot a l'instant de l'ecriture : {coherence}
 
 ## Avant de travailler : trois commandes, dans cet ordre

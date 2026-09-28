@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 948 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 949 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -62,7 +62,13 @@ trouve plus ni amélioration ni innovation. Un mandat qui dit déjà sa borne (`
 cycles…`) ne reçoit **aucune** question.
 
 `jio start` écrit `.jio/ACTIVE.md` — la fiche que l'IA lit en premier : état réel, commandes
-utiles, et ce qui reste non vérifié. Elle est **idempotente** : relancée, elle ne réécrit rien.
+utiles, et ce qui reste non vérifié. Elle est **idempotente** au sens strict : relancée, elle
+**n'écrit rien du tout**, pas même un contenu identique — la date de modification ne bouge pas.
+Pour que ce soit vrai, la fiche décrit un **état** (« artefacts natifs : 30/30 présents »,
+« câblage MCP : cursor ») et jamais l'**activité** de la commande qui l'a écrite : un rapport
+d'activité dans un fichier d'état est un fichier qui bat à chaque passage — et un fichier qui
+bat finit par faire croire que le projet a bougé. Mesuré sur un dépôt tiers : deux `jio start`
+d'affilée, **zéro** fichier réécrit, sur les 30 artefacts **et** sur la fiche.
 
 ---
 
@@ -1163,7 +1169,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 948 tests verts -> 948 tests verts
+         - README.md ligne 15 : 949 tests verts -> 949 tests verts
 ```
 
 ### `--reparer` : réparer le mécanique, nommer le reste
