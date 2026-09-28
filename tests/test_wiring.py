@@ -364,3 +364,51 @@ def test_une_session_MCP_avec_un_message_ne_dit_RIEN_sur_la_sortie_d_erreur(monk
     capture = capsys.readouterr()
     assert "aucun message recu" not in capture.err
     assert "tools" in capture.out
+
+
+# --------------------------------------------------------------------------- #
+# La progression d'une mesure longue : ce qu'elle dit, et ce qu'elle tait
+# --------------------------------------------------------------------------- #
+
+
+def test_la_progression_dit_le_RESTE_sauf_a_la_fin() -> None:
+    """Une estimation pendant, rien a la fin : le dernier message n'a plus rien a estimer.
+
+    Une progression qui annonce « reste ~12s » sur la derniere unite est un petit mensonge qui
+    coute cher : il fait attendre. Et une progression qui n'annonce AUCUNE estimation oblige a
+    deviner s'il faut attendre ou renoncer — c'est-a-dire a interrompre au hasard.
+    """
+    import io
+
+    from jio.cli import _Progression, _duree
+
+    flux = io.StringIO()
+    avancer = _Progression(3, quoi="ablation", flux=flux)
+    avancer("complet 1/3")
+    avancer("complet 2/3")
+    avancer("complet 3/3")
+    lignes = flux.getvalue().splitlines()
+
+    assert len(lignes) == 3
+    assert "[  1/3] ablation · complet 1/3" in lignes[0]
+    assert "reste ~" in lignes[0] and "reste ~" in lignes[1]
+    assert "reste ~" not in lignes[2], "la derniere unite n'a plus de reste a estimer"
+    assert "1/3" in lignes[0] and "3/3" in lignes[2]
+    # Les durees sont lisibles et honnetes : sous la minute en secondes, au-dela en minutes.
+    assert _duree(12) == "12s"
+    assert _duree(266) == "4m26s"
+    assert _duree(-5) == "0s", "une duree negative n'existe pas : on ne l'ecrit pas"
+
+
+def test_le_banc_borne_par_taches_dit_le_VRAI_nombre_de_taches() -> None:
+    """`--taches N` doit se voir dans l'entete ET dans le total de progression.
+
+    Sans cette coherence, l'entete annoncerait 5 taches et la progression 1 : deux chiffres pour
+    la meme chose, donc aucun des deux n'est fiable. Et cette option n'est pas un confort de
+    test : elle sert a faire un premier tour court pour voir si le dispositif tourne, avant de
+    lancer la mesure qui prend des minutes.
+    """
+    from jio.cli import main
+
+    code = main(["bench", "--runs", "1", "--taches", "1"])
+    assert code == 0

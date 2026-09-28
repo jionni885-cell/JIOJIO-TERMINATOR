@@ -340,3 +340,49 @@ def test_un_levier_dont_le_retrait_AMELIORE_est_declare_comme_un_cout() -> None:
     assert len(rapport.couts) == 1 and rapport.couts[0].nom == "mutation"
     texte = formater(rapport)
     assert "a justifier, ou a interroger" in texte
+
+
+# --------------------------------------------------------------------------- #
+# Le progres : une mesure longue qui ne dit rien est indistinguable d'un blocage
+# --------------------------------------------------------------------------- #
+
+
+def test_l_ablation_SIGNALE_son_avancement_a_chaque_mission() -> None:
+    """`avancer` est appele une fois par mission, et le total annonce est le vrai.
+
+    Mesure a l'origine : `jio ablation` tourne plusieurs minutes sur une machine a deux coeurs
+    en n'affichant RIEN — ni progression, ni duree, ni estimation. Une commande muette pendant
+    plusieurs minutes est indistinguable d'une commande bloquee, et le seul recours est de
+    l'interrompre : c'est-a-dire de ne jamais obtenir la mesure.
+
+    Le total est verifie ICI, et pas seulement le nombre d'appels : un total faux rendrait
+    l'estimation de temps fausse, et une estimation fausse est pire que pas d'estimation — elle
+    fait interrompre une mesure qui allait finir.
+    """
+    executer, _appels = _executeur_truque()
+    vus: list[str] = []
+    rapport = mesurer(executer, taches=3, graines=2, leviers=["preuve", "red-team"],
+                      avancer=vus.append)
+
+    missions_par_bras = 3 * 2
+    assert len(vus) == missions_par_bras * 3, "un signal par mission, bras complet compris"
+    assert vus[0] == f"complet 1/{len(vus)}"
+    assert vus[-1].endswith(f"{len(vus)}/{len(vus)}")
+    assert any(libelle.startswith("sans preuve") for libelle in vus)
+    assert any(libelle.startswith("sans red-team") for libelle in vus)
+    # Le rapport lui-meme ne depend pas du signalement : c'est un canal, pas un calcul.
+    sans_signal = mesurer(_executeur_truque()[0], taches=3, graines=2,
+                          leviers=["preuve", "red-team"])
+    assert sans_signal.prouves == rapport.prouves
+    assert len(sans_signal.leviers) == len(rapport.leviers)
+
+
+def test_sans_callback_l_ablation_ne_LEVE_pas() -> None:
+    """Le signalement est optionnel : un appelant qui n'en veut pas n'a rien a fournir.
+
+    C'est l'autre bord, et il protege l'API : `mesurer` est appele par des tests, par la CLI et
+    par d'anciens scripts. Rendre le parametre obligatoire aurait casse les trois sans rien
+    apporter a la mesure.
+    """
+    rapport = mesurer(_executeur_truque()[0], taches=2, graines=1, leviers=["preuve"])
+    assert rapport.leviers

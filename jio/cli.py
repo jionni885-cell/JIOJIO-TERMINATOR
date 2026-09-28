@@ -22,9 +22,10 @@ import sys
 import time
 from pathlib import Path
 
+from typing import Any, Mapping, Sequence
+
 from .core.env import bool_env, float_env, int_env, str_env
 from .verify.claims import RapportProse
-from typing import Mapping, Sequence
 
 from dataclasses import replace as _replace
 
@@ -767,6 +768,52 @@ def _bench_prose(args: argparse.Namespace) -> int:
     return 0 if total["silencieux"] == 0 else 1
 
 
+class _Progression:
+    """Dit OU EN EST une mesure longue, sur la sortie d'erreur, pendant qu'elle tourne.
+
+    Pourquoi ce n'est pas du confort : `jio bench` dure quatre minutes et demie sur une machine
+    a deux coeurs, `jio ablation` davantage. Sans une ligne reguliere, la commande est
+    INDISTINGUABLE d'une commande bloquee — et la seule reaction possible est de l'interrompre,
+    c'est-a-dire de ne jamais obtenir la mesure. Un outil qui cache son progres cache aussi son
+    echec : les deux se ressemblent.
+
+    Trois choix, chacun pour une raison :
+
+      * sur la SORTIE D'ERREUR, jamais sur la sortie standard : le rapport reste une sortie
+        propre, redirigeable et comparable entre deux executions ;
+      * immediatement vide (flush), sinon la ligne arrive avec le rapport — c'est-a-dire trop
+        tard ;
+      * une ligne par unite, avec l'avancement, le libelle et le TEMPS ECOULE : c'est le temps
+        ecoule qui permet de decider s'il faut attendre ou interrompre.
+    """
+
+    def __init__(self, total: int, *, quoi: str, flux: Any = None) -> None:
+        self.total = max(1, total)
+        self.fait = 0
+        self.quoi = quoi
+        self.debut = time.monotonic()
+        self.flux = flux if flux is not None else sys.stderr
+
+    def __call__(self, libelle: str = "") -> None:
+        self.fait += 1
+        ecoule = time.monotonic() - self.debut
+        reste = (ecoule / self.fait) * (self.total - self.fait) if self.fait else 0.0
+        suite = f"  ·  reste ~{_duree(reste)}" if 0 < self.fait < self.total else ""
+        print(
+            f"  [{self.fait:>3}/{self.total}] {self.quoi}"
+            + (f" · {libelle}" if libelle else "")
+            + f"  ·  {_duree(ecoule)} ecoulees{suite}",
+            file=self.flux, flush=True,
+        )
+
+
+def _duree(secondes: float) -> str:
+    """Une duree lisible : `12s`, `4m26s`. Les dixiemes ne servent a rien pour ATTENDRE."""
+    total = int(max(0.0, secondes))
+    minutes, reste = divmod(total, 60)
+    return f"{minutes}m{reste:02d}s" if minutes else f"{reste}s"
+
+
 def cmd_bench(args: argparse.Namespace) -> int:
     """Mesure le gain reel du harness sur le MEME modele, fige.
 
@@ -794,15 +841,21 @@ def cmd_bench(args: argparse.Namespace) -> int:
     skill = args.skill
     runs = args.runs
     seeds = list(range(runs))
+    # `--taches` : borner le banc. Deux raisons, et la seconde n'est pas cosmetique : un premier
+    # tour rapide pour voir si le dispositif tourne, et la possibilite de TESTER le banc lui-meme
+    # en quelques secondes. Un banc qu'on ne peut pas lancer en test est un banc dont personne ne
+    # verifie le branchement avant qu'il ne serve.
+    demandees = int(getattr(args, "taches", 0) or 0)
+    taches = TASKS[:demandees] if demandees > 0 else TASKS
 
     print(BANNER)
     if modele.genre == "simule":
         print(f"  Mesure du harness  ·  competence simulee {skill:.2f}  ·  {runs} tirage(s)  ·"
-              f"  {len(TASKS)} taches")
+              f"  {len(taches)} taches")
         print("  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.")
     else:
         print(f"  Mesure du harness  ·  modele : {modele.spec}  ·  {runs} tirage(s)  ·"
-              f"  {len(TASKS)} taches")
+              f"  {len(taches)} taches")
         print(f"  {modele.note}")
     print()
 
@@ -829,8 +882,9 @@ def cmd_bench(args: argparse.Namespace) -> int:
         [] if modele.provider is None
         else [modele.provider] * max(3, modele.instances)
     )
+    avancer = _Progression(len(seeds) * len(taches), quoi=f"tirage {skill:.2f}")
     for seed in seeds:
-        for task in TASKS:
+        for task in taches:
             generators = generateurs_reels or [
                 SimulatedProvider(
                     name=f"gen{i}", model="sim-1",
@@ -906,7 +960,7 @@ def cmd_bench(args: argparse.Namespace) -> int:
                 (("S4", 1.0), ("S4c", 0.5), ("S4b", 0.0))
                 if modele.genre == "simule" else ()
             ):
-                traducteur = TraducteurSimule(taches=TASKS, fidelite=fidelite)
+                traducteur = TraducteurSimule(taches=taches, fidelite=fidelite)
                 moteur = _simulated_engine(
                     task, skill=skill, seed=seed, max_rounds=args.rounds,
                     temoins=True, traducteur=traducteur,
@@ -944,6 +998,11 @@ def cmd_bench(args: argparse.Namespace) -> int:
                     f"exploits={[e.kind.value for e in report.integrity.exploits]} "
                     f"motif={report.abstention_reason[:120]}"
                 )
+
+            # Le point d'avancement est pose ICI, a la fin du tirage : le placer au debut
+            # annoncerait un travail qui n'est pas encore fait, et une ligne qui avance sans
+            # que rien ne se passe est pire que pas de ligne du tout.
+            avancer(f"{task.id} graine {seed}")
 
     elapsed = time.monotonic() - started
     print("  RESULTATS")
@@ -2746,6 +2805,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     b.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
                    help="tours de boucle maximum")
+    b.add_argument("--taches", type=int, default=0, dest="taches",
+                   help="limite le banc aux N premieres taches (0 = toutes). Un premier tour "
+                        "court sert a voir si le dispositif tourne, pas a mesurer un gain")
     b.add_argument("--prose", action="store_true",
                    help="mesure le harness sur des DOCUMENTS (rapports) au lieu de code")
     b.set_defaults(func=cmd_bench)
@@ -3161,7 +3223,15 @@ def cmd_ablation(args: argparse.Namespace) -> int:
           + ("  ·  SANS ORACLE" if args.sans_oracle else ""))
     print("  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.")
     print()
-    rapport = mesurer(executer, taches=taches, graines=graines, leviers=noms)
+    rapport = mesurer(
+        executer, taches=taches, graines=graines, leviers=noms,
+        # Le progres va sur la sortie d'erreur, avec le temps ecoule : il sert a DECIDER s'il
+        # faut attendre ou interrompre. Sans lui, la commande est indistinguable d'un blocage.
+        avancer=_Progression(
+            taches * graines * ((len(noms) if noms else len(LEVIERS)) + 1),
+            quoi="ablation",
+        ),
+    )
     if args.json:
         print(json.dumps(rapport.en_dict(), ensure_ascii=False, indent=2))
         return 1 if rapport.silencieuses else 0

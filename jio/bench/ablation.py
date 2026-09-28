@@ -660,6 +660,7 @@ def mesurer(
     taches: int = 5,
     graines: int = 2,
     leviers: Sequence[str] | None = None,
+    avancer: Callable[[str], None] | None = None,
 ) -> RapportAblation:
     """Compare le moteur complet a chaque levier enleve, sur les MEMES missions.
 
@@ -668,15 +669,26 @@ def mesurer(
     la construction : le plan de missions est calcule UNE fois et parcouru a l'identique
     pour tous les bras. Une graine tiree differemment d'un bras a l'autre mesurerait le
     tirage, pas le levier.
+
+    `avancer` est appele apres CHAQUE mission, avec un libelle lisible (« complet 3/10 »). Ce
+    module ne sait pas ou ecrire — il ne connait ni le terminal ni le fichier de l'appelant —
+    donc il ne fait que SIGNALER. Mesure a l'origine : `jio ablation` tourne plusieurs minutes
+    sans rien dire, ce qui le rend indistinguable d'une commande bloquee ; le seul recours
+    etait de l'interrompre, c'est-a-dire de ne jamais obtenir la mesure.
     """
     noms = tuple(leviers) if leviers is not None else tuple(lev.nom for lev in LEVIERS)
     for nom in noms:
         levier(nom)  # un nom inconnu doit lever AVANT de faire tourner quoi que ce soit
     plan = [(t, g) for t in range(max(1, taches)) for g in range(max(1, graines))]
 
+    total = len(plan) * (len(noms) + 1)
+    fait = 0
     complet = Bras(nom="complet", quoi="le harness tel quel")
     for tache, graine in plan:
         complet.issues.append(executer(tache, graine, ()))
+        fait += 1
+        if avancer is not None:
+            avancer(f"complet {fait}/{total}")
 
     comparaisons: list[Comparaison] = []
     for nom in noms:
@@ -684,6 +696,9 @@ def mesurer(
         bras = Bras(nom=nom, quoi=definition.quoi, sans=definition.sans)
         for tache, graine in plan:
             bras.issues.append(executer(tache, graine, (nom,)))
+            fait += 1
+            if avancer is not None:
+                avancer(f"sans {nom} {fait}/{total}")
 
         b = sum(
             1
