@@ -32,12 +32,54 @@ from typing import Sequence
 
 from .router import SEUIL_CONCEPTS, Choix, Catalogue, catalogue_du_depot
 
-__all__ = ["Injection", "bloc"]
+__all__ = ["Injection", "bloc", "refusees_par_l_audit"]
 
 #: Budget par defaut, en jetons estimes. Choisi a partir de la mesure du depot lui-meme : trois
 #: corps de procedure tiennent en ~1500 jetons ; au-dela, le prompt de mission devient plus long
 #: que la specification qu'il accompagne, et la hierarchie des consignes se brouille.
 BUDGET_DEFAUT = 1500
+
+
+#: Les gravites de l'audit qui interdisent l'injection. `moyenne` et au-dessus : une ligne qui
+#: ordonne de forcer une garde ou d'ignorer une consigne n'est pas « un peu » dangereuse.
+GRAVITES_REFUSEES = ("haute", "moyenne")
+
+
+def refusees_par_l_audit(noms: Sequence[str]) -> dict[str, str]:
+    """Les competences que l'AUDIT du depot signale, avec le motif du refus.
+
+    POURQUOI CE FILTRE EXISTE, et ce qu'il protege. Le routeur choisit une competence parce
+    qu'elle correspond a l'objectif. Rien, dans ce choix, ne regarde ce que la competence
+    CONTIENT. Or une competence est du texte destine a piloter un agent, et la litterature du
+    domaine decrit precisement cette attaque (« Safe to Resume? », 2608.29381) : une competence
+    malveillante n'a pas besoin d'etre chargee par l'utilisateur — il suffit qu'un routeur la
+    trouve pertinente. Le classement est un chemin d'execution.
+
+    Ce module utilise donc l'audit qui existait DEJA (`artifacts/audit_skills.py`, qui alimente
+    `jio artifacts --audit`) comme liste de blocage : ce qui est signale n'entre pas dans un
+    prompt, quelle que soit sa pertinence. Une mise en garde n'est PAS un refus — la ligne qui
+    INTERDIT le motif protege au lieu d'attaquer, et la confondre avec l'attaque ferait
+    disparaitre les competences de securite du depot.
+
+    Le refus est retourne, jamais silencieux : il finit dans le journal de la mission.
+    """
+    from ..artifacts.audit_skills import analyser_artefacts
+
+    voulus = set(noms)
+    refus: dict[str, str] = {}
+    for risque in analyser_artefacts():
+        if getattr(risque, "mise_en_garde", False):
+            continue
+        if str(getattr(risque, "gravite", "")).lower() not in GRAVITES_REFUSEES:
+            continue
+        nom = str(getattr(risque, "artefact", "")).split(":", 1)[-1]
+        if nom in voulus:
+            refus.setdefault(
+                nom,
+                f"signalee par l'audit (ligne {risque.ligne}, {risque.nature}) : "
+                f"{risque.extrait[:80]}",
+            )
+    return refus
 
 
 @dataclass(frozen=True)
@@ -49,6 +91,10 @@ class Injection:
     cout_jetons: int
     completes: tuple[str, ...]
     ecartees: tuple[str, ...]
+    #: Competences REFUSEES par l'audit du depot, avec le motif. Distinct d'`ecartees` (budget) :
+    #: l'une est une contrainte de place, l'autre un refus de confiance, et les confondre
+    #: reviendrait a croire qu'un budget plus large rendrait l'injection sure.
+    refusees: tuple[tuple[str, str], ...] = ()
 
     @property
     def vide(self) -> bool:
@@ -57,12 +103,18 @@ class Injection:
     def resume(self) -> str:
         """Une ligne pour le rapport : ce qui a ete charge, et ce qui ne l'a pas ete."""
         if self.vide:
-            return "aucune procedure du depot ne s'applique a cet objectif"
+            base = "aucune procedure du depot ne s'applique a cet objectif"
+            if self.refusees:
+                base += f" ({len(self.refusees)} refusee(s) par l'audit)"
+            return base
         base = (f"{len(self.completes)} procedure(s) chargee(s) — "
                 f"{', '.join(self.completes)} — {self.cout_jetons} jetons")
         if self.ecartees:
             base += (f" · {len(self.ecartees)} ecartee(s) par le budget de "
                      f"{BUDGET_DEFAUT} jetons : {', '.join(self.ecartees)}")
+        if self.refusees:
+            base += (f" · {len(self.refusees)} REFUSEE(S) par l'audit : "
+                     + ", ".join(nom for nom, _ in self.refusees))
         return base
 
 
@@ -104,6 +156,11 @@ def bloc(
     choix: Sequence[Choix] = cat.interroger(objectif, maximum=maximum, seuil=seuil)
     if not choix:
         return Injection((), "", 0, (), ())
+    # L'audit passe AVANT le budget : une competence signalee n'entre pas, meme si elle est la
+    # plus pertinente et meme s'il reste de la place. Le classement est un chemin d'execution.
+    refus = refusees_par_l_audit([c.nom for c in choix])
+    if refus:
+        choix = [c for c in choix if c.nom not in refus]
 
     entete = (
         "PROCEDURES DU DEPOT RETENUES POUR CET OBJECTIF\n"
@@ -131,7 +188,7 @@ def bloc(
         completes.append(c.nom)
         restant -= cout
     if not morceaux:
-        return Injection((), "", 0, (), tuple(ecartees))
+        return Injection((), "", 0, (), tuple(ecartees), tuple(sorted(refus.items())))
 
     texte = entete + "\n\n" + "\n\n".join(morceaux)
     return Injection(
@@ -140,4 +197,5 @@ def bloc(
         cout_jetons=_jetons(texte),
         completes=tuple(completes),
         ecartees=tuple(ecartees),
+        refusees=tuple(sorted(refus.items())),
     )

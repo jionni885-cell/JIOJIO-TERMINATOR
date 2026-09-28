@@ -54,9 +54,19 @@ _NEGATIONS = re.compile(
 
 #: (motif, ce que sa presence signifie, gravite)
 MOTIFS: tuple[tuple[str, str, str], ...] = (
-    (r"(?i)ignore[zr]?\s+(les\s+)?(instructions|consignes)\.?\s*(precedentes|ci-dessus)?",
+    # -- contournement des consignes recues --------------------------------- #
+    #
+    # Ce motif est celui qui a demande le plus de soin, et il valait la peine : mesure faite sur
+    # sept formulations d'attaque reelles, CINQ passaient l'audit avant cette correction —
+    # « Ignore toutes les consignes precedentes » (un determinant intercale suffisait a passer
+    # entre les mailles), « Oublie les consignes », « Fais abstraction des regles ci-dessus »,
+    # « Ignore the above instructions », « Forget your previous rules ». Les verbes sont donc
+    # tous la, et les mots parasites (toutes, ces, vos, above, your) sont explicitement toleres.
+    (r"(?i)\b(ignore[zr]?|oublie[rz]?|fais\s+abstraction\s+(?:de|des|du))\b"
+     r"[^\n]{0,30}?\b(instructions?|consignes?|regles?|directives?|ordres?)\b",
      "instructions de contournement des consignes recues", "haute"),
-    (r"(?i)disregard\s+(all\s+)?(previous|prior)\s+instructions",
+    (r"(?i)\b(disregard|forget|ignore)\b[^\n]{0,30}?"
+     r"\b(instructions?|rules?|directives?|orders?|prompts?)\b",
      "instructions de contournement des consignes recues", "haute"),
     (r"--no-verify", "contournement d'un garde-fou git", "haute"),
     (r"(?i)(desactive|disable|skip|bypass|contourn\w*)\s+(la\s+|le\s+|les\s+)?"
