@@ -2040,7 +2040,7 @@ def _budget_contexte(args: argparse.Namespace) -> int:
     Un fichier de contexte trop long est SURVOLE, pas lu — il coute du contexte sans rien
     apporter. Un test vert ne le dit pas a l'utilisateur ; ce rapport, si.
     """
-    from .artifacts.budget import SEUILS, mesurer_depuis, resume, verdict
+    from .artifacts.budget import SEUILS, mesurer_depuis, resume, sur_disque, verdict
     from .artifacts.emit import manifest
 
     print(BANNER)
@@ -2059,12 +2059,23 @@ def _budget_contexte(args: argparse.Namespace) -> int:
     skills = {c: x for c, x in tous.items() if "/skills/" in c and c.endswith("SKILL.md")}
     agents = {c: x for c, x in tous.items() if c.startswith(".opencode/agents/")
               and c.endswith(".md") and not c.endswith("README.md")}
+    # Meme regle pour ce qui se charge a la demande : c'est le fichier du disque qui sera lu.
+    etat_skills = sur_disque(Path.cwd(), skills)
+    skills = etat_skills.fichiers
+    etat_agents = sur_disque(Path.cwd(), agents)
+    agents = etat_agents.fichiers
 
     # Un outil donne ne charge QU'UN fichier de contexte : Claude lit CLAUDE.md, Cursor
     # lit .cursor/rules/jio.mdc, Copilot lit .github/copilot-instructions.md, etc. Les
     # additionner produirait un total qu'AUCUNE session ne paie — c'est exactement le genre
     # de chiffre faux qu'un rapport sur le contexte ne peut pas se permettre. On mesure le
     # fichier le plus lourd et le plus leger, et on dit ce que paie une session reelle.
+    # On mesure le fichier du DISQUE, pas le texte que jio regenererait : c'est le premier que
+    # l'outil charge. `sur_disque` rend aussi ce qui diverge et ce qui n'existe pas encore, et
+    # les deux sont DITS plus bas — un chiffre qui porte sur un autre fichier que le sien est
+    # un chiffre faux, meme s'il est exact.
+    etat = sur_disque(Path.cwd(), demarrage)
+    demarrage = etat.fichiers
     demarrage_mesures = mesurer_depuis(Path.cwd(), demarrage)
     for lignes in resume(
         demarrage_mesures,
@@ -2086,7 +2097,12 @@ def _budget_contexte(args: argparse.Namespace) -> int:
         print(lignes)
     print()
 
-    tous_mesures = mesurer_depuis(Path.cwd(), tous)
+    # Le VERDICT porte sur les memes fichiers que l'affichage : ceux du disque. Le calculer sur
+    # le manifeste disait « aucun fichier ne depasse » d'un `.cursor/rules/jio.mdc` edite a la
+    # main qui en faisait 152 lignes — vu ici meme, en verifiant la correction.
+    tous_mesures = mesurer_depuis(
+        Path.cwd(), {**tous, **demarrage, **skills, **agents}
+    )
     for ligne in verdict(
         tous_mesures,
         est_competence=lambda chemin: "/skills/" in chemin and chemin.endswith("SKILL.md"),
@@ -2105,6 +2121,27 @@ def _budget_contexte(args: argparse.Namespace) -> int:
     print("    varie d'un modele a l'autre. Ce qu'on peut dire, on le dit ; le reste est")
     print("    declare comme incertain.")
     print()
+    # CE QUI A ETE MESURE, et pas suppose : le fichier du disque, ou celui que jio ecrira.
+    # Sans cette declaration, l'utilisateur croirait lire la taille de ses fichiers alors
+    # qu'il lit celle de la doctrine.
+    divergents = tuple(sorted(set(etat.divergents) | set(etat_skills.divergents)
+                              | set(etat_agents.divergents)))
+    absents = tuple(sorted(set(etat.absents) | set(etat_skills.absents)))
+    if divergents:
+        print("    MESURE SUR VOS FICHIERS (ils diffèrent de la doctrine, et c'est EUX que")
+        print("    vos outils chargent). `jio artifacts --write` les mettre a jour, ou les")
+        print("    PRESERVERA s'ils ne portent pas la marque de jio — comparez-les :")
+        for chemin in divergents[:4]:
+            cible = Path.cwd() / chemin
+            sur_disque_lignes = len(cible.read_text(encoding="utf-8").splitlines())
+            doctrine_lignes = len(tous[chemin].splitlines())
+            print(f"      {chemin} : {sur_disque_lignes} ligne(s) ici, "
+                  f"{doctrine_lignes} dans la doctrine")
+        print()
+    if absents:
+        print(f"    {len(absents)} fichier(s) pas encore ecrit(s) : la mesure porte sur ce que "
+              "`jio artifacts --write` ecrira.")
+        print()
     return 0
 
 

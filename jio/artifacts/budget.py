@@ -33,6 +33,7 @@ from pathlib import Path
 __all__ = [
     "Mesure",
     "SEUILS",
+    "sur_disque",
     "mesurer",
     "mesurer_depuis",
     "verdict",
@@ -168,3 +169,49 @@ def resume(mesures: list[Mesure], titre: str, *, total: bool = True) -> list[str
         lignes.append("")
         lignes.append(f"    TOTAL : {len(mesures)} fichier(s), ~{cumul} jetons (estimation)")
     return lignes
+
+
+@dataclass(frozen=True)
+class EtatDisque:
+    """Ce qui est REELLEMENT charge, et ce qui a ete modifie a la main.
+
+    DEFAUT MESURE, corrige ici : `jio artifacts --budget` mesurait le MANIFESTE — le texte que
+    jio regenererait — et jamais le fichier pose sur le disque. Un `AGENTS.md` edite a la main
+    (donc PRESERVE par le garde-fou d'ecriture, et charge par l'outil) etait donc mesure a la
+    place d'un autre. Le rapport annoncait « 150 lignes » d'un fichier qui en faisait 300.
+
+    C'est le seul chiffre qui decide si le harness aide ou nuit : il doit porter sur ce que
+    l'outil CHARGE. Deux consequences, et les deux sont declarees plutot que tues :
+
+      * `divergents` : le fichier existe, il differe de la doctrine — la mesure porte sur VOTRE
+        fichier, et on le dit, parce que `jio artifacts --write` peut le PRESERVER (il n'est pas
+        a nous) : recommander une regeneration qui ne peut pas reparer serait une boucle ;
+      * `absents` : le fichier n'existe pas encore — la mesure porte sur ce que jio ecrira, et
+        c'est declare aussi. Mesurer un futur en le presentant comme un present, c'est le genre
+        de chiffre que ce depot refuse.
+    """
+
+    fichiers: dict[str, str]
+    divergents: tuple[str, ...]
+    absents: tuple[str, ...]
+
+
+def sur_disque(racine: Path, generes: dict[str, str]) -> EtatDisque:
+    """Remplace le contenu genere par celui du disque, quand il existe."""
+    fichiers: dict[str, str] = {}
+    divergents: list[str] = []
+    absents: list[str] = []
+    for chemin, genere in generes.items():
+        cible = racine / chemin
+        try:
+            reel = cible.read_text(encoding="utf-8") if cible.is_file() else None
+        except OSError:
+            reel = None
+        if reel is None:
+            absents.append(chemin)
+            fichiers[chemin] = genere
+            continue
+        fichiers[chemin] = reel
+        if reel != genere:
+            divergents.append(chemin)
+    return EtatDisque(fichiers, tuple(sorted(divergents)), tuple(sorted(absents)))
