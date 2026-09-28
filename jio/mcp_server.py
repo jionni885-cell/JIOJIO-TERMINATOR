@@ -571,7 +571,15 @@ def _version() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Boucle stdio : une ligne JSON par message, comme le veut le protocole."""
+    """Boucle stdio : une ligne JSON par message, comme le veut le protocole.
+
+    Le nombre de messages TRAITES est compte, et une session qui en traite zero le DIT sur la
+    sortie d'erreur. Sans cela, un client mal configure qui ouvre le serveur sans rien envoyer
+    obtenait une sortie vide et un code 0 : indistinguable d'un serveur qui aurait tout bien
+    repondu. La sortie d'erreur n'est pas le canal du protocole, donc cette note ne peut pas
+    corrompre un echange en cours.
+    """
+    traites = 0
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -594,6 +602,15 @@ def main(argv: list[str] | None = None) -> int:
         if response is None:
             continue
         print(json.dumps(response, ensure_ascii=False), flush=True)
+        traites += 1
+    if traites == 0:
+        print(
+            "[JIO-MCP] aucun message recu : le serveur n'a rien eu a servir. Il attend une "
+            "ligne JSON par requete sur son entree standard (JSON-RPC 2.0). Pour verifier "
+            "qu'un client le branche vraiment : `jio mcp --prove`.",
+            file=sys.stderr,
+            flush=True,
+        )
     return 0
 
 

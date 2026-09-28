@@ -24,7 +24,7 @@ from pathlib import Path
 
 from .core.env import bool_env, float_env, int_env, str_env
 from .verify.claims import RapportProse
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from dataclasses import replace as _replace
 
@@ -2508,20 +2508,41 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         print()
         return 0
 
-    if args.list:
-        print()
-        print("  SERVEUR MCP JIO  ·  transport stdio, JSON-RPC 2.0, zero dependance")
-        print()
-        for tool in TOOLS:
-            print(f"    {tool['name']:<14} {tool['description'][:80]}")
-        print()
-        print("  Configuration : `jio artifacts --mcp <dialecte>` pour opencode, Hermes,")
-        print("  Codex, Claude Code ou Cursor ; `jio artifacts --target mcp --write` pour")
-        print("  `.mcp.json` (dialecte de Claude Code, lu aussi par Cursor).")
-        print("  Preuve du cablage : `jio mcp --prove`. Securite : chemins confines a JIO_ROOT.")
-        print()
+    # `jio mcp` LANCE un serveur : il parle JSON-RPC sur son entree standard, et un humain qui
+    # le tape dans un terminal n'y verrait RIEN — la commande attendrait un message qui ne
+    # viendra jamais, puis rendrait 0 sans un mot. Un chemin qui sort en 0 sans rien produire
+    # est indistinguable d'un succes : c'est exactement ce que ce depot refuse partout ailleurs.
+    # Reconnaitre le terminal et MONTRER ce que le serveur sert, c'est la meme information que
+    # `--list`, plus la raison pour laquelle la commande ne bloque pas ici.
+    if args.list or sys.stdin.isatty():
+        _outils_mcp(TOOLS, interactif=not args.list)
         return 0
     return mcp_main()
+
+
+def _outils_mcp(tools: Sequence[Mapping[str, object]], *, interactif: bool) -> None:
+    """Ce que le serveur MCP expose — et, dans un terminal, pourquoi il ne demarre pas."""
+    from .artifacts.wiring import _COMMANDE
+
+    print()
+    print("  SERVEUR MCP JIO  ·  transport stdio, JSON-RPC 2.0, zero dependance")
+    print()
+    if interactif:
+        print("  Cette commande demarre un SERVEUR : elle parle JSON-RPC 2.0 sur son entree")
+        print("  standard et sur sa sortie standard. Lancee dans un terminal, elle n'aurait")
+        print("  rien a repondre — donc elle montre a la place ce qu'elle sert.")
+        print()
+        print("  Pour l'interroger : `jio mcp --prove` demarre le serveur et compte les outils")
+        print(f"  qu'il rend vraiment, par la commande `{' '.join(_COMMANDE)}`.")
+        print()
+    for tool in tools:
+        print(f"    {tool['name']:<14} {str(tool['description'])[:80]}")
+    print()
+    print("  Configuration : `jio artifacts --mcp <dialecte>` pour opencode, Hermes,")
+    print("  Codex, Claude Code ou Cursor ; `jio artifacts --target mcp --write` pour")
+    print("  `.mcp.json` (dialecte de Claude Code, lu aussi par Cursor).")
+    print("  Preuve du cablage : `jio mcp --prove`. Securite : chemins confines a JIO_ROOT.")
+    print()
 
 
 def cmd_trace(args: argparse.Namespace) -> int:

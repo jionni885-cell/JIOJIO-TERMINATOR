@@ -282,3 +282,85 @@ def test_le_fragment_cursor_lance_la_MEME_commande_que_le_serveur() -> None:
     assert config["args"] == list(_COMMANDE[1:])
     assert config["args"] and config["args"][0] == "-m"
     assert config["command"] == _COMMANDE[0]
+
+
+# --------------------------------------------------------------------------- #
+# `jio mcp` : un chemin qui sort en 0 sans rien produire n'est pas un succes
+# --------------------------------------------------------------------------- #
+
+
+def test_jio_mcp_dans_un_TERMINAL_montre_ce_qu_il_sert_au_lieu_de_bloquer(monkeypatch, capsys):
+    """Un humain qui tape `jio mcp` ne doit pas voir une commande muette qui attend.
+
+    `jio mcp` sans argument LANCE un serveur JSON-RPC sur son entree standard. Dans un terminal,
+    il n'y a personne pour envoyer du JSON : la commande attendait indéfiniment, puis rendait 0
+    sans un mot. Un chemin qui sort en 0 sans rien produire est indistinguable d'un succes —
+    c'est exactement ce que ce depot refuse partout ailleurs.
+
+    Comportement retenu : quand l'entree standard est un TERMINAL, `jio mcp` montre ce que le
+    serveur sert (la meme chose que `--list`) et DIT pourquoi il ne demarre pas ici.
+    """
+    import io
+    import sys as _sys
+
+    from jio.cli import main
+
+    class _Terminal(io.StringIO):
+        def isatty(self) -> bool:            # noqa: D102 — ce que le vrai terminal repond
+            return True
+
+    monkeypatch.setattr(_sys, "stdin", _Terminal(""))
+    code = main(["mcp"])
+
+    assert code == 0
+    sortie = capsys.readouterr().out
+    assert "SERVEUR MCP JIO" in sortie
+    assert "demarre un SERVEUR" in sortie
+    assert "jio mcp --prove" in sortie
+    # Les outils exposes sont LISTES, pas resumés : c'est cette liste qui dit a l'utilisateur
+    # ce qu'il vient de cabler.
+    from jio.mcp_server import TOOLS
+
+    for outil in TOOLS:
+        assert outil["name"] in sortie, outil["name"]
+
+
+def test_une_session_MCP_sans_aucun_message_le_DIT_sur_la_sortie_d_erreur(monkeypatch, capsys):
+    """Zero message traite n'est pas « tout s'est bien passe » : c'est un silence, et il se dit.
+
+    Mesure a l'origine : `jio mcp < /dev/null` sortait en 0 avec une sortie VIDE. Un client mal
+    configure — celui qui ouvre le serveur sans jamais lui parler — obtenait exactement la meme
+    chose qu'un client a qui tout a ete repondu. La sortie d'erreur n'est pas le canal du
+    protocole : y ecrire ne peut pas corrompre un echange en cours.
+    """
+    import io
+    import sys as _sys
+
+    from jio.mcp_server import main as mcp_main
+
+    monkeypatch.setattr(_sys, "stdin", io.StringIO(""))
+    assert mcp_main() == 0
+    capture = capsys.readouterr()
+    assert capture.out == "", "rien ne doit sortir sur le canal du protocole"
+    assert "aucun message recu" in capture.err
+    assert "jio mcp --prove" in capture.err
+
+
+def test_une_session_MCP_avec_un_message_ne_dit_RIEN_sur_la_sortie_d_erreur(monkeypatch, capsys):
+    """Le bruit ne doit apparaitre que dans le cas vide : sinon il pollue un vrai client.
+
+    C'est l'autre bord du test precedent, et il compte autant : un avertissement emis a chaque
+    session ferait ignorer l'avertissement qui compte.
+    """
+    import io
+    import json as _json
+    import sys as _sys
+
+    from jio.mcp_server import main as mcp_main
+
+    requete = _json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    monkeypatch.setattr(_sys, "stdin", io.StringIO(requete + "\n"))
+    assert mcp_main() == 0
+    capture = capsys.readouterr()
+    assert "aucun message recu" not in capture.err
+    assert "tools" in capture.out
