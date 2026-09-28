@@ -2163,6 +2163,50 @@ def _budget_contexte(args: argparse.Namespace) -> int:
     return 0
 
 
+def _hermes_installer(racine: Path, *, desinstaller: bool, lier: bool) -> int:
+    """`jio artifacts --install-hermes` / `--desinstaller` : le geste, et son retour en arriere.
+
+    Le dossier cible est cree ICI si besoin : contrairement a `jio start`, l'utilisateur a
+    demande explicitement l'installation — ne rien faire parce qu'un dossier n'existe pas encore
+    serait une obedience litterale au lieu d'un service.
+    """
+    from .artifacts.install_hermes import REGISTRE, desinstaller as retirer
+    from .artifacts.install_hermes import dossier_hermes, installer
+
+    print(BANNER)
+    cible = dossier_hermes()
+    if desinstaller:
+        rapport = retirer(racine, dossier=cible)
+        print("  DESINSTALLATION DES COMPETENCES HERMES")
+        print(f"    dossier : {cible}")
+        print(f"    retire(s) : {len(rapport.copies)}")
+        for chemin in rapport.preserves[:6]:
+            print(f"    PRESERVE : {chemin} (modifie depuis l'installation : a vous)")
+        print(f"    registre : {REGISTRE}")
+        print()
+        return 0
+
+    rapport = installer(racine, dossier=cible, lier=lier, creer=True)
+    print("  INSTALLATION DES COMPETENCES HERMES")
+    print(f"    dossier : {cible}  ·  mode : {'liens' if lier else 'copies'}")
+    for chemin in rapport.liens[:8]:
+        print(f"    LIEN      {chemin}")
+    for chemin in rapport.copies[:8]:
+        print(f"    COPIE     {chemin}")
+    for chemin in rapport.mises_a_jour[:8]:
+        print(f"    A JOUR    {chemin}")
+    for chemin in rapport.deja[:6]:
+        print(f"    deja      {chemin}")
+    for chemin in rapport.preserves[:6]:
+        print(f"    PRESERVE  {chemin} (a vous : jamais ecrase)")
+    print(f"    total : {rapport.resume()}")
+    if rapport.ignores:
+        print("    aucun dossier .hermes/skills dans ce projet : rien a installer.")
+        return 2
+    print()
+    return 0
+
+
 def _auditer_artefacts() -> int:
     """`jio artifacts --audit` : les competences et les agents sont-ils surs a executer ?
 
@@ -2213,6 +2257,9 @@ def cmd_artifacts(args: argparse.Namespace) -> int:
         return _brancher_mcp(args)
     if getattr(args, "audit", False):
         return _auditer_artefacts()
+    if getattr(args, "install_hermes", False) or getattr(args, "desinstaller", False):
+        return _hermes_installer(Path(args.root), desinstaller=bool(
+            getattr(args, "desinstaller", False)), lier=bool(getattr(args, "lier", False)))
     from .artifacts import TARGETS, manifest
 
     targets = tuple(args.target) if args.target else TARGETS
@@ -3361,6 +3408,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="verifie que les competences et les agents ne contiennent pas d'ordre dangereux",
     )
+    # L'INSTALLATION chez Hermes, accessible hors de `jio start` — et surtout desinstallable :
+    # une installation dont on ne peut pas revenir est une prise d'otage.
+    ar.add_argument(
+        "--install-hermes", dest="install_hermes", action="store_true",
+        help=(
+            "installe les competences dans ~/.hermes/skills (copie enregistree ; un fichier a "
+            "vous n'est JAMAIS ecrase). `jio start` le fait deja : cette option sert a le "
+            "refaire seul, ou dans un autre projet."
+        ),
+    )
+    ar.add_argument(
+        "--desinstaller", dest="desinstaller", action="store_true",
+        help="retire de ~/.hermes/skills ce que jio y a installe — et rien d'autre",
+    )
+    ar.add_argument(
+        "--lier", dest="lier", action="store_true",
+        help=(
+            "avec --install-hermes : poser des LIENS au lieu de copies (synchronisation "
+            "permanente). Attention : editer la copie ecrit alors dans le fichier du projet."
+        ),
+    )
     # Le CABLAGE du serveur MCP, distinct de son emission : `.mcp.json` est le dialecte de
     # Claude Code, opencode lit `opencode.json`, Hermes lit `~/.hermes/config.yaml`. Sans
     # cette option, les outils JIO existaient et restaient injoignables depuis deux des
@@ -3468,6 +3536,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="montre ce qui serait fait, sans rien ecrire")
     st.add_argument("--sans-mcp", dest="sans_mcp", action="store_true",
                     help="n'ecrit pas les fichiers de cablage MCP (artefacts seuls)")
+    st.add_argument(
+        "--sans-hermes", dest="sans_hermes", action="store_true",
+        help=(
+            "n'installe PAS les competences dans ~/.hermes/skills. Par defaut `jio start` les y "
+            "installe (par LIEN, pour qu'une mise a jour du depot les mette a jour), sans jamais "
+            "ecraser un fichier qui n'est pas de nous."
+        ),
+    )
     st.set_defaults(func=cmd_start)
 
     au = sub.add_parser(
@@ -4311,10 +4387,47 @@ def cmd_start(args: argparse.Namespace) -> int:
         etat_coherence = f"{len(rapport.incoherents)} controle(s) en echec : {noms}"
         ecran_coherence = etat_coherence
 
+    # --- les competences, installees la ou Hermes les LIT ------------------------------- #
+    # Ecrire `.hermes/skills/` dans le projet ne suffisait pas : Hermes lit `~/.hermes/skills/`.
+    # Entre les deux il y avait un `cp -r` a taper a la main — donc une etape que personne ne
+    # fait, et douze procedures qui dorment sur le disque sans jamais entrer dans la boucle.
+    hermes_etat = ""
+    if not getattr(args, "sans_hermes", False):
+        from .artifacts.install_hermes import REGISTRE, dossier_hermes, installer
+
+        print()
+        print("    COMPETENCES HERMES (la ou l'agent les lit : ~/.hermes/skills)")
+        cible_hermes = dossier_hermes()
+        install = installer(racine)
+        if install.ignores:
+            print(f"      rien installe : {cible_hermes} n'existe pas encore.")
+            print("      Lance Hermes une fois (ou cree le dossier), puis relance `jio start` :")
+            print(f"          mkdir -p {cible_hermes} && jio start")
+            print("      Sinon, installe-les a la main :")
+            print(f"          cp -r {racine / '.hermes' / 'skills'}/* {cible_hermes}/")
+            hermes_etat = "aucune (dossier Hermes absent)"
+        else:
+            for chemin in install.liens[:8]:
+                print(f"      LIEN      {chemin}")
+            for chemin in install.copies[:8]:
+                print(f"      COPIE     {chemin}")
+            for chemin in install.mises_a_jour[:8]:
+                print(f"      A JOUR    {chemin}  (version precedente de jio, remplacee)")
+            for chemin in install.deja[:4]:
+                print(f"      deja      {chemin}")
+            for chemin in install.preserves[:4]:
+                print(f"      PRESERVE  {chemin} (a vous : non touche)")
+            if install.preserves:
+                print("      Ces fichiers ne seront JAMAIS ecrases : comparez-les, puis")
+                print("      supprimez-les si vous voulez que jio les gere.")
+            print(f"      total : {install.resume()}  ·  registre : {REGISTRE}")
+            hermes_etat = install.resume()
+
     etat.mkdir(parents=True, exist_ok=True)
     fiche = etat / "ACTIVE.md"
     texte_fiche = _fiche_active(
-        racine, detectees, cables, presents, len(decisions), a_jour, etat_coherence
+        racine, detectees, cables, presents, len(decisions), a_jour, etat_coherence,
+        hermes=hermes_etat,
     )
     # « Ne reecrit rien » se mesure sur le contenu ET sur la date : ecrire un texte identique
     # laisse git propre mais fait bouger la date de modification, donc un generateur qui
@@ -4354,6 +4467,7 @@ def _fiche_active(
     total: int = 0,
     a_jour: int = 0,
     coherence: str = "non mesuree",
+    hermes: str = "",
 ) -> str:
     """`.jio/ACTIVE.md` : ce qu'une IA doit lire avant de toucher ce projet.
 
@@ -4370,12 +4484,18 @@ def _fiche_active(
     artefacts = f"{presents}/{total} present(s)" + (
         f", {a_jour} a jour" if total and a_jour != presents else ""
     )
+    # L'installation des competences chez Hermes est un FAIT DU MONDE, pas une activite : elle
+    # appartient donc a la fiche. Sans cette ligne, une IA lisait douze procedures dans le
+    # depot et ne pouvait pas savoir si SON outil les avait chargees.
+    competences_hermes = (
+        f"\nCOMPETENCES HERMES : {hermes}" if hermes else ""
+    )
     return f"""# JIO est actif sur ce projet
 
 > Fiche ecrite par `jio start`. Elle decrit l'etat REEL au moment de l'ecriture.
 > Pour la reecrire : `jio start`. Pour la contredire : les commandes ci-dessous.
 
-PROJET : {racine}
+PROJET : {racine}{competences_hermes}
 
 ## Ce qui a ete fait
 
@@ -4407,7 +4527,9 @@ la bonne action est de POSER la question a l'utilisateur, pas de commencer.
 
 ## Les procedures du depot : lesquelles charger, et quand
 
-Ce depot livre **12 procedures** (`.hermes/skills/`) et **7 agents** (`.opencode/agents/`). Les
+Ce depot livre **12 procedures** (`.hermes/skills/`) et **7 agents** (`.opencode/agents/`). Chez
+Hermes, `jio start` les INSTALLE la ou l'agent les lit (`~/.hermes/skills/`), par lien pour
+qu'une mise a jour du depot les mette a jour sans recopie. Les
 charger TOUTES coute 6424 jetons dans la fenetre — mesure du domaine : un contexte sature fait
 perdre ce que le contexte apportait. Ne pas les charger du tout revient a ignorer ce que le
 depot sait faire. La reponse est une commande, pas un choix a l'aveugle :

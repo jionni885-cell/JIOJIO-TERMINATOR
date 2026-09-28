@@ -286,3 +286,72 @@ def test_la_fiche_enseigne_le_routeur_de_procedures() -> None:
     # fichier de contexte est survole) : ce test est le garde-fou du budget.
     assert len(fiche.splitlines()) < 110
 
+
+
+def test_start_INSTALLE_les_competences_la_ou_hermes_les_lit(tmp_path, monkeypatch, capsys) -> None:
+    """La demande qui a motive cette etape : « quand je donne le depot a mon IA, elle s'integre
+    et fait tout ce qu'il faut » — sans `cp -r` a taper a la main.
+
+    Hermes lit `~/.hermes/skills/` ; le depot les ecrivait dans `.hermes/skills/`. Entre les
+    deux, une etape manuelle que personne ne fait.
+    """
+    from jio.cli import main
+
+    projet = tmp_path / "projet"
+    projet.mkdir()
+    (projet / ".git").mkdir()
+    maison = tmp_path / "hermes"
+    (maison / "skills").mkdir(parents=True)
+    monkeypatch.setenv("HERMES_HOME", str(maison))
+    monkeypatch.chdir(projet)
+
+    code = main(["start"])
+    sortie = capsys.readouterr().out
+
+    assert code == 0
+    assert "COMPETENCES HERMES" in sortie
+    installees = list((maison / "skills").rglob("SKILL.md"))
+    assert len(installees) == 12, f"12 procedures attendues, {len(installees)} installees"
+    assert "total : 13 copie(s)" in sortie or "copie(s)" in sortie
+    # La fiche que lit l'IA porte l'ETAT de cette installation : elle doit pouvoir savoir si
+    # son outil a reellement les procedures, sans deviner.
+    fiche = (projet / ".jio" / "ACTIVE.md").read_text(encoding="utf-8")
+    assert "COMPETENCES HERMES :" in fiche
+
+
+def test_start_ne_cree_pas_le_dossier_hermes_d_un_utilisateur_qui_ne_l_a_jamais_lance(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """Une installation surprise dans le dossier personnel n'est pas une integration."""
+    from jio.cli import main
+
+    projet = tmp_path / "projet"
+    projet.mkdir()
+    (projet / ".git").mkdir()
+    maison = tmp_path / "jamais-cree"
+    monkeypatch.setenv("HERMES_HOME", str(maison))
+    monkeypatch.chdir(projet)
+
+    main(["start"])
+    sortie = capsys.readouterr().out
+
+    assert not maison.exists()
+    assert "n'existe pas encore" in sortie
+    assert "mkdir -p" in sortie
+
+
+def test_start_sans_hermes_n_installe_rien(tmp_path, monkeypatch, capsys) -> None:
+    from jio.cli import main
+
+    projet = tmp_path / "projet"
+    projet.mkdir()
+    (projet / ".git").mkdir()
+    maison = tmp_path / "hermes"
+    (maison / "skills").mkdir(parents=True)
+    monkeypatch.setenv("HERMES_HOME", str(maison))
+    monkeypatch.chdir(projet)
+
+    main(["start", "--sans-hermes"])
+    capsys.readouterr()
+
+    assert list((maison / "skills").rglob("SKILL.md")) == []

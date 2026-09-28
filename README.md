@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1101 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1112 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1286,7 +1286,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1101 tests verts -> 1101 tests verts
+         - README.md ligne 15 : 1112 tests verts -> 1112 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2354,6 +2354,38 @@ croire qu'un réglage plus dur aurait changé le verdict.
 
 Codes de sortie : **0** si le moteur complet n'a livré aucune erreur sans réserve, **1** s'il
 en a livré une — un levier non distingué n'est pas une panne, c'est une mesure honnête.
+
+## Hermes : les compétences installées là où l'agent les lit
+
+Écrire les compétences dans le projet ne suffisait pas. **Hermes lit `~/.hermes/skills/`**, et le
+dépôt les écrivait dans `.hermes/skills/` : entre les deux, il y avait un `cp -r` à taper à la
+main. C'est-à-dire une étape que personne ne fait — et douze procédures qui dorment sur le disque
+sans jamais entrer dans la boucle de l'agent. L'intégration en une commande s'arrêtait juste avant
+l'endroit qui compte.
+
+`jio start` installe donc les procédures chez Hermes. Trois décisions, chacune payée par un essai :
+
+- **Des copies enregistrées par empreinte, pas des liens symboliques.** L'idée naturelle était le
+  lien : il garde les deux en phase par construction. L'essai l'a tué — `echo x >
+  ~/.hermes/skills/…/SKILL.md` sur un lien écrit **dans le fichier du projet**, et le prochain
+  `jio artifacts --write` efface l'édition. L'utilisateur croit modifier sa copie, il détruit une
+  source générée, en silence, dans son dossier personnel. Une copie isole les deux mondes ;
+- **une ancienne version de jio se met à jour, un fichier écrit par toi jamais.** Le registre
+  `.jio/hermes-install.json` garde l'empreinte de ce qui a été posé. Si la copie a changé et que
+  l'empreinte correspond, c'est nous : on met à jour. Si l'empreinte ne correspond plus, c'est toi :
+  on préserve, on nomme, et on ne touche pas. `.hermes/skills` est **ton** dossier ;
+- **rien n'est créé si tu n'as jamais lancé Hermes.** L'installation n'invente pas un dossier
+  personnel : elle dit quoi faire et s'arrête.
+
+```console
+$ jio start                       # écrit, câble, prouve, installe — et le dit
+$ jio artifacts --install-hermes  # la même chose seule, dans un autre projet
+$ jio artifacts --desinstaller    # retire ce que jio a posé, et rien d'autre
+```
+
+La désinstallation n'est pas un détail : une installation dont on ne peut pas revenir est une
+prise d'otage. Elle vérifie l'empreinte avant de retirer — tes propres compétences restent, et
+celles que tu as éditées aussi.
 
 ## Les codes de sortie : un contrat, pas des nombres
 

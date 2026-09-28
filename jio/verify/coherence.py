@@ -343,13 +343,27 @@ def _controle_environnement(racine: Path) -> Constat:
     que l'utilisateur ne peut pas trouver, et une variable documentee mais jamais lue est une
     promesse en l'air.
     """
-    import tests.test_env_wiring as wiring  # noqa: PLC0415 - module de test, import paresseux
-
-    # Meme regle que `sources` : ce controle decrit les variables lues par le CODE de JIO.
-    # Sur un autre depot, il n'a rien a dire — et se taire serait un faux vert.
+    # L'ORDRE COMPTE, et c'est un defaut mesure : l'import venait AVANT ce controle de portee.
+    # Resultat, `jio start` sur un projet quelconque affichait
+    #     [KO] environnement  le controle a leve : No module named 'tests'
+    # — le controle plantait sur le cas meme pour lequel il declare n'avoir rien a dire. Un
+    # portail qui echoue sur un depot tiers apprend a l'utilisateur a ignorer ses rouges.
     if not (racine / "jio" / "__init__.py").is_file():
         return Constat("environnement", True,
                        "hors de portee : aucun paquet jio/ dans cette racine", portee=False)
+
+    try:
+        import tests.test_env_wiring as wiring  # noqa: PLC0415 - module de test, import paresseux
+    except ImportError:
+        # Le paquet jio/ est la, mais ses TESTS ne sont pas importables (installation par
+        # `pip install jio`, ou `tests/` absent). La comparaison « ce que le code lit » contre
+        # « ce qui est documente » ne peut pas avoir lieu : on le declare, on ne fait pas semblant.
+        return Constat(
+            "environnement", True,
+            "hors de portee : les tests du depot jio ne sont pas importables ici "
+            "(installation sans sources ?) — ce controle compare `.env.example` au code de jio",
+            portee=False,
+        )
 
     documentees = wiring._documented()                                            # noqa: SLF001
     brutes = wiring._read_by_code()                                               # noqa: SLF001
