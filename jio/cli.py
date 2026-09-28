@@ -70,7 +70,44 @@ COLORS = {
 }
 
 
-def _c(text: str, key: str, enabled: bool = True) -> str:
+def couleur_activee(flux: object | None = None) -> bool:
+    """Faut-il ecrire des sequences ANSI dans `flux` ?
+
+    DEFAUT MESURE ET CORRIGE. `render_report` peignait sa sortie par defaut, sans regarder OU
+    elle allait : `jio run > rapport.txt` ecrivait donc sept sequences d'echappement dans un
+    fichier, et un journal de CI les affichait en clair. Une couleur est une commodite de
+    TERMINAL ; ailleurs, c'est du bruit qui pollue les fichiers, casse les comparaisons de
+    texte et se retrouve colle dans un ticket.
+
+    Trois regles, dans cet ordre — les deux premieres sont des CONVENTIONS, pas des inventions :
+
+      * `NO_COLOR`, present et non vide (https://no-color.org) : plus une seule sequence.
+        C'est le standard que les outils respectent, et un test l'exige ici ;
+      * `JIO_NO_COLOR`, notre nom a nous, pour couper les couleurs sans toucher a `NO_COLOR`
+        du reste de la machine ;
+      * `TERM=dumb` : le terminal annonce qu'il ne sait rien afficher ;
+      * sinon, la sortie doit etre un TERMINAL. Un tube ou un fichier n'en est pas un.
+
+    L'ordre compte : une variable d'environnement explicite gagne toujours sur la deduction.
+    """
+    if os.environ.get("NO_COLOR", "").strip():
+        return False
+    if os.environ.get("JIO_NO_COLOR", "").strip():
+        return False
+    if os.environ.get("TERM", "").strip().lower() == "dumb":
+        return False
+    cible = flux if flux is not None else sys.stdout
+    try:
+        return bool(cible.isatty())
+    except (AttributeError, ValueError):
+        # Un flux sans `isatty`, ou ferme : on ne peint pas.
+        return False
+
+
+def _c(text: str, key: str, enabled: bool | None = None) -> str:
+    """Colore `text` — par defaut seulement si la sortie est un terminal (voir `couleur_activee`)."""
+    if enabled is None:
+        enabled = couleur_activee()
     if not enabled:
         return text
     return f"{COLORS.get(key, '')}{text}{COLORS['reset']}"
@@ -296,8 +333,16 @@ def _real_engine(
 # --------------------------------------------------------------------------- #
 
 
-def render_report(report: MissionReport, *, verbose: bool = False, color: bool = True) -> str:
-    """Synthese + preuves, en francais. Details via `jio trace`."""
+def render_report(
+    report: MissionReport, *, verbose: bool = False, color: bool | None = None
+) -> str:
+    """Synthese + preuves, en francais. Details via `jio trace`.
+
+    `color=None` (le defaut) interroge `couleur_activee()` : la couleur suit la SORTIE reelle
+    au lieu d'etre supposee. Les appelants qui veulent forcer l'un ou l'autre passent `True` ou
+    `False`, ce que font les tests — et c'est la seule facon d'ecrire un test de couleur qui ne
+    depend pas du terminal qui l'execute.
+    """
     icon = ICONS.get(report.status, "??")
     key = {
         MissionStatus.DELIVERED: "ok",
@@ -1768,7 +1813,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.json:
         Path(args.json).write_text(report.to_json(), encoding="utf-8")
         print(f"  rapport JSON ecrit dans {args.json}")
-    return 0 if report.status is MissionStatus.DELIVERED else 1
+    # Le code de sortie vient de la TABLE, pas d'une condition ecrite ici : une abstention
+    # (rien n'a pu etre prouve) n'est pas une reserve a lever, et l'appelant doit pouvoir les
+    # distinguer pour savoir s'il corrige ou s'il fournit. Voir `jio/core/codes.py`.
+    from .core.codes import ACTION, code_de_mission
+
+    code = code_de_mission(report.status)
+    if code:
+        print(f"  -> code {code} : {ACTION[code]}")
+    return code
 
 
 def cmd_audit(args: argparse.Namespace) -> int:

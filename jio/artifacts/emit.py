@@ -186,10 +186,9 @@ def _target_claude() -> dict[str, str]:
     extra = """
 ## Sous-agents
 
-Les roles du harness sont disponibles comme agents (`jio`, `jio-verifier`,
-`jio-redteam`, `jio-grounder`, `jio-comptroller`, `jio-archaeologist`,
-`jio-forge`). Le verificateur n'a **pas** le droit d'ecrire : un verificateur qui
-peut modifier l'artefact qu'il juge finit toujours par le rendre conforme.
+Les roles du harness existent comme agents : `jio`, `jio-verifier`, `jio-redteam`,
+`jio-grounder`, `jio-comptroller`, `jio-archaeologist`, `jio-forge`. Le verificateur
+n'a **pas** le droit d'ecrire : qui peut modifier l'artefact qu'il juge le rend conforme.
 """
     return {"CLAUDE.md": _context_file("CLAUDE.md — instructions projet", extra, entete=False)}
 

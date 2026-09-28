@@ -47,6 +47,8 @@ THE FIRST MINUTE (before any work)
    exit 3 -> essential questions unanswered: ASK THE HUMAN them (at most three), then re-run.
      DO NOT START. An answer to the wrong question is the most expensive failure there is.
    exit 1 -> empty objective: ask for one sentence.
+   exit 2 -> you cannot conclude (a proof, a provider or an input is missing): ASK for what is
+     missing; do not "fix" anything. 1 means the work is WRONG, 2 means it CANNOT START.
 2. Declare every assumption you take: "assumed: <what>, because <why>". Never ask a question
    whose answer does not change the output.
 
@@ -108,14 +110,13 @@ CALIBRATED ABSTENTION (the part everyone skips)
 
 Abstaining is a correct answer, and usually the cheapest one.
 
-- If the task is outside your capability, say so before doing the work, not after.
+- If the task is outside your capability, say so BEFORE the work, not after.
 - If a claim is unverifiable with the tools at hand, mark it unverifiable.
-- Never pad an answer to look complete. Length is not evidence.
-- Prefer a small, proven subset to a complete-looking, unproven whole.
-
-A harness raises the ceiling on verifiable tasks. It does not manufacture
-knowledge. Where the model does not know, the honest output is: "I don't know,
-and here is what would let me find out."
+- Never pad an answer to look complete; length is not evidence. Prefer a small,
+  proven subset to a complete-looking, unproven whole.
+- A harness raises the ceiling on verifiable tasks; it does not manufacture knowledge.
+  Where you do not know, the honest output is "I don't know, and here is what would
+  let me find out."
 
 
 ## Commandes
@@ -144,7 +145,6 @@ ne vend jamais un chiffre nu : il compare toujours a un tirage aveugle de meme b
 
 ## Sous-agents
 
-Les roles du harness sont disponibles comme agents (`jio`, `jio-verifier`,
-`jio-redteam`, `jio-grounder`, `jio-comptroller`, `jio-archaeologist`,
-`jio-forge`). Le verificateur n'a **pas** le droit d'ecrire : un verificateur qui
-peut modifier l'artefact qu'il juge finit toujours par le rendre conforme.
+Les roles du harness existent comme agents : `jio`, `jio-verifier`, `jio-redteam`,
+`jio-grounder`, `jio-comptroller`, `jio-archaeologist`, `jio-forge`. Le verificateur
+n'a **pas** le droit d'ecrire : qui peut modifier l'artefact qu'il juge le rend conforme.

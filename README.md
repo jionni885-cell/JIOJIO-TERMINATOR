@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1070 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1086 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -858,13 +858,13 @@ visible :
 ```
   CHARGE AU DEMARRAGE — un outil n'en lit qu'UN (celui de son dialecte)
 
-    CLAUDE.md                          150 ligne(s)    1901-2613   jetons
-    AGENTS.md                          145 ligne(s)    1843-2535   jetons
-    .cursor/rules/jio.mdc              148 ligne(s)    1842-2533   jetons
-    GEMINI.md                          143 ligne(s)    1828-2513   jetons
-    .github/copilot-instructions.md    143 ligne(s)    1829-2514   jetons
+    CLAUDE.md                          150 ligne(s)    1930-2654   jetons
+    AGENTS.md                          146 ligne(s)    1883-2589   jetons
+    .cursor/rules/jio.mdc              149 ligne(s)    1882-2588   jetons
+    .github/copilot-instructions.md    144 ligne(s)    1868-2569   jetons
+    GEMINI.md                          144 ligne(s)    1867-2568   jetons
 
-    Cote d'une session REELLE : ~2117 a 2201 jetons selon l'outil, pas la somme.
+    Cote d'une session REELLE : ~2162 a 2235 jetons selon l'outil, pas la somme.
 
   DISPONIBLE A LA DEMANDE — competences
 ...
@@ -1286,7 +1286,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1070 tests verts -> 1070 tests verts
+         - README.md ligne 15 : 1086 tests verts -> 1086 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2354,6 +2354,37 @@ croire qu'un réglage plus dur aurait changé le verdict.
 
 Codes de sortie : **0** si le moteur complet n'a livré aucune erreur sans réserve, **1** s'il
 en a livré une — un levier non distingué n'est pas une panne, c'est une mesure honnête.
+
+## Les codes de sortie : un contrat, pas des nombres
+
+Un code de sortie est ce qu'un **script** lit. Il portait une confusion : `jio run` rendait `1`
+aussi bien pour « livré **avec une réserve nommée** » que pour « **abstention** — rien n'a pu
+être prouvé ». Un appelant ne pouvait donc pas distinguer *j'ai un livrable, avec une réserve à
+lever* de *je n'ai rien, et il me manque quelque chose* — deux actions opposées.
+
+| code | sens | ce qu'il demande |
+| ---: | --- | --- |
+| **0** | `OK` — fait, et prouvé | rien |
+| **1** | `PROBLÈME` — quelque chose est faux, ou une réserve doit être levée | **corriger**, ou nommer la réserve dans le rapport |
+| **2** | `INDÉTERMINÉ` — on ne peut pas conclure | **fournir** ce qui manque (preuve, fournisseur, entrée), puis relancer |
+| **3** | `EN ATTENTE` — une réponse humaine est nécessaire avant de commencer | **répondre** aux questions essentielles, puis relancer |
+
+Le `2` est celui qui compte. Une abstention n'est **pas** une faute : c'est une absence, et la
+bonne action de l'appelant n'est pas de réparer mais de fournir. Ranger l'abstention avec les
+défauts — ce que faisait `jio run` — conduit un agent à « réparer » un travail qui n'a jamais
+commencé. `1` signifie *le travail est faux*, `2` signifie *le travail ne peut pas démarrer*.
+
+Cette doctrine vit à **un** endroit (`jio/core/codes.py`), avec l'action associée à chaque code,
+et deux garde-fous la tiennent : un test lit `jio/cli.py` et **refuse tout `return 4`** qui
+inventerait un code hors doctrine ; un autre fait rendre au moteur les quatre états de mission et
+vérifie que le CLI sort bien sur `0/1/2/1`. Les codes sont aussi dans ce que l'**agent** lit
+(`.jio/ACTIVE.md`, `AGENTS.md`, `CLAUDE.md`) : un agent qui ne connaît pas le code `2` répare au
+lieu de demander.
+
+Et la couleur suit désormais la **sortie** : un terminal est peint, un fichier ou un tube ne
+l'est pas. `jio run > rapport.txt` écrivait sept séquences ANSI dans le fichier ; elles
+apparaissaient en clair dans les journaux de CI et faisaient échouer toute comparaison de texte.
+`NO_COLOR` (le standard), `JIO_NO_COLOR` et `TERM=dumb` coupent la couleur aussi.
 
 ## Le duel portable : ce que TON IA gagne, mesuré chez toi
 
