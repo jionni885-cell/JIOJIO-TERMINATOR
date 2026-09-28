@@ -394,3 +394,155 @@ def test_la_commande_providers_ne_plante_jamais(monkeypatch, capsys) -> None:
     assert code == 0
     assert "FOURNISSEURS DETECTES" in sortie
     assert "jio bench" in sortie, "sans fournisseur, la sortie doit dire quoi faire"
+
+
+# --------------------------------------------------------------------------- #
+# 4. La relance, mesuree sur le chemin reel : le harness ne doit jamais etre
+#    PIRE que le modele seul
+# --------------------------------------------------------------------------- #
+
+#: Un faux agent qui rate la traduction UNE fois (il repond de la prose), puis se reprend
+#: quand on lui dit ce qui a ete refuse. C'est le comportement le plus courant d'un vrai
+#: modele devant ce prompt, et c'est la ou le harness pouvait perdre.
+STUB_UNE_FOIS = '''#!SHEBANG
+import json
+import pathlib
+import sys
+
+prompt = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else ""
+marque = pathlib.Path(__MARQUE__)
+appels = pathlib.Path(__APPELS__)
+
+if "You turn enumerated RULES into executable checks" in prompt:
+    with appels.open("a", encoding="utf-8") as f:
+        f.write("traduction\\n")
+    if not marque.exists():
+        marque.write_text("1", encoding="utf-8")
+        print("Sure! Let me summarise the rules in prose instead of a JSON object.")
+        sys.exit(0)
+    import re as _re
+    PAIRES = [
+        ("R-001", "assert median([3, 1, 2]) == 2, 'impair'"),
+        ("R-002", "assert median([1, 2, 3, 4]) == 2.5, 'pair'"),
+        ("R-003", "try:\\n    median([])\\n    ok = False\\nexcept ValueError:\\n    ok = True\\n"
+                  "assert ok, 'liste vide: aucune ValueError levee'"),
+        ("R-004", "assert median([5, 2, 9, 1, 7]) == 5, 'non trie'"),
+    ]
+    demandees = _re.findall(r"\\[(R-[0-9]+)\\]", prompt)
+    rendu = {p[0]: p[1] for p in PAIRES if not demandees or p[0] in demandees}
+    print(json.dumps(dict(type="text", text=json.dumps(rendu))))
+    sys.exit(0)
+
+if "You are a strict" in prompt:
+    print(json.dumps(dict(type="text", text=json.dumps(dict(
+        verdict="pass", confidence=0.9,
+        reason="la specification est satisfaite", counterexample=None,
+    )))))
+    sys.exit(0)
+
+CODE = """def median(nums):
+    if not nums:
+        raise ValueError("liste vide")
+    valeurs = sorted(nums)
+    milieu = len(valeurs) // 2
+    if len(valeurs) % 2:
+        return valeurs[milieu]
+    return (valeurs[milieu - 1] + valeurs[milieu]) / 2
+"""
+
+print(json.dumps(dict(type="text", text="```python\\n" + CODE + "```\\n")))
+'''
+
+#: Un faux agent qui AVOUE honnetement, toujours : aucune regle ne serait testable.
+STUB_AVEU = '''#!SHEBANG
+import json
+import pathlib
+import sys
+
+prompt = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else ""
+appels = pathlib.Path(__APPELS__)
+
+if "You turn enumerated RULES into executable checks" in prompt:
+    with appels.open("a", encoding="utf-8") as f:
+        f.write("traduction\\n")
+    import re as _re
+    demandees = _re.findall(r"\\[(R-[0-9]+)\\]", prompt)
+    rendu = dict((r, dict(impossible="aucune assertion executable pour cet enonce"))
+                 for r in demandees)
+    print(json.dumps(dict(type="text", text=json.dumps(rendu))))
+    sys.exit(0)
+
+if "You are a strict" in prompt:
+    print(json.dumps(dict(type="text", text=json.dumps(dict(
+        verdict="pass", confidence=0.9,
+        reason="la specification est satisfaite", counterexample=None,
+    )))))
+    sys.exit(0)
+
+CODE = """def median(nums):
+    if not nums:
+        raise ValueError("liste vide")
+    valeurs = sorted(nums)
+    milieu = len(valeurs) // 2
+    if len(valeurs) % 2:
+        return valeurs[milieu]
+    return (valeurs[milieu - 1] + valeurs[milieu]) / 2
+"""
+
+print(json.dumps(dict(type="text", text="```python\\n" + CODE + "```\\n")))
+'''
+
+
+def _gabarit(stub: str, tmp_path: Path) -> str:
+    """Prepare un stub brut pour `_installer_agents`, qui applique `.format(python=...)`.
+
+    On ecrit le stub en clair (accolades normales) et on n'echappe QU'ICI : un stub lisible
+    est un stub qu'on peut relire, et ces deux stubs sont la demonstration du correctif.
+    """
+    gabarit = stub.replace("#!SHEBANG", "#!{python}", 1)
+    gabarit = gabarit.replace("{", "{{").replace("}", "}}")
+    gabarit = gabarit.replace("{{python}}", "{python}")
+    return (gabarit
+            .replace("__MARQUE__", repr(str(tmp_path / "marque-traduction")))
+            .replace("__APPELS__", repr(str(tmp_path / "appels-traduction.txt"))))
+
+
+def test_chemin_reel_une_traduction_RATEE_est_relancee_et_la_mission_est_livree(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """LA mesure de cet axe : sans la relance, ce modele faisait livrer ZERO.
+
+    Un modele qui ecrit du code correct mais rend de la prose au prompt de traduction etait
+    mesure a 0 % — quand un tirage aveugle du MEME budget reussissait. Le harness etait donc
+    pire que le modele seul sur le seul cas qui existe en vrai (aucun oracle). Ici, la CLi
+    rate la premiere traduction ; la seconde, relancee AVEC le motif du rejet, reussit.
+    """
+    stub = _gabarit(STUB_UNE_FOIS, tmp_path)
+    report = _mission_sans_oracle(tmp_path, monkeypatch, ("opencode", "hermes", "claude"),
+                                  stub=stub)
+
+    # UNE traduction de regles par mission (elle est memoisee), donc DEUX appels :
+    # la reponse inexploitable, puis la relance.
+    appels = (tmp_path / "appels-traduction.txt").read_text(encoding="utf-8")
+    assert appels.count("traduction") == 2, "une tentative ratee, une relance, et rien de plus"
+    assert report.status.value.startswith("delivered"), report.abstention_reason
+    assert report.passed == report.total_checks
+
+
+def test_chemin_reel_un_AVEU_honnete_ne_declenche_AUCUNE_relance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """La borne de la relance, verifiee de bout en bout : un aveu n'est pas une panne.
+
+    Insister apres un aveu, c'est demander a un modele d'inventer une preuve. On compte
+    donc les appels de TRADUCTION : un seul par agent, malgre l'absence complete de temoins.
+    """
+    stub = _gabarit(STUB_AVEU, tmp_path)
+    report = _mission_sans_oracle(tmp_path, monkeypatch, ("opencode", "hermes", "claude"),
+                                  stub=stub)
+
+    # UNE traduction de regles par mission, et AUCUNE relance : ce modele a repondu.
+    appels = (tmp_path / "appels-traduction.txt").read_text(encoding="utf-8")
+    assert appels.count("traduction") == 1, "un aveu n'est pas une panne : aucun rappel"
+    assert report.status is MissionStatus.ABSTAINED, report.status.value
+    assert any(f.agent == "temoins" for f in report.findings)

@@ -1082,6 +1082,10 @@ class Engine:
                 "refuses": {k: v[:200] for k, v in temoignage.refuses.items()},
                 "motif": temoignage.motif,
                 "appels": temoignage.appels,
+                # Une RELANCE est un fait de la mesure, pas un detail : deux appels ne sont
+                # pas le meme budget qu'un seul, et un rapport qui les confondrait rendrait
+                # la comparaison a budget egal — la seule qui compte — ininterpretable.
+                "relance": temoignage.relance,
                 "modele": temoignage.modele,
             },
         )

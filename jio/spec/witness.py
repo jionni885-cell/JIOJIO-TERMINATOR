@@ -26,6 +26,13 @@ assertion executable, et il accepte trois issues, toutes explicites :
     sont pas executes parce qu'il les a ecrits, mais parce qu'ils ont passe cette
     porte.
 
+UNE RELANCE, ET UNE SEULE, quand la reponse n'etait pas exploitable — jamais sur un aveu.
+La mesure qui a motive cette branche : sans oracle, un modele qui ecrit du code correct mais
+rend de la prose faisait livrer 0 % la ou un tirage aveugle du meme budget reussissait 100 %.
+Le harness etait donc PIRE que le modele seul, sur le seul cas qui existe en vrai. Dire au
+modele ce qui a ete refuse corrige ce resultat pour un appel de plus — et insister apres un
+aveu, a l'inverse, fabriquerait un faux temoin, donc ne se fait pas.
+
 CE QUE CE MODULE NE FAIT PAS. Il ne juge pas les candidats, il ne decide de rien.
 Il rend un :class:`Temoignage` ; le moteur s'en sert pour PROUVER, et la regle
 d'honnetete qui l'accompagne est dans le moteur : un temoin qui echoue sur TOUS
@@ -38,7 +45,7 @@ from __future__ import annotations
 import ast
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Mapping, Sequence
 
 from ..core.types import Rule, RuleKind, Spec
@@ -106,6 +113,9 @@ class Temoignage:
     motif: str = ""                                            # echec global eventuel
     appels: int = 0
     modele: str = ""
+    #: Vrai quand il a fallu DEUX appels : le rapport doit pouvoir le dire, parce que
+    #: deux appels ne sont pas le meme budget qu'un seul.
+    relance: bool = False
 
     @property
     def utilisable(self) -> bool:
@@ -276,32 +286,51 @@ def valider_test(test: str, *, entrypoint: str) -> tuple[bool, str]:
     return True, ""
 
 
-def traduire(
+def _rappel(motifs: Sequence[str], motif_global: str) -> str:
+    """Ce qu'on renvoie au modele apres une reponse inexploitable.
+
+    Une relance qui ne dit PAS pourquoi la reponse a ete rejetee n'est pas une relance :
+    c'est un deuxieme tirage aveugle, et il ne change rien. Ce qui fait gagner des dizaines
+    de points a un meme modele, dans toute la litterature du domaine, c'est le FORMAT —
+    pas le nombre d'essais. On rend donc les motifs de rejet, bornes et sur une seule
+    ligne (un motif multiligne casserait la structure du message).
+    """
+    lignes = [
+        "SYSTEM NOTE: your previous answer was REJECTED by the security gate."
+        if not motif_global else
+        f"SYSTEM NOTE: your previous answer was unusable ({motif_global})."
+    ]
+    for m in list(motifs)[:3]:
+        lignes.append(f"- {_une_ligne(m)[:200]}")
+    lignes.append(
+        "Return ONLY a JSON object: {\"R-XXX\": \"assert ...\"} for every rule, or "
+        "{\"R-XXX\": {\"impossible\": \"why\"}} if the rule genuinely cannot be tested. "
+        "No prose, no markdown, no explanation."
+    )
+    return "\n".join(lignes)
+
+
+def _une_ligne(texte: str) -> str:
+    return " ".join(str(texte).split())
+
+
+def _tentative(
     spec: Spec,
-    provider: Provider | None,
+    provider: Provider,
     *,
     entrypoint: str,
-    objectif: str = "",
-    seed: int | None = None,
-    max_tests: int = MAX_TESTS,
+    objectif: str,
+    regles: Sequence[Rule],
+    seed: int | None,
+    rappel: str = "",
 ) -> Temoignage:
-    """Traduit les regles d'une specification en temoins executables.
-
-    Les regles ADVISORY sont ecartees : leur echec ne prouve rien, et une regle
-    de suspicion ne doit pas devenir un verrou par un detour de traduction.
-    """
-    regles = [r for r in spec.rules if r.kind is not RuleKind.ADVISORY][:max_tests]
-    if not regles:
-        return Temoignage(motif="la specification ne contient aucune regle traduisible")
-    if provider is None:
-        return Temoignage(motif="aucun modele disponible pour traduire les regles")
-
+    """UNE tentative de traduction, avec sa porte de securite. Aucune relance ici."""
+    utilisateur = _prompt_utilisateur(spec, entrypoint, objectif, regles)
+    if rappel:
+        utilisateur = f"{utilisateur}\n\n{rappel}"
     try:
         completion = provider.complete(
-            [
-                Message("system", SYSTEME),
-                Message("user", _prompt_utilisateur(spec, entrypoint, objectif, regles)),
-            ],
+            [Message("system", SYSTEME), Message("user", utilisateur)],
             temperature=0.0,
             max_tokens=2048,
             seed=seed,
@@ -358,3 +387,75 @@ def traduire(
         appels=1,
         modele=str(getattr(completion, "model", "") or ""),
     )
+
+
+def traduire(
+    spec: Spec,
+    provider: Provider | None,
+    *,
+    entrypoint: str,
+    objectif: str = "",
+    seed: int | None = None,
+    max_tests: int = MAX_TESTS,
+) -> Temoignage:
+    """Traduit les regles d'une specification en temoins executables.
+
+    Les regles ADVISORY sont ecartees : leur echec ne prouve rien, et une regle
+    de suspicion ne doit pas devenir un verrou par un detour de traduction.
+
+    UNE RELANCE, ET UNE SEULE — quand la reponse n'etait pas exploitable ET que le modele
+    n'a rien avoue. Mesure a l'origine de cette branche : sans oracle, un modele qui ecrit
+    du code correct mais rend de la prose au prompt de traduction faisait tomber le harness
+    a ZERO la ou un tirage aveugle du meme budget reussissait : le harness etait PIRE que
+    le modele seul, sur le seul cas qui existe en vrai. Une seconde tentative qui dit
+    POURQUOI la premiere a ete refusee coute un appel et change ce resultat.
+
+    JAMAIS de relance sur un aveu. Un modele qui a declare une regle non testable a
+    repondu ; insister pour obtenir une assertion, c'est fabriquer un faux temoin — et
+    c'est exactement ainsi qu'un harness transforme une abstention honnete en mensonge
+    verifie. Meme raison pour les refus de la porte : ils portent deja sur une reponse
+    RENDUE, et le modele a eu sa chance.
+    """
+    regles = [r for r in spec.rules if r.kind is not RuleKind.ADVISORY][:max_tests]
+    if not regles:
+        return Temoignage(motif="la specification ne contient aucune regle traduisible")
+    if provider is None:
+        return Temoignage(motif="aucun modele disponible pour traduire les regles")
+
+    temoignage = _tentative(
+        spec, provider, entrypoint=entrypoint, objectif=objectif, regles=regles, seed=seed,
+    )
+    if temoignage.tests or temoignage.aveux:
+        return temoignage
+
+    temoignage = _relancer(
+        spec, provider, entrypoint=entrypoint, objectif=objectif, regles=regles,
+        seed=seed, premier=temoignage,
+    )
+    return temoignage
+
+
+def _relancer(
+    spec: Spec,
+    provider: Provider,
+    *,
+    entrypoint: str,
+    objectif: str,
+    regles: Sequence[Rule],
+    seed: int | None,
+    premier: Temoignage,
+) -> Temoignage:
+    """La seconde tentative : elle dit au modele ce qui a ete refuse, et pourquoi.
+
+    `appels` compte les DEUX appels : un rapport qui annoncerait un appel la ou deux ont
+    eu lieu fausserait la comparaison a budget egal, qui est la seule qui compte.
+    """
+    seconde = _tentative(
+        spec, provider, entrypoint=entrypoint, objectif=objectif, regles=regles,
+        seed=None if seed is None else seed + 1,
+        rappel=_rappel(list(premier.refuses.values()), premier.motif),
+    )
+    appels = premier.appels + seconde.appels
+    if seconde.tests or seconde.aveux:
+        return replace(seconde, appels=appels, relance=True)
+    return replace(premier, appels=appels, relance=True)

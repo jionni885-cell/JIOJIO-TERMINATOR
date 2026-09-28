@@ -439,3 +439,139 @@ def test_la_couverture_additionne_les_trois_categories_au_lieu_de_les_soustraire
     assert temoignage.couverture == 0.5
     assert Temoignage().couverture == 0.0
     assert Temoignage(tests={"R-1": "x"}).couverture == 1.0
+
+
+# --------------------------------------------------------------------------- #
+# 3 bis. La relance : utile une fois, interdite sur un aveu
+# --------------------------------------------------------------------------- #
+
+
+class FournisseurEnDeuxTemps:
+    """Rend la PREMIERE reponse, puis la seconde — et compte les appels.
+
+    C'est le mode d'echec le plus courant d'un modele reel devant ce prompt : il repond
+    de la prose, puis se reprend quand on lui dit ce qui a ete refuse.
+    """
+
+    name = "faux-deux-temps"
+    model = "faux-2"
+
+    def __init__(self, premier: str, second: str) -> None:
+        self.premier = premier
+        self.second = second
+        self.appels = 0
+        self.rappels: list[str] = []
+
+    def complete(self, messages, *, temperature=0.0, max_tokens=2048, seed=None):
+        self.appels += 1
+        if self.appels == 1:
+            return Completion(text=self.premier, model=self.model, provider=self.name)
+        self.rappels.append("\n".join(m.content for m in messages))
+        return Completion(text=self.second, model=self.model, provider=self.name)
+
+
+def test_une_reponse_inexploitable_est_RELANCEE_avec_le_motif_du_rejet() -> None:
+    """Sans oracle, une prose au prompt de traduction faisait tomber le harness a ZERO.
+
+    Mesure a l'origine, sur le chemin reel : un modele qui ecrit du code correct mais rend
+    de la prose au prompt de traduction faisait livrer 0 % la ou un tirage aveugle du meme
+    budget reussissait 100 % — le harness etait PIRE que le modele seul, sur le seul cas
+    qui existe en vrai. Une seconde tentative, qui DIT ce qui a ete refuse, corrige cela
+    pour un appel de plus.
+    """
+    traducteur = FournisseurEnDeuxTemps(
+        premier="Sure! Here is a summary of the rules in prose instead of JSON.",
+        second=json.dumps({
+            "R-001": "assert mean([1, 2]) == 1.5",
+            "R-002": "assert mean([2, 2]) == 2",
+        }),
+    )
+    temoignage = traduire(SPEC, traducteur, entrypoint="mean", objectif="moyenne")
+
+    assert traducteur.appels == 2, "la relance doit avoir lieu"
+    assert temoignage.tests, "la seconde reponse est exploitable : elle doit etre retenue"
+    assert temoignage.appels == 2, "deux appels doivent etre COMPTES comme deux"
+    assert temoignage.relance is True
+    # Le motif du rejet part avec la relance : une relance muette n'apprend rien.
+    assert "SYSTEM NOTE" in traducteur.rappels[0]
+    assert "Return ONLY a JSON object" in traducteur.rappels[0]
+
+
+def test_une_reponse_PARTIELLEMENT_utilisable_n_est_PAS_relancee() -> None:
+    """La borne de la relance, et pourquoi elle est la.
+
+    Relancer quand UNE regle sur deux a ete traduite parait tentant : on gagnerait la
+    couverture manquante. C'est refuse, pour une raison de fond et non de cout. La seconde
+    reponse donne un AUTRE temoin pour la meme regle, et rien ne permet de choisir entre
+    les deux : garder le nouveau peut effacer un temoin qui marchait, garder les deux
+    revient a faire voter deux assertions pour une seule regle. Ce qui manque est deja
+    DIT — la livraison porte la reserve « regle NON PROUVEE » — et une reserve nommee vaut
+    mieux qu'un temoin choisi au hasard. La relance reste donc ce qu'elle doit etre : le
+    rattrapage du cas ou RIEN n'etait utilisable.
+    """
+    traducteur = FournisseurEnDeuxTemps(
+        premier=json.dumps({"R-001": "import os\nos.system('false')",
+                            "R-002": "assert mean([2, 2]) == 2"}),
+        second=json.dumps({"R-001": "assert mean([1, 2]) == 1.5",
+                           "R-002": "assert mean([2, 2]) == 2"}),
+    )
+    temoignage = traduire(SPEC, traducteur, entrypoint="mean", objectif="moyenne")
+
+    assert traducteur.appels == 1, "une reponse partiellement utilisable n'est pas relancee"
+    assert set(temoignage.tests) == {"R-002"}
+    assert "R-001" in temoignage.refuses, "le refus est conserve, avec son motif"
+    assert temoignage.relance is False
+
+
+def test_la_relance_dit_POURQUOI_la_premiere_reponse_a_ete_rejetee() -> None:
+    """Une relance muette n'est qu'un deuxieme tirage aveugle.
+
+    Toute la litterature du domaine dit la meme chose : ce qui fait gagner des dizaines de
+    points a un modele IDENTIQUE, c'est le format et le retour d'information, pas le nombre
+    d'essais. On verifie donc le contenu du rappel, pas seulement qu'il a eu lieu.
+    """
+    traducteur = FournisseurEnDeuxTemps(
+        premier=json.dumps({"R-001": "import os\nos.system('false')"}),
+        second=json.dumps({"R-001": "assert mean([1, 2]) == 1.5"}),
+    )
+    # Une SEULE regle, refusee par la porte : rien d'utilisable, donc relance.
+    un = Spec(mission="moyenne", rules=(Rule(id="R-001", statement="moyenne nominale"),))
+    traduire(un, traducteur, entrypoint="mean", objectif="moyenne")
+
+    assert traducteur.appels == 2
+    rappel = traducteur.rappels[0]
+    assert "REJECTED by the security gate" in rappel
+    assert "R-001" in rappel
+    assert "import" in rappel, "le motif du refus doit accompagner la relance"
+
+
+def test_un_AVEU_honnete_n_est_JAMAIS_relance() -> None:
+    """Insister sur un aveu, c'est fabriquer un faux temoin — et rien d'autre.
+
+    Un modele qui declare une regle non testable a RENDU une reponse. Le relancer pour
+    obtenir une assertion revient a lui demander d'inventer une preuve : c'est ainsi qu'on
+    transforme une abstention honnete en mensonge verifie. On verifie donc que l'appel est
+    UNIQUE, meme quand aucune regle n'a ete traduite.
+    """
+    aveu = json.dumps({
+        "R-001": {"impossible": "aucun oracle de reference dans l'enonce"},
+        "R-002": {"impossible": "propriete statistique, non decidable ici"},
+    })
+    traducteur = FournisseurEnDeuxTemps(premier=aveu, second=aveu)
+    temoignage = traduire(SPEC, traducteur, entrypoint="mean", objectif="moyenne")
+
+    assert traducteur.appels == 1, "un aveu n'est pas une panne : il ne se relance pas"
+    assert not temoignage.tests and temoignage.aveux
+    assert temoignage.relance is False
+    assert temoignage.appels == 1
+
+
+def test_une_relance_qui_echoue_AUSSI_reste_honnete_et_compte_ses_appels() -> None:
+    """Le pire cas : deux reponses inexploitables. Le compte doit dire DEUX."""
+    traducteur = FournisseurEnDeuxTemps(premier="prose", second="encore de la prose")
+    temoignage = traduire(SPEC, traducteur, entrypoint="mean", objectif="moyenne")
+
+    assert traducteur.appels == 2
+    assert temoignage.appels == 2
+    assert not temoignage.tests
+    assert temoignage.motif, "l'echec doit etre NOMME, pas silencieux"

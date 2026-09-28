@@ -847,6 +847,10 @@ def cmd_bench(args: argparse.Namespace) -> int:
     # verifie le branchement avant qu'il ne serve.
     demandees = int(getattr(args, "taches", 0) or 0)
     taches = TASKS[:demandees] if demandees > 0 else TASKS
+    # `--sans-oracle-reel` : le bras « aucune mission reelle ne fournit de test » coute un
+    # moteur complet de plus par tirage. Il est ACTIF par defaut parce que c'est le seul
+    # bras qui parle d'une mission reelle ; l'ecarter doit rester possible, et visible.
+    oracle_reel = not bool(getattr(args, "sans_oracle_reel", False))
 
     print(BANNER)
     if modele.genre == "simule":
@@ -861,6 +865,7 @@ def cmd_bench(args: argparse.Namespace) -> int:
 
     results: dict[str, list[float]] = {
         "S0": [], "S1": [], "S1b": [], "S2": [], "S3": [], "S4": [], "S4b": [], "S4c": [],
+        "S4r": [], "S4rc": [],
     }
     calls: dict[str, list[int]] = {k: [] for k in results}
     integrity_hits = 0
@@ -946,6 +951,56 @@ def cmd_bench(args: argparse.Namespace) -> int:
             calls["S3"].append(n_calls)
             if not report.integrity.clean:
                 integrity_hits += 1
+
+            # --- S4r : AUCUN ORACLE, avec VOTRE modele comme traducteur ---- #
+            # C'est le cas de TOUTE mission reelle : personne ne fournit de test. Le banc
+            # refusait de mesurer cet axe des qu'un vrai modele etait branche, au motif
+            # qu'« alors c'est votre modele qui traduit, et le chiffre ne correspondrait
+            # plus a rien ». Le fait est exact, la conclusion ne l'etait pas : le couple
+            # (votre modele, le harness) EST la question posee, et la seule chose qui
+            # manquait pour rester interpretable etait le CONTROLE apparié — le meme
+            # budget d'appels sans aucune verification. Les deux sont mesures ici.
+            #
+            # Ce bras laisse le moteur appeler le modele pour traduire les regles : c'est
+            # `SpecCompiler(provider=reel)` qui le fait, sans rien de special ici. Si le
+            # modele ne sait pas traduire, le moteur s'abstient — et l'abstention est un
+            # resultat, pas un echec de la mesure.
+            if modele.genre != "simule" and oracle_reel:
+                moteur_sans_oracle = _simulated_engine(
+                    task, skill=skill, seed=seed, max_rounds=args.rounds,
+                    temoins=True, fournisseur=modele,
+                )
+                rapport_sans = moteur_sans_oracle.run(
+                    Mission(objective=task.objective, id=f"{task.id}-{seed}-S4r",
+                            max_rounds=args.rounds),
+                    WorkItem(objective=task.objective, entrypoint=task.entrypoint,
+                             spec=task.spec()),
+                )
+                n_appels = int(rapport_sans.usage.get("calls", 0)) or 1
+                juste = _check(rapport_sans.subject, task)
+                if rapport_sans.status is MissionStatus.ABSTAINED:
+                    abstentions_sans_oracle += 1
+                elif not juste and rapport_sans.status is MissionStatus.DELIVERED:
+                    # Aucun oracle fourni, et le modele a livre sans reserve un artefact
+                    # que le banc sait faux : c'est ici que se mesure le risque, et c'est
+                    # le seul chiffre qui doit rester a zero.
+                    erreurs_silencieuses += 1
+
+                # CONTROLE apparié : autant de tirages du modele, AUCUNE verification.
+                aveugles = [
+                    _code(
+                        generators[i % 3].complete(
+                            [_msg(task.objective)], seed=seed * 131 + i
+                        ).text,
+                        task.entrypoint,
+                    )
+                    for i in range(n_appels)
+                ]
+                results["S4r"].append(1.0 if juste else 0.0)
+                calls["S4r"].append(n_appels)
+                results["S4rc"].append(1.0 if any(_check(x, task) for x in aveugles) else 0.0)
+                calls["S4rc"].append(n_appels)
+
             # --- S4 : AUCUN ORACLE — les regles traduites en temoins -------- #
             # C'est l'etat d'une MISSION REELLE : personne ne fournit de test. Sans
             # traduction, le moteur ne peut rien prouver et s'abstient. Avec
@@ -1016,11 +1071,13 @@ def cmd_bench(args: argparse.Namespace) -> int:
         "S4": "AUCUN ORACLE : regles traduites en temoins",
         "S4c": "AUCUN ORACLE : traducteur a 50 % de fidelite",
         "S4b": "AUCUN ORACLE : traducteur FAUX (lue a l'envers)",
+        "S4r": "AUCUN ORACLE : VOS regles traduites par le modele",
+        "S4rc": "CONTROLE sans oracle : meme budget, 0 verification",
     }
     base = _mean(results["S0"])
     print(f"    {'config':<40} {'reussite':>9} {'IC95':>15} {'appels':>7} {'vs S0':>7}")
     print(f"    {'-' * 40} {'-' * 9} {'-' * 15} {'-' * 7} {'-' * 7}")
-    for key in ("S0", "S1", "S1b", "S2", "S3", "S4", "S4c", "S4b"):
+    for key in ("S0", "S1", "S1b", "S2", "S3", "S4", "S4c", "S4b", "S4r", "S4rc"):
         if not results[key]:
             # Un bras sans donnee s'afficherait « 0,0 % [0 % ; 0 %] » : un chiffre
             # invente. On l'annonce, et on continue.
@@ -1076,12 +1133,31 @@ def cmd_bench(args: argparse.Namespace) -> int:
           f" — {len(results['S0'])} essai(s) par bras.")
     print()
     if modele.genre != "simule":
-        print("  LES BRAS SANS ORACLE NE SONT PAS MESURES AVEC UN VRAI MODELE")
-        print("    S4/S4b/S4c reposent sur un TRADUCTEUR simule (fidelite fixee a 100, 50")
-        print("    ou 0 %) : avec votre modele, ce serait votre modele qui traduirait, et")
-        print("    le chiffre annonce ne correspondrait plus a rien. Il n'est donc pas")
-        print("    affiche. `jio bench` sans `--provider` mesure cet axe.")
+        print("  QUAND LA MISSION NE FOURNIT AUCUN ORACLE — le cas de toute mission reelle")
+        print("    Ici, vos regles ne sont pas des slogans : le moteur demande a VOTRE")
+        print("    modele de les traduire en temoins executables, et ne livre que ce qui")
+        print("    passe ces temoins. Le controle juste en dessous a le MEME budget.")
         print()
+        if results["S4r"]:
+            s4r, s4rc = _mean(results["S4r"]), _mean(results["S4rc"])
+            ic4r, ic4rc = _wilson(results["S4r"]), _wilson(results["S4rc"])
+            delta_r, (bas_r, haut_r), tranche_r = _ecart(results["S4rc"], results["S4r"])
+            cadre_r = f"[{ic4r[0]:.0%} ; {ic4r[1]:.0%}]"
+            cadre_rc = f"[{ic4rc[0]:.0%} ; {ic4rc[1]:.0%}]"
+            print(f"      {'votre modele + harness (sans oracle)':<40} {s4r:>8.1%} "
+                  f"{cadre_r:>15} {_mean(calls['S4r']):>7.1f}")
+            print(f"      {'CONTROLE : autant d appels, 0 verification':<40} {s4rc:>8.1%} "
+                  f"{cadre_rc:>15} {_mean(calls['S4rc']):>7.1f}")
+            print(f"      ecart {delta_r:+.1f} points  IC95 [{bas_r:+.1f} ; {haut_r:+.1f}]"
+                  f"  {'-> l intervalle EXCLUT zero' if tranche_r else '-> INDETERMINE ici'}")
+            print(f"    issues de ce bras : {abstentions_sans_oracle} abstention(s) — une")
+            print("      abstention est une reponse : le moteur dit qu'il ne peut pas prouver.")
+        else:
+            print("    non mesure (`--sans-oracle-reel`) : le bras existe, il a ete ecarte.")
+        print()
+        print("    HONNETETE SUR CE BRAS : le traducteur EST votre modele, donc ce chiffre")
+        print("    mesure le couple (votre modele, le harness) et pas le harness seul. C'est")
+        print("    exactement la question utile, et le controle apparié la rend lisible.")
         print(f"    erreurs livrees SANS reserve : {erreurs_silencieuses}"
               "  <- le seul chiffre qui doit rester a zero")
         print(f"    duree : {elapsed:.1f}s")
@@ -2808,6 +2884,10 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--taches", type=int, default=0, dest="taches",
                    help="limite le banc aux N premieres taches (0 = toutes). Un premier tour "
                         "court sert a voir si le dispositif tourne, pas a mesurer un gain")
+    b.add_argument("--sans-oracle-reel", action="store_true", dest="sans_oracle_reel",
+                   help="n'execute PAS le bras « aucun oracle » avec votre modele (il coute "
+                        "un moteur complet de plus par tirage ; c'est pourtant le cas de "
+                        "toute mission reelle)")
     b.add_argument("--prose", action="store_true",
                    help="mesure le harness sur des DOCUMENTS (rapports) au lieu de code")
     b.set_defaults(func=cmd_bench)
