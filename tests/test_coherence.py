@@ -63,8 +63,20 @@ def test_le_rapport_est_lisible_par_une_machine() -> None:
     ]
     assert all(set(c) == {"controle", "ok", "resume", "details", "portee"}
                for c in donnees["constats"])
-    # Sur CE depot, aucun controle n'est hors portee : ils s'appliquent tous.
-    assert donnees["hors_portee"] == []
+    # Sur CE depot, un seul controle peut etre hors portee : `journal`, et seulement parce que
+    # le journal est un FICHIER LOCAL (`*.jio` est ignore par git). Un depot fraichement clone
+    # n'en a pas, et le controle le dit au lieu de rendre un faux vert — c'est la doctrine
+    # ecrite dans `jio/verify/coherence.py`. L'attendu est donc DERIVE du disque, jamais
+    # recopie : la version precedente affirmait `hors_portee == []`, ce qui etait vrai sur un
+    # poste de travail ou une commande avait deja ecrit le journal… et faux pour quiconque
+    # venait de cloner. Deux tests rouges sur un depot neuf, pour une raison qui n'existe que
+    # sur une machine deja utilisee : exactement le genre de rouge qu'on apprend a ignorer.
+    journal_local = RACINE / ".jio" / "journal.jsonl"
+    attendu = [] if journal_local.is_file() else ["journal"]
+    assert donnees["hors_portee"] == attendu, (
+        f"hors portee = {donnees['hors_portee']} ; attendu {attendu} "
+        f"(journal local present : {journal_local.is_file()})"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -725,3 +737,35 @@ def test_les_textes_qui_ANNONCENT_le_nombre_de_controles_disent_le_meme_nombre()
         "chaque fichier surveille doit ANNONCER le nombre de controles : un texte qui ne dit plus "
         f"rien ne peut plus deriver, mais l'agent ne sait plus non plus ce qu'il appelle ({trouve})"
     )
+
+
+# --------------------------------------------------------------------------- #
+# 8. Le depot FRAICHEMENT CLONE : la porte doit y etre verte aussi
+# --------------------------------------------------------------------------- #
+
+
+def test_sur_un_depot_FRAICHEMENT_CLONE_la_porte_est_verte(monkeypatch) -> None:
+    """Un clone neuf n'a pas de journal — et c'est NORMAL : la porte doit rester verte.
+
+    Le journal est un fichier local (`*.jio` est ignore par git) : il nait de la premiere
+    commande qui ecrit. Le controle `journal` n'a alors rien a mesurer, et il le DIT (« hors de
+    portee ») au lieu de rendre un faux vert. La porte doit conclure COHERENT : sinon chaque
+    nouveau depot commence par un rouge, et un rouge qu'on ne peut pas corriger apprend a
+    ignorer la porte.
+
+    Mesure a l'origine — c'est ce test qui a ete ecrit APRES le defaut : deux tests de ce fichier
+    exigeaient `hors_portee == []`. Ils passaient sur un poste de travail ou le journal existait
+    deja, et echouaient sur un clone neuf. La suite n'etait donc pas fiable pour la seule
+    personne qui compte ici : celle qui clone et lance `pytest`.
+    """
+    absent = RACINE / ".jio" / "journal-absent-pour-ce-test.jsonl"
+    assert not absent.exists()
+    monkeypatch.setenv("JIO_JOURNAL", str(absent))   # la variable que lit le controle
+
+    rapport = controler(RACINE)
+    assert rapport.ok, "\n".join(f"[KO] {c.controle} : {c.resume}" for c in rapport.incoherents)
+    assert [c.controle for c in rapport.hors_portee] == ["journal"]
+    journal = _constat(rapport, "journal")
+    assert "hors de portee" in journal.resume and "aucun journal" in journal.resume
+    # Et les huit autres controles s'appliquent TOUS : un clone neuf n'est pas un depot vide.
+    assert len(rapport.constats) - len(rapport.hors_portee) == len(CONTROLES) - 1
