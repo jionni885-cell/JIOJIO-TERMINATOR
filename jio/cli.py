@@ -3724,8 +3724,14 @@ def cmd_mutants(args: argparse.Namespace) -> int:
 
     racine = Path(args.root).resolve()
     if not (racine / "tests").is_dir():
+        # « Rien a mesurer » n'est pas « tout va bien » : sans dossier de tests, le score de
+        # mutation est IMPOSSIBLE, pas bon. Rendre 0 ferait passer une CI sur une absence —
+        # meme doctrine que `jio trace` sans journal (voir `jio/core/codes.py`).
+        from .core.codes import ACTION, INDETERMINE
+
         print(f"  aucun dossier tests/ sous {racine} : rien a mesurer.")
-        return 0
+        print(f"  -> code {INDETERMINE} : {ACTION[INDETERMINE]}")
+        return INDETERMINE
     fichiers = None
     if args.fichiers:
         fichiers = [
@@ -3964,7 +3970,22 @@ def cmd_sorties(args: argparse.Namespace) -> int:
     document = (getattr(args, "document", "") or "").strip()
 
     if document:
-        chemins = [Path(document) if Path(document).is_absolute() else racine / document]
+        chemin = Path(document) if Path(document).is_absolute() else racine / document
+        if not chemin.is_file():
+            # DEFAUT MESURE : `jio sorties --document /tmp/absent.md` repondait « aucun exemple
+            # declare dans ces documents » et rendait 0 — il ne verifiait RIEN, mais il le disait
+            # comme un resultat. Verifier un document nomme qui n'existe pas est impossible :
+            # c'est INDETERMINE, et l'appelant doit fournir le document.
+            from .core.codes import ACTION, INDETERMINE
+
+            print()
+            print(f"  Le document demande n'existe pas : {chemin}")
+            print("  Rien n'a ete verifie — et une verification qui n'a pas eu lieu n'est pas")
+            print("  un succes. Sans `--document`, la commande parcourt les documents du depot.")
+            print()
+            print(f"  -> code {INDETERMINE} : {ACTION[INDETERMINE]}")
+            return INDETERMINE
+        chemins = [chemin]
     else:
         from .verify.coherence import _documents
 

@@ -144,3 +144,43 @@ def test_l_abstention_explique_QUOI_fournir(capsys, monkeypatch) -> None:
     assert code == 2
     assert "code 2" in sortie
     assert "fournir" in sortie, "l'appelant doit savoir quoi faire, pas seulement que ca a rate"
+
+
+def test_mesurer_sans_matiere_est_INDETERMINE(tmp_path, capsys, monkeypatch) -> None:
+    """La distinction qui compte, et elle a ete payee deux fois :
+
+      * LIRE un etat vide rend 0 — l'etat vide EST la reponse (« qu'y a-t-il en memoire ? ») ;
+      * MESURER sans matiere rend 2 — la mesure est IMPOSSIBLE, pas bonne.
+
+    `jio mutants` sans dossier `tests/` rendait 0 : une CI passait sur une absence de controle.
+    `jio sorties --document <introuvable>` rendait 0 en annoncant « aucun exemple declare » sur
+    un document qui n'existait pas.
+    """
+    from jio.cli import main
+
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["mutants"]) == 2
+    assert "code 2" in capsys.readouterr().out
+
+    assert main(["sorties", "--document", str(tmp_path / "absent.md")]) == 2
+    sortie = capsys.readouterr().out
+    assert "n'existe pas" in sortie
+    assert "code 2" in sortie
+
+
+def test_lire_un_etat_VIDE_reste_un_succes(tmp_path, capsys, monkeypatch) -> None:
+    """L'autre moitie : une memoire vide, un routeur sans observation, un depot sans journal.
+
+    Rendre 2 ici ferait echouer une base SAINE qu'on vient de creer — et pousserait a inventer
+    une memoire pour faire taire la porte, exactement ce que ce projet refuse.
+    """
+    from jio.cli import main
+
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["memory"]) == 0
+    assert "memoire vide" in capsys.readouterr().out.lower()
+
+    assert main(["trust"]) == 0
+    capsys.readouterr()

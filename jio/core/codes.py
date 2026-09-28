@@ -34,6 +34,24 @@ Pourquoi une reserve vaut 1. Une reserve n'est pas une accusation, mais ce n'est
 quelqu'un doit la lever ou la declarer (meme regle que `--strict`, documents : « en CI, elle doit
 etre levee ou declaree »). Un agent qui enchaine sur un 0 avec reserve ne saurait jamais qu'il
 reste quelque chose a faire.
+
+
+LIRE UN ETAT VIDE, CE N'EST PAS MESURER DANS LE VIDE
+----------------------------------------------------
+Trois commandes rendaient 0 pour deux situations OPPOSEES. La distinction, ecrite ici pour
+qu'une modification future ne la « repare » pas dans le mauvais sens :
+
+  * **lire un etat vide rend 0** — `jio memory` sans souvenir, `jio trust` sans observation,
+    `jio trace` sans journal dans le depot. L'etat vide EST la reponse a la question posee
+    (« qu'y a-t-il en memoire ? » -> « rien »). Rendre 2 ferait echouer une CI sur une base
+    saine qu'on vient de creer ;
+  * **mesurer ou verifier sans matiere rend 2** — `jio mutants` sans dossier `tests/`,
+    `jio trace` sur un chemin inexistant, `jio sorties --document` introuvable. La mesure est
+    IMPOSSIBLE, pas bonne : un « 0 probleme » sur du vide ferait passer une CI pour un succes
+    alors qu'aucun controle n'a eu lieu.
+
+Le critere est donc la QUESTION de la commande : « que contient cet etat ? » (0) contre
+« cet artefact est-il bon ? » (2 quand il n'y a pas d'artefact a juger).
 """
 
 from __future__ import annotations
