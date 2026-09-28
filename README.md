@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1037 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1048 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -960,6 +960,36 @@ mais l'**écart aux témoins** — et le fait que le seuil déclaré soit celui 
 retrouve (`jio skills --seuil-balaye`, vérifié par un test : la constante et la mesure ne
 peuvent pas diverger en silence).
 
+### Et elles entrent dans la mission, au bon moment
+
+Un routeur que personne ne charge est une décoration : une commande de plus, que personne ne
+lance. `jio run` **injecte donc les procédures retenues dans le prompt de mission** — jusqu'à 3,
+budget **1500 jetons** (les douze pèsent 6424, et un contexte saturé fait perdre ce que le
+contexte apportait). Ce qu'il écarte est **nommé** dans le journal, jamais tu en silence.
+
+Trois propriétés rendent cette injection utile plutôt que coûteuse, et chacune a son test :
+
+- **Sélective** — c'est l'objectif qui décide. Un mandat hors du domaine des procédures n'ajoute
+  **rien**, et le dit ;
+- **Bornée et déclarée** — le budget compte l'en-tête du bloc, pas seulement les corps : un
+  budget qui annoncerait 1500 jetons et en coûterait 1566 serait un chiffre faux de plus, dans le
+  seul module dont le travail est de ne pas dépasser. Une procédure qui ne rentre pas est
+  **écartée**, jamais coupée au milieu : une procédure tronquée a l'air complète ;
+- **Domestiquée** — les corps de compétences sont du contenu **du dépôt**, écrit pour piloter un
+  agent. Le bloc dit donc explicitement qu'elles ne modifient **aucune** exigence énumérée et
+  que, en cas de conflit, **la spécification gagne**. Sans cette phrase, une procédure du dépôt
+  aurait le pouvoir d'annuler une exigence de l'utilisateur — le scénario de CVE-2025-53773.
+
+Chaque injection est **tracée** (`competences-injectees` : noms, coût, écartées, objectif routé).
+Et l'ablation est à portée de main — `jio run "<objectif>" --sans-competences` — parce qu'une
+brique dont on ne peut pas mesurer l'apport n'a pas prouvé qu'elle en avait un.
+
+Un détail qui a coûté une mesure : quand `--task` écrasait le **mandat**, le routeur voyait
+l'énoncé technique de la tâche (« Écrire une fonction `sum_even(nums)`… ») et s'abstenait
+légitimement — cet énoncé ne dit rien du domaine. Le mandat de l'utilisateur reste donc
+l'objectif de la **mission**, l'énoncé de tâche celui du **travail** : un seul mot change de
+place, et les procédures arrivent au bon moment.
+
 ## Le hook pre-commit qui vérifie les **documents**
 
 Le dépôt déclarait `jio-scan-strict` comme « échoue aussi si le projet est incohérent à
@@ -1248,7 +1278,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1037 tests verts -> 1037 tests verts
+         - README.md ligne 15 : 1048 tests verts -> 1048 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

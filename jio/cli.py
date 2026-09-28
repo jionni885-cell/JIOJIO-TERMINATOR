@@ -123,6 +123,7 @@ def _simulated_engine(
     min_panel: int = 3,
     temoins: bool = True,
     traducteur: object | None = None,
+    competences: bool = True,
     traduire_les_regles: bool = False,
     famille: str = "code",
     banque: object | None = None,
@@ -181,6 +182,7 @@ def _simulated_engine(
     ]
     return Engine(
         generators=generateurs,
+        skills=_injecteur_de_competences(competences),
         journal=Journal(path=journal_path, racine=racine or Path.cwd()),
         panel=panel,
         prover=prover,
@@ -214,10 +216,32 @@ def _traducteur_simule(actif: bool):
     return TraducteurSimule(taches=TASKS, fidelite=1.0)
 
 
+def _injecteur_de_competences(actif: bool):
+    """Le routeur de procedures, ou `None` quand l'utilisateur l'a desactive.
+
+    Rend un objet exposant `bloc(objectif)` — l'interface lue par `Engine._prompt`. On importe
+    le module ICI et pas en tete de fichier : `jio/skills` lit les definitions des competences,
+    et faire dependre l'analyseur de toute la chaine d'artefacts rendrait `jio --help` plus
+    fragile qu'il ne doit l'etre.
+    """
+    if not actif:
+        return None
+    from .skills.injection import bloc as bloc_de_competences
+
+    class _Injecteur:
+        """Une seule methode, l'interface exacte du moteur : rien de plus a comprendre."""
+
+        @staticmethod
+        def bloc(objectif: str):
+            return bloc_de_competences(objectif)
+
+    return _Injecteur()
+
+
 def _real_engine(
     *, journal_path: Path | None = None, max_rounds: int = 5, min_panel: int = 3,
     famille: str = "code", racine: Path | None = None, fournisseur: object | None = None,
-    fournisseurs: object | None = None,
+    fournisseurs: object | None = None, competences: bool = True,
 ) -> Engine:
     """Assemble un moteur adosse aux CLI/API reellement disponibles.
 
@@ -255,6 +279,7 @@ def _real_engine(
         prover = ExecutableProver(sandbox=Sandbox(timeout=30))
     return Engine(
         generators=gens,
+        skills=_injecteur_de_competences(competences),
         journal=Journal(path=journal_path, racine=racine or Path.cwd()),
         panel=AuditPanel.llm(providers, list(DEFAULT_PERSONAS)),
         prover=prover,
@@ -1574,12 +1599,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             None, seed=0, journal_path=journal_path, max_rounds=args.rounds,
             alpha=args.alpha, min_panel=args.min_panel,
             famille="prose", banque=prose_bank(tache_prose), racine=Path.cwd(),
+            competences=not getattr(args, "sans_competences", False),
         )
     elif prose:
         engine = _real_engine(
             journal_path=journal_path, max_rounds=args.rounds,
             min_panel=args.min_panel, famille="prose", racine=Path.cwd(),
             fournisseurs=modele_liste,
+            competences=not getattr(args, "sans_competences", False),
         )
     elif args.simulate:
         engine = _simulated_engine(
@@ -1589,18 +1616,28 @@ def cmd_run(args: argparse.Namespace) -> int:
             # reelle. Le modele simule traduit les regles en temoins, et la preuve
             # doit tenir toute seule.
             traduire_les_regles=bool(getattr(args, "no_oracle", False)),
+            competences=not getattr(args, "sans_competences", False),
         )
     else:
         engine = _real_engine(
             journal_path=journal_path, max_rounds=args.rounds, min_panel=args.min_panel,
             fournisseurs=modele_liste,
+            competences=not getattr(args, "sans_competences", False),
         )
     _attach_learning(engine, Path(args.state), disable=args.no_learn)
 
     if tache_prose is not None:
         objective = args.objective or tache_prose.objective
     else:
-        objective = task.objective if task else args.objective
+        # Le MANDAT de l'utilisateur prime pour l'objectif de la MISSION ; l'enonce de tache
+        # reste l'objectif de TRAVAIL (`work.objective`, ci-dessous), qui porte l'entrypoint,
+        # les verifications et les oracles.
+        #
+        # Ce n'est pas cosmetique. Quand `--task` ecrasait le mandat, le routeur de procedures
+        # voyait « Ecrire une fonction sum_even(nums)... » et s'abstenait legitimement : cet
+        # enonce ne dit rien du DOMAINE. Le mandat, lui, dit tout — c'est la question posee.
+        # Un seul mot change de place, et les procedures du depot arrivent au bon moment.
+        objective = args.objective or (task.objective if task else "")
 
     # La specification d'une mission de prose n'est PAS derivee d'un modele : la
     # regle de couverture (au moins une affirmation verifiable, aucune refutee) est
@@ -1614,7 +1651,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     mission = Mission(objective=objective, max_rounds=args.rounds, alpha=args.alpha)
     work = WorkItem(
-        objective=objective,
+        objective=(task.objective if task else objective),
         entrypoint=(task.entrypoint if task else args.entrypoint or ""),
         checks=(dict(task.checks) if task and not getattr(args, "no_oracle", False) else {}),
         spec=(task.spec() if task else spec_statique),
@@ -2979,6 +3016,12 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-learn", dest="no_learn", action="store_true",
                    help="desactiver memoire et routeur pour cette execution")
     r.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 5))
+    r.add_argument(
+        "--sans-competences", action="store_true",
+        help="ne PAS charger les procedures du depot dans le prompt de mission. Par defaut, le "
+             "routeur en injecte jusqu'a 3 (budget 1500 jetons), choisies pour CET objectif, et "
+             "le journal dit lesquelles ; ce drapeau mesure ce qu'elles apportent",
+    )
     r.add_argument("--alpha", type=float, default=float_env("JIO_ALPHA", 0.05),
                    help="risque d'erreur accepte")
     r.add_argument("--journal", default=str_env("JIO_JOURNAL", ".jio/journal.jsonl"))

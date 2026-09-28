@@ -190,12 +190,22 @@ class Engine:
     router: object | None = None
     #: Memoire des echecs : les erreurs deja payees ne sont pas repayees.
     memory: object | None = None
+    #: Bibliotheque de PROCEDURES du depot : le sous-ensemble qui s'applique a cet objectif
+    #: entre dans le prompt de mission (voir `jio/skills/injection.py`). Injecter les douze
+    #: couterait 6424 jetons a chaque appel et sature le contexte ; n'en injecter aucune
+    #: reviendrait a payer un routeur pour rien. Le bloc porte son budget et NOMME ce qu'il
+    #: ecarte. `None` = aucune injection, comportement inchange.
+    skills: object | None = None
     #: Bibliotheque de temoins : une traduction VALIDEE par une livraison prouvee
     #: devient une capacite durable, et la prochaine mission identique ne demande
     #: plus rien au modele (cout de traduction ramene a zero).
     bibliotheque: object | None = None
     #: Bras choisi par le routeur pour la mission en cours (interne).
     _arm: object | None = field(default=None, init=False, repr=False)
+    #: Le MANDAT de la mission, tel que l'utilisateur l'a formule (interne). Il sert au
+    #: routeur de competences : quand le travail porte un enonce de tache (`work.objective`),
+    #: router sur le seul enonce technique revient a ignorer la question posee.
+    _mandat: str = field(default="", init=False, repr=False)
     #: Memoire du controle d'auto-coherence (interne, voir `__post_init__`).
     _self_check_cache: dict = field(default_factory=dict, init=False, repr=False)
 
@@ -277,6 +287,11 @@ class Engine:
     def run(self, mission: Mission, work: WorkItem | None = None) -> MissionReport:
         started = time.monotonic()
         work = work or WorkItem(objective=mission.objective)
+        # Le mandat est retenu pour le routeur de competences : une mission peut porter un
+        # enonce de tache qui ne dit rien du DOMAINE (le banc en est plein : « Ecrire une
+        # fonction sum_even... »), alors que le mandat dit tout. Router sur le seul enonce
+        # technique ferait s'abstenir le routeur a chaque fois qu'une tache est fournie.
+        object.__setattr__(self, "_mandat", mission.objective or "")
         self.journal.append("mission", {"id": mission.id, "objective": mission.objective,
                                         "alpha": mission.alpha, "risk": mission.risk.value})
 
@@ -1682,6 +1697,23 @@ class Engine:
             f"OBJECTIVE:\n{work.objective}",
             f"\nENUMERATED REQUIREMENTS (each one is checked independently):\n{rules}",
         ]
+        if self.skills is not None:
+            # Les procedures du depot retenues pour CET objectif. Le bloc dit lui-meme sa
+            # provenance et sa portee : une procedure ne peut pas annuler une exigence.
+            objectif_route = work.objective
+            if self._mandat and self._mandat != work.objective:
+                objectif_route = f"{self._mandat}\n{work.objective}"
+            injection = self.skills.bloc(objectif_route)
+            if getattr(injection, "texte", ""):
+                parts.append("\n" + injection.texte)
+                # Le cout est journalise comme les temoins : une injection non tracee serait
+                # une decision de contexte que personne ne peut relire.
+                self.journal.append("competences-injectees", {
+                    "objectif": work.objective[:200],
+                    "noms": list(injection.noms),
+                    "cout_jetons": injection.cout_jetons,
+                    "ecartees": list(injection.ecartees),
+                })
         if self.memory is not None:
             # Memoire des echecs : les erreurs deja payees entrent dans le prompt
             # comme PRIORS (le bloc le dit), jamais comme preuves.
