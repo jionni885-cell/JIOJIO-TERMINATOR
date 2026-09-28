@@ -178,3 +178,68 @@ def test_le_cas_courant_ne_relit_pas_tout_le_fichier(tmp_path):
     lignes = chemin.read_text(encoding="utf-8").strip().splitlines()
     assert len(lignes) == 5, "un seul ecrivain, un evenement par ligne"
     assert Journal.from_jsonl(chemin.read_text(encoding="utf-8")).verify_chain()[0]
+
+
+# --------------------------------------------------------------------------- #
+# `jio trace` : verifier un journal, ou DIRE qu'on ne peut pas
+# --------------------------------------------------------------------------- #
+
+
+def test_un_journal_EXPLICITE_inexistant_n_est_pas_remplace_par_un_autre(tmp_path, capsys, monkeypatch):
+    """DEFAUT MESURE : `jio trace /tmp/inexistant.jsonl` cherchait un AUTRE journal, en
+    trouvait un, et repondait « INTEGRITE : propre » en code 0 — sur un fichier que
+    l'utilisateur n'avait pas demande.
+
+    Pire qu'un mauvais code de sortie : une verification qui porte sur autre chose que ce
+    qu'on lui a donne. Le chemin explicite est donc honore, ou declare introuvable.
+    """
+    from jio.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".jio").mkdir()
+    (tmp_path / ".jio" / "journal.jsonl").write_text("", encoding="utf-8")
+
+    code = main(["trace", str(tmp_path / "absent.jsonl")])
+    sortie = capsys.readouterr().out
+
+    assert code == 2, "un journal introuvable est INDETERMINE, jamais propre"
+    assert "n'existe pas" in sortie
+    assert "code 2" in sortie
+    # Ce qui existe est PROPOSE, pas substitue en silence.
+    assert "disponible(s) ici" in sortie
+    assert "journal.jsonl" in sortie
+
+
+def test_un_journal_VIDE_n_est_pas_un_journal_intact(tmp_path, capsys) -> None:
+    """La chaine d'un fichier vide se verifie sur zero evenement : « propre » ne veut rien dire.
+
+    Un journal vide n'est pas un journal intact, c'est un journal absent — et un quitus sur du
+    vide est exactement le genre de succes silencieux que ce depot refuse.
+    """
+    from jio.cli import main
+
+    vide = tmp_path / "vide.jsonl"
+    vide.write_text("\n", encoding="utf-8")
+
+    code = main(["trace", str(vide)])
+    sortie = capsys.readouterr().out
+
+    assert code == 2
+    assert "vide" in sortie
+    assert "rien a verifier" in sortie
+
+
+def test_un_VRAI_journal_reste_verifie_en_0(tmp_path, capsys) -> None:
+    """L'autre moitie, sans laquelle la correction serait « ne plus rien accepter »."""
+    from jio.core.journal import Journal
+    from jio.cli import main
+
+    journal = Journal(path=tmp_path / "vrai.jsonl")
+    journal.append("mission", {"objectif": "somme des pairs"})
+
+    code = main(["trace", str(journal.path)])
+    sortie = capsys.readouterr().out
+
+    assert code == 0
+    assert "INTEGRITE : propre" in sortie
+    assert "1 evenements" in sortie or "evenements" in sortie

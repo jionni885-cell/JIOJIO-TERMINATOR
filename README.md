@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1096 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1099 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1286,7 +1286,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1096 tests verts -> 1096 tests verts
+         - README.md ligne 15 : 1099 tests verts -> 1099 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

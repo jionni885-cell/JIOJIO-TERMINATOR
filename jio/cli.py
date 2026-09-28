@@ -2954,9 +2954,34 @@ def cmd_trace(args: argparse.Namespace) -> int:
     poser la question est une mauvaise interface. On cherche donc le journal, du
     plus recent au plus ancien, et on dit clairement quoi faire s'il n'y en a pas.
     """
-    path = Path(args.journal) if args.journal else Path(
+    explicite = bool(args.journal)
+    path = Path(args.journal) if explicite else Path(
         str_env("JIO_JOURNAL", ".jio/journal.jsonl")
     )
+    if explicite and not path.is_file():
+        # DEFAUT MESURE, corrige ici : `jio trace /tmp/inexistant.jsonl` cherchait un AUTRE
+        # journal, en trouvait un, et repondait « INTEGRITE : propre » en code 0 — sur un
+        # fichier que l'utilisateur n'avait pas demande. Pire qu'un mauvais code : une
+        # verification qui porte sur autre chose que ce qu'on lui a donne.
+        print()
+        print(f"  Le journal demande n'existe pas : {path}")
+        candidats = sorted(
+            (p for p in Path(".jio").rglob("*.jsonl") if p.is_file()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if candidats:
+            print(f"  Journal(x) disponible(s) ici : {', '.join(str(c) for c in candidats[:3])}")
+            print("  Relancez avec un de ces chemins si c'est celui que vous voulez verifier.")
+        else:
+            print("  Aucun journal dans ce depot : rien n'a encore ete execute.")
+            print("  Un journal se cree a la premiere mission :")
+            print("      jio run \"corriger la somme des pairs\" --task sum_even --simulate")
+        print()
+        from .core.codes import ACTION, INDETERMINE
+
+        print(f"  -> code {INDETERMINE} : {ACTION[INDETERMINE]}")
+        return INDETERMINE
     if not path.exists():
         candidates = sorted(
             (p for p in Path(".jio").rglob("*.jsonl") if p.is_file()),
@@ -2973,8 +2998,23 @@ def cmd_trace(args: argparse.Namespace) -> int:
             print("  Chaque evenement est chaine par hachage : rejouer ne peut pas")
             print("  mentir, et `jio trace` verifie cette chaine.")
             print()
-            return 0
-    journal = Journal.from_jsonl(path.read_text(encoding="utf-8"))
+            from .core.codes import ACTION, INDETERMINE
+
+            print(f"  -> code {INDETERMINE} : {ACTION[INDETERMINE]}")
+            return INDETERMINE
+    contenu = path.read_text(encoding="utf-8", errors="replace")
+    if not contenu.strip():
+        # Un fichier VIDE n'est pas un journal : la chaine se verifie sur zero evenement, donc
+        # « propre » ne veut rien dire. On le dit, au lieu de rendre un quitus sur du vide.
+        print()
+        print(f"  {path} est vide : il n'y a rien a verifier.")
+        print("  Un journal vide n'est pas un journal intact — c'est un journal absent.")
+        print()
+        from .core.codes import ACTION, INDETERMINE
+
+        print(f"  -> code {INDETERMINE} : {ACTION[INDETERMINE]}")
+        return INDETERMINE
+    journal = Journal.from_jsonl(contenu)
     ok, bad = journal.verify_chain()
     summary = journal.summary()
 
