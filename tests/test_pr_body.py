@@ -156,3 +156,84 @@ def test_sans_depot_git_le_module_le_DIT_au_lieu_de_planter(tmp_path: Path) -> N
     with pytest.raises(GitAbsent) as exc:
         commits(tmp_path)
     assert "git" in str(exc.value).lower()
+
+
+# --------------------------------------------------------------------------- #
+# La troncature : la limite de la plateforme doit etre DITE, pas subie
+# --------------------------------------------------------------------------- #
+
+
+def test_une_limite_depassee_tronque_en_LE_DISANT_et_garde_le_dernier_travail(
+    tmp_path: Path,
+) -> None:
+    """GitHub limite un corps de PR a 65 536 caracteres : la limite doit passer par le RAPPORT.
+
+    Le defaut que ce test interdit est silencieux : publier un corps de 237 Ko ne produit
+    aucune erreur visible cote outil, la plateforme coupe, et le lecteur croit avoir tout lu.
+    Un document qui ne dit pas qu'il est incomplet est pire qu'un document court.
+
+    Trois proprietes, et la troisieme est un choix assume : le DETAIL va aux commits les plus
+    RECENTS — c'est ce qu'on juge dans une PR —, la LISTE reste complete, et le nombre de
+    sections omises est ecrit noir sur blanc.
+    """
+    messages = tuple(
+        f"commit {rang}: sujet\n\n" + ("corps detaille. " * 40) for rang in range(1, 31)
+    )
+    depot = _depot(tmp_path, messages)
+
+    entier = construire(depot)
+    tronque = construire(depot, limite=8_000)
+
+    assert len(tronque) <= 8_000, f"la limite n'est pas respectee : {len(tronque)}"
+    assert len(entier) > 8_000, "le rapport de test doit depasser la limite, sinon rien n'est mesure"
+    assert "Rapport tronque, et il le dit." in tronque
+    # La liste complete survit : les 30 commits sont nommes, meme ceux dont le detail est omis.
+    for rang in range(1, 31):
+        assert f"commit {rang}: sujet" in tronque, f"commit {rang} absent de la liste"
+    # Le DETAIL va aux plus recents : le dernier est la, le premier n'y est plus.
+    import re
+
+    detail = re.findall(r"^## (\d+)\. commit ", tronque, re.M)
+    assert detail, "aucun detail affiche : le test ne mesurerait rien"
+    assert detail[-1] == "30", "le commit le PLUS RECENT doit etre detaille"
+    assert "## 1. commit 1: sujet" not in tronque
+    # Et le compte des sections omises est annonce, pas laisse au lecteur.
+    omises = 30 - len(detail)
+    assert omises > 0, "ce cas doit omettre des sections, sinon il ne mesure pas la troncature"
+    assert f"Les {omises} sections omises" in tronque
+    # Le rapport complet se regenere : aucune copie a maintenir.
+    assert "se regenere par `jio pr`" in tronque
+
+
+def test_sans_limite_le_rapport_est_INTEGRAL(tmp_path: Path) -> None:
+    """Le defaut ne tronque rien : la limite est une demande explicite, jamais une surprise."""
+    depot = _depot(tmp_path, ("un: chose\n\n" + ("detail. " * 30),))
+    corps = construire(depot)
+    assert "Rapport tronque" not in corps
+    assert "detail. detail. detail." in corps
+
+
+def test_un_rapport_complet_PEUT_etre_ecrit_a_cote(tmp_path: Path) -> None:
+    """`--complet` : le corps tronque renvoie alors a un fichier, et le fichier existe."""
+    from jio.cli import main
+
+    depot = _depot(tmp_path, tuple(f"c{rang}: sujet\n\n" + ("x" * 200) for rang in range(1, 20)))
+    corps = tmp_path / "corps.md"
+    entier = tmp_path / "entier.md"
+
+    code = main([
+        "pr", "--root", str(depot), "--sortie", str(corps), "--limite", "1200",
+        "--complet", str(entier),
+    ])
+
+    texte = corps.read_text(encoding="utf-8")
+    assert code == 0
+    assert "rapport complet a ete ecrit dans" in texte
+    assert len(entier.read_text(encoding="utf-8")) > 1200
+    assert "Rapport tronque" not in entier.read_text(encoding="utf-8")
+    # 1200 caracteres est PLUS PETIT que le squelette du rapport (intro + liste + pied) : la
+    # limite ne peut pas etre tenue, et c'est exactement ce que le document doit dire. Un corps
+    # qui annoncerait une limite qu'il ne respecte pas apprendrait a ne plus croire ses chiffres.
+    assert len(texte) > 1200
+    assert "est plus petite que le squelette du rapport" in texte
+    assert "aucun detail n'a donc pu etre affiche" in texte

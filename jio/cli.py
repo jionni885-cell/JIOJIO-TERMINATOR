@@ -3236,6 +3236,13 @@ def build_parser() -> argparse.ArgumentParser:
                                                  "depot, puis main, puis master, puis la racine)")
     pr.add_argument("--sortie", default="", help="fichier a ecrire (defaut : la sortie standard, "
                                                  "aucune ecriture)")
+    pr.add_argument("--limite", type=int, default=0,
+                    help="longueur maximale en caracteres (0 = sans limite). Au-dela, le rapport "
+                         "garde la LISTE complete des commits et le DETAIL des plus recents, et "
+                         "DECLARE ce qu'il a omis. GitHub limite un corps de PR a 65536")
+    pr.add_argument("--complet", default="",
+                    help="fichier ou ecrire AUSSI le rapport non tronque (facultatif : il se "
+                         "regenere par `jio pr` sans option)")
     pr.set_defaults(func=cmd_pr)
 
     co = sub.add_parser(
@@ -3437,8 +3444,10 @@ def cmd_pr(args: argparse.Namespace) -> int:
 
     racine = Path(getattr(args, "root", ".") or ".").expanduser()
     depuis = (getattr(args, "depuis", "") or "").strip() or None
+    limite = int(getattr(args, "limite", 0) or 0) or None
+    complet = (getattr(args, "complet", "") or "").strip()
     try:
-        corps = construire(racine, depuis=depuis)
+        corps = construire(racine, depuis=depuis, limite=limite, complet=complet)
     except GitAbsent as exc:
         print(f"  corps de la PR impossible : {exc}", file=sys.stderr)
         print("  Ce rapport resume des COMMITS : sans depot git, il n'y a rien a resumer.",
@@ -3449,6 +3458,14 @@ def cmd_pr(args: argparse.Namespace) -> int:
     if not sortie:
         print(corps)
         return 0
+
+    if complet:
+        # Le rapport NON TRONQUE, ecrit a part et dans le meme mouvement : separer les deux
+        # ecritures laisserait la porte ouverte a un rapport complet d'une generation et un
+        # corps d'une autre.
+        entier = construire(racine, depuis=depuis)
+        ecrire(complet, entier)
+        print(f"  {complet} — rapport complet, non tronque ({len(entier)} octets)")
 
     sauvegarde, ecrit = ecrire(sortie, corps)
     chemin = Path(sortie)

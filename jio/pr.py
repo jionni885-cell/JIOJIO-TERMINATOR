@@ -99,6 +99,13 @@ class Versions:
         )
 
 
+#: Limite de longueur du corps d'une issue ou d'une pull request sur GitHub : 65 536
+#: caracteres. Elle n'est pas contournable, et c'est justement pour cela qu'elle doit etre
+#: DECLAREE : un rapport qui depasse la limite et se fait couper par la plateforme ne le dit
+#: pas, et le lecteur croit avoir tout lu.
+LIMITE_GITHUB = 65_536
+
+
 class GitAbsent(RuntimeError):
     """`git` n'est pas utilisable ici : ce n'est pas une erreur de l'appelant, c'est un fait."""
 
@@ -163,70 +170,147 @@ def commits(racine: Path | str, depuis: str | None = None) -> list[Commit]:
     return out
 
 
-def construire(racine: Path | str, *, depuis: str | None = None) -> str:
-    """Le corps complet de la PR : intro, compteurs mesures, un section par commit, pied."""
+def _blocs(racine: Path, depuis: str | None) -> tuple[list[Commit], str, str]:
+    """L'entete et l'index du document, separes des sections — pour pouvoir tronquer PROPREMENT.
+
+    Separer les blocs est ce qui rend la troncature honnete : on garde l'entete (qui annonce la
+    base et le nombre de commits) et la LISTE complete des commits en une ligne chacun, puis le
+    detail de ceux qui tiennent — au lieu de couper au milieu d'une phrase.
+    """
     from .chiffres import mesurer
 
-    racine = Path(racine)
     ref, sha = base(racine, depuis)
     liste = commits(racine, ref)
-    # La mesure peut ECHOUER sans que le rapport doive disparaitre : un depot sans dossier de
-    # tests n'a aucun compteur a donner, et `mesurer` le dit en levant. Refuser de produire le
-    # corps pour cette raison serait disproportionne ; l'annoncer en clair ne l'est pas — un
-    # compteur faux ou absent doit se VOIR, jamais se deviner dans un nombre a zero.
     try:
         m = mesurer(racine)
     except RuntimeError as exc:
-        m = {}
-        lignes_mesure = (
+        # La mesure peut ECHOUER sans que le rapport doive disparaitre : un depot sans dossier
+        # de tests n'a aucun compteur a donner, et `mesurer` le dit en levant. Refuser de
+        # produire le corps serait disproportionne ; l'annoncer en clair ne l'est pas — un
+        # compteur faux ou absent doit se VOIR, jamais se deviner dans un nombre a zero.
+        entete_mesure = (
             "**Compteurs non mesures dans cette racine** — "
             f"{str(exc)[:120]} Le rapport reste valable : il vient des commits."
         )
-        versions = None
     else:
-        lignes_mesure = ""
-        versions = Versions(
+        entete_mesure = Versions(
             tests=int(m.get("tests", 0)), competences=int(m.get("competences", 0)),
             agents=int(m.get("agents", 0)), objectifs=int(m.get("objectifs", 0)),
-        )
+        ).ligne()
 
-    lignes = [INTRO.rstrip(), ""]
-    lignes.append(versions.ligne() if versions is not None else lignes_mesure)
-    lignes += ["", "---", ""]
-    lignes.append(
-        f"**Base du rapport** : `{ref}` (`{sha}`) — **{len(liste)} commit(s)** resumes ci-dessous. "
-        "Ce document est genere (`jio pr`) : il se reconstruit a l'identique depuis le depot."
-    )
+    entete = "\n".join([
+        INTRO.rstrip(), "", entete_mesure, "", "---", "",
+        f"**Base du rapport** : `{ref}` (`{sha}`) — **{len(liste)} commit(s)** resumes "
+        "ci-dessous. Ce document est genere (`jio pr`) : il se reconstruit a l'identique "
+        "depuis le depot.",
+        "", "---", "",
+    ])
     if not liste:
-        # Un corps vide sans explication serait un rapport qui ne dit pas qu'il ne dit rien.
-        lignes += [
+        entete += (
             "**Aucun commit au-dessus de la base.** La branche courante n'a rien a resumer "
             "ici : soit elle EST la base, soit la ref donnee a `--depuis` est deja a jour. "
-            "`jio pr --depuis <ref>` choisit une autre origine.",
-            "", "---", "",
-        ]
+            "`jio pr --depuis <ref>` choisit une autre origine.\n\n---\n\n"
+        )
+    index = ["## Les commits couverts", ""]
+    index += [f"{rang}. `{c.court}` {c.sujet}" for rang, c in enumerate(liste, start=1)]
+    index += [""]
+    return liste, entete, "\n".join(index)
+
+
+def _sections(liste: list[Commit]) -> list[str]:
+    """Une section par commit, numerotee : c'est la partie qu'on peut avoir a tronquer."""
+    blocs: list[str] = []
     for rang, commit in enumerate(liste, start=1):
-        lignes.append(f"## {rang}. {commit.sujet}")
-        lignes.append("")
-        lignes.append(f"`{commit.court}`")
-        lignes.append("")
-        if commit.corps:
-            lignes.append(commit.corps)
-            lignes.append("")
-        lignes.append("---")
-        lignes.append("")
-    lignes += [
-        "## Comment lire ce document",
-        "",
-        "Chaque section est un commit, reproduit sans retouche. Un commit qui annonce un chiffre",
-        "le tire d'une commande du depot : `jio coherence` (les 9 controles), `jio chiffres` (les",
-        "compteurs de la documentation), `jio mutants` (ce que la suite de tests protege",
-        "reellement) et `jio claims` (les affirmations verifiables des documents).",
-        "",
-        "**Rien ici n'est merge automatiquement.** La PR reste ouverte jusqu'a decision.",
-        "",
-    ]
-    return "\n".join(lignes)
+        blocs.append("\n".join(
+            filter(None, [f"## {rang}. {commit.sujet}", "", f"`{commit.court}`", "", commit.corps])
+        ))
+    return blocs
+
+
+PIED = """## Comment lire ce document
+
+Chaque section est un commit, reproduit sans retouche. Un commit qui annonce un chiffre le tire
+d'une commande du depot : `jio coherence` (les 9 controles), `jio chiffres` (les compteurs de la
+documentation), `jio mutants` (ce que la suite de tests protege reellement) et `jio claims` (les
+affirmations verifiables des documents).
+
+**Rien ici n'est merge automatiquement.** La PR reste ouverte jusqu'a decision."""
+
+
+def construire(
+    racine: Path | str,
+    *,
+    depuis: str | None = None,
+    limite: int | None = None,
+    complet: str = "",
+) -> str:
+    """Le corps de la PR : intro, compteurs mesures, une section par commit, pied.
+
+    `limite` : longueur maximale en caracteres. Au-dela, le document n'est pas coupe en plein
+    milieu : il garde l'entete, la LISTE COMPLETE des commits (une ligne chacun) et le detail
+    des commits les PLUS RECENTS qui tiennent, puis DECLARE combien de sections ont ete
+    retirees et ou lire le rapport entier (`complet`).
+
+    Ce choix est delibere. Couper a la fin garderait le recit des fondations et perdrait l'etat
+    courant ; tout resumer a une ligne ferait perdre les mesures, qui sont l'interet du
+    document. Un lecteur qui juge une PR a besoin du DERNIER travail en detail, et de savoir
+    exactement ce qu'il ne voit pas.
+    """
+    liste, entete, index = _blocs(Path(racine), depuis)
+    sections = _sections(liste)
+
+    def assembler(gardees: list[str], note: str = "") -> str:
+        morceaux = [entete, index, ""]
+        if note:
+            morceaux += [note, ""]
+        morceaux += ["---", ""]
+        for bloc in gardees:
+            morceaux += [bloc, "", "---", ""]
+        morceaux += [PIED, ""]
+        return "\n".join(morceaux)
+
+    complet_texte = assembler(sections)
+    if limite is None or len(complet_texte) <= limite:
+        return complet_texte
+
+    # Troncature DECLAREE : on part de la fin (les commits les plus recents) et on remonte tant
+    # que le total tient, en reservant la place de la note qui annonce la troncature elle-meme —
+    # sinon la note ferait depasser la limite qu'elle explique.
+    reserve = 400
+    gardees: list[str] = []
+    for bloc in reversed(sections):
+        candidat = [bloc, *gardees]
+        if len(assembler(candidat, "x" * reserve)) > limite:
+            break
+        gardees = candidat
+    omises = len(sections) - len(gardees)
+    # Le rapport complet N'EST PAS recopie ailleurs : il se REGENERE. Dupliquer 237 Ko de
+    # journal dans un fichier du depot donnerait deux copies a tenir a jour — et la deuxieme
+    # serait perimee sans que rien ne le dise. La commande, elle, ne peut pas etre perimee.
+    ou = (
+        f" Le rapport complet a ete ecrit dans `{complet}`."
+        if complet else
+        " Le rapport complet se regenere par `jio pr` (aucune option : il imprime sur la "
+        "sortie standard)."
+    )
+    note = (
+        f"**Rapport tronque, et il le dit.** Les {len(sections)} commits sont tous listes "
+        f"ci-dessus, une ligne chacun ; le DETAIL n'est donne que pour les {len(gardees)} plus "
+        f"recents, parce que le corps d'une pull request est limite a {LIMITE_GITHUB} "
+        f"caracteres sur GitHub.{ou} Les {omises} sections omises sont les {omises} plus "
+        "anciennes."
+    )
+    if len(assembler([], note)) > limite:
+        # La limite demandee est plus petite que le SQUELETTE du rapport (intro, liste des
+        # commits, pied). Aucun detail ne peut donc tenir — et le dire est la seule chose
+        # honnete a faire : un document qui annonce une limite qu'il ne respecte pas apprend au
+        # lecteur a ne plus croire ses propres chiffres.
+        note += (
+            f" **La limite demandee ({limite} caracteres) est plus petite que le squelette du "
+            f"rapport ({len(assembler([], note))}), qui ne peut pas etre reduit sans perdre la "
+            "liste des commits : aucun detail n'a donc pu etre affiche.**"
+        )
+    return assembler(gardees, note)
 
 
 def ecrire(chemin: Path | str, texte: str) -> tuple[Path | None, bool]:
