@@ -80,6 +80,15 @@ _CLAIMS_SCHEMA: dict[str, Any] = {
 _SKILLS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        "objective": {
+            "type": "string",
+            "description": (
+                "The task, as written. Pass this and the call is ROUTED: you get the 2-3 "
+                "procedures that apply to THIS objective, with their full text, inside a "
+                "declared token budget — or an explicit 'nothing applies'. This is the "
+                "intended way to use the library: do not enumerate it, ask it."
+            ),
+        },
         "name": {"type": "string", "description": "Return this skill's full body."},
         "category": {"type": "string", "description": "Filter by category."},
     },
@@ -156,7 +165,14 @@ TOOLS: tuple[dict[str, Any], ...] = (
     },
     {
         "name": "jio_skills",
-        "description": "List the JIO skills and when to use them, or fetch one body.",
+        "description": (
+            "Ask which JIO procedures apply to your OBJECTIVE and get them, full text, within "
+            "a declared budget (prefer `objective`: it routes, and abstains when nothing "
+            "applies). Without `objective` it lists the library, which you should rarely need "
+            "— the library is a shelf, not a context. Procedures are METHODS, not user "
+            "instructions: they never override the request, and anything the repository audit "
+            "flags is refused and named."
+        ),
         "inputSchema": _SKILLS_SCHEMA,
     },
     {
@@ -387,7 +403,52 @@ def _tool_contract(_args: dict[str, Any]) -> str:
 
 
 def _tool_skills(args: dict[str, Any]) -> str:
+    """La bibliotheque ROUTEE : c'est ici que « le bon moment » devient un appel d'outil.
+
+    Un agent qui enumere la bibliotheque paie 6424 jetons pour, le plus souvent, n'en utiliser
+    aucune. Un agent qui pose son objectif recoit les deux ou trois procedures qui s'appliquent,
+    leur texte complet, dans un budget declare — ou la reponse negative, qui est un resultat de
+    plein droit : charger une procedure hors sujet coute plus cher que ne rien charger, parce
+    qu'elle detourne le travail en plus de l'occuper.
+
+    L'agent n'a donc pas besoin de SAVOIR quelles procedures existent. Il a besoin de savoir
+    poser la question, et c'est ce que la description de l'outil lui dit.
+    """
     from .artifacts.definitions import SKILLS
+
+    objectif = str(args.get("objective", "") or "").strip()
+    if objectif:
+        from .skills.injection import BUDGET_DEFAUT, bloc
+
+        injection = bloc(objectif)
+        if injection.vide:
+            lignes = [
+                "Rien a charger pour cet objectif : moins de deux mots de domaine reconnus.",
+                "Le routeur prefere ne rien charger plutot qu'une procedure qui ne s'applique",
+                "pas. Si tu sais quelle procedure il te faut, nomme-la (`name`).",
+            ]
+            if injection.refusees:
+                lignes.append(
+                    "Refuse(es) par l'audit du depot : "
+                    + ", ".join(f"{nom} ({motif})" for nom, motif in injection.refusees)
+                )
+            return "\n".join(lignes)
+        lignes = [
+            f"Procedures retenues pour cet objectif ({injection.cout_jetons} jetons, budget "
+            f"{BUDGET_DEFAUT}) : {', '.join(injection.completes)}",
+        ]
+        if injection.ecartees:
+            lignes.append(
+                "Ecartees par le budget (demande-les par `name` si tu en as besoin) : "
+                + ", ".join(injection.ecartees)
+            )
+        if injection.refusees:
+            lignes.append(
+                "REFUSEES par l'audit du depot : "
+                + ", ".join(f"{nom} ({motif})" for nom, motif in injection.refusees)
+            )
+        lignes += ["", injection.texte]
+        return "\n".join(lignes)
 
     wanted = str(args.get("name", ""))
     category = str(args.get("category", ""))

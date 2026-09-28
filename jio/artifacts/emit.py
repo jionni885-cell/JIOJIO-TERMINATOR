@@ -278,12 +278,23 @@ def _target_mcp() -> dict[str, str]:
         ".mcp.json": json.dumps(config, indent=2, ensure_ascii=False) + "\n",
         ".mcp.README.md": (
             "# Serveur MCP JIO\n\n"
+            # La marque de genese, comme les autres fichiers Markdown emis : sans elle, le
+            # garde-fou d'ecriture PRESERVE ce fichier (« ecrit par vous ») et l'artefact
+            # livre ne se met plus JAMAIS a jour — mesure faite sur ce depot, ou
+            # `.mcp.README.md` decrivait encore `jio_skills` comme un simple lister alors que
+            # l'outil routait depuis deux commits. Un generateur qui ne signe pas sa sortie
+            # ne peut pas la mettre a jour.
+            "> Genere par `jio artifacts` — ne pas editer a la main : la source est "
+            "`jio/artifacts/emit.py`.\n\n"
             "Expose la verification JIO a tout client MCP (Claude Code, opencode,\n"
             "Cursor, Copilot, Hermes) :\n\n"
             "- `jio_prove` — prouve une source contre des regles executables\n"
             "- `jio_audit` — audite un fichier et derive ses regles\n"
             "- `jio_contract` — renvoie le contrat de livraison (3 etats)\n"
-            "- `jio_skills` — liste les competences et leur declencheur\n"
+            "- `jio_skills` — **a appeler avec ton objectif** : il renvoie les 2 a 3\n"
+            "  PROCEDURES qui s'appliquent, texte complet, dans un budget declare ; il ne\n"
+            "  charge rien quand rien ne s'applique, et refuse ce que l'audit du depot\n"
+            "  signale. Sans objectif, il liste la bibliotheque (6424 jetons : a eviter)\n"
             "- `jio_clarify` — les 0 a 3 questions ESSENTIELLES avant de travailler ; si la\n"
             "  reponse manque, l'agent doit DEMANDER a l'humain avant de commencer\n"
             "- `jio_status` — l'etat d'integration du projet, lu sur le disque : artefacts,\n"
