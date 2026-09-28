@@ -266,3 +266,23 @@ def test_la_fiche_est_reecrite_quand_l_etat_CHANGE(tmp_path: Path) -> None:
     assert "2 controle(s) en echec : sources" in apres, "le verdict de la porte doit suivre"
     assert "artefacts natifs : 12/30 present(s)" in apres
     assert "cablage MCP : opencode" in apres
+
+
+def test_la_fiche_enseigne_le_routeur_de_procedures() -> None:
+    """Une IA qui arrive doit savoir que les procedures se DEMANDENT, et comment.
+
+    Sans cette section, la bibliotheque de competences reste une ressource que personne
+    n'interroge : cinq commandes ecrites dans la fiche valent mieux qu'un fichier de plus a
+    charger d'avance — la fiche est lue, elle n'est pas devinee.
+    """
+    from jio.cli import _fiche_active
+
+    fiche = _fiche_active(Path("/tmp/projet"), ["opencode"], ["opencode"], 30, 30, 30, "COHERENT")
+    assert "jio skills" in fiche
+    assert "jio sorties" in fiche
+    assert "--sans-competences" in fiche
+    assert "6424 jetons" in fiche
+    # La fiche reste dans la zone ou un agent la LIT (au-dela d'une centaine de lignes, un
+    # fichier de contexte est survole) : ce test est le garde-fou du budget.
+    assert len(fiche.splitlines()) < 110
+

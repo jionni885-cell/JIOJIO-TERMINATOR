@@ -4131,6 +4131,26 @@ jio coherence --reparer     # repare ce qui est MECANIQUE (artefacts generes, va
 `jio clarify` sort en **3** quand une question essentielle reste sans reponse. Dans ce cas,
 la bonne action est de POSER la question a l'utilisateur, pas de commencer.
 
+## Les procedures du depot : lesquelles charger, et quand
+
+Ce depot livre **12 procedures** (`.hermes/skills/`) et **7 agents** (`.opencode/agents/`). Les
+charger TOUTES coute 6424 jetons dans la fenetre — mesure du domaine : un contexte sature fait
+perdre ce que le contexte apportait. Ne pas les charger du tout revient a ignorer ce que le
+depot sait faire. La reponse est une commande, pas un choix a l'aveugle :
+
+```sh
+jio skills "<objectif>"     # les 3 procedures qui s'appliquent, avec les termes qui l'ont
+                            # decide, leur cout, et « aucune » si l'objectif est hors sujet
+jio skills --banc           # la mesure du classement, temoins compris (39 objectifs de routage)
+jio skills --seuil-balaye   # le seuil d'abstention et ce qu'il coute
+jio sorties                 # les exemples de sortie de CE README sont-ils encore vrais ?
+```
+
+`jio run` fait ce choix **tout seul** : il injecte les procedures retenues dans le prompt de
+mission (3 au plus, budget 1500 jetons), refuse celles que `jio artifacts --audit` signale, et
+ecrit au journal ce qui a ete charge comme ce qui a ete ecarte. Pour mesurer ce qu'elles
+apportent : `jio run "<objectif>" --sans-competences`.
+
 ## Trois regles de ce projet, et ce qui les tient
 
 1. **Aucune affirmation sans preuve executable.** `jio claims <document>` verifie un document

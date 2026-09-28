@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1052 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1053 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -934,25 +934,33 @@ Quatre décisions, et aucune n'est un goût personnel — chacune a été **mesu
   l'ordre affiché n'est pas celui des scores, la commande le **dit**.
 - **Abstention sur un seuil d'évidence mesuré.** La question à laquelle un routeur doit
   savoir répondre NON est : « cet objectif relève-t-il seulement du domaine ? » Le seuil porte
-  sur le nombre de **concepts** de domaine, jamais sur un score — un score BM25 n'a pas
-  d'unité, donc pas de seuil honnête. Et un concept est identifié par son **radical** : sans
-  cela, « outil » et « outils » comptaient deux concepts et deux tâches de plomberie
-  déclenchaient une procédure.
+  sur le nombre de **mots** de domaine, jamais sur un score — un score BM25 n'a pas d'unité,
+  donc pas de seuil honnête. Et un mot est identifié par son **radical** : sans cela, « outil » et
+  « outils » comptaient deux mots et deux tâches de plomberie déclenchaient une procédure.
 
 Le résultat, témoins compris, est publié par `jio skills --banc` :
 
 | stratégie | équilibre | premier choix juste | ce qu'elle dit |
 |---|---|---|---|
-| **routeur** (BM25 + MMR + abstention) | **0,919** | **77 %** (86 % quand il répond) | — |
+| **routeur** (BM25 + MMR + abstention) | **0,968** | **87 %** | 8 abstentions justes sur 8, et 30 des 31 objectifs pertinents servis |
 | mots-clés bruts (ablation) | 0,623 | 77 % | ce que l'`idf`, la saturation et la pondération apportent : au témoin, ce n'est pas le score qui manque, c'est l'abstention |
 | alphabétique | 0,145 | 10 % | ce que vaut un choix qui ne regarde pas l'objectif |
 | tout charger | 0,500 | 10 % | rappel parfait **par construction** (6424 jetons) : le coût affiché à côté du rappel |
 
-Premier choix juste dans 77 % des cas au total, et **86 % quand le routeur répond** : les deux
+Premier choix juste dans 87 % des cas au total **et** 87 % quand le routeur répond : les deux
 nombres sont affichés ensemble parce que l'abstention compte comme un échec dans le premier et
-pas dans le second. Le prix est écrit noir sur blanc : refuser 8 objectifs hors sujet sur 8
-coûte 4 objectifs pertinents sur 31, listés un par un par le banc (`MANQUEE ...`). Un rapport
-qui ne montrerait que ses succès ne serait pas une mesure.
+pas dans le second — ici elle ne coûte plus un seul objectif pertinent, ce qui est le signe que
+le seuil n'est plus sur le fil. Ce qui reste faux est écrit noir sur blanc : **4 classements faux
+sur 31**, listés un par un par le banc (`MANQUEE ...`). Un rapport qui ne montrerait que
+ses succès ne serait pas une mesure.
+
+Et la mesure qui a fait changer la règle d'abstention mérite d'être racontée, parce qu'elle est
+le genre d'erreur qu'un score global cache : la première version comptait des **concepts par
+classe d'équivalence**, si bien qu'un objectif mettant trois mots du même champ — « Le vote de
+trois critiques identiques ne vaut pas un consensus » — ne comptait qu'un concept et se faisait
+refuser. Le banc avait **deux** cas comme celui-là, plus un troisième sur la forge de
+compétences. Compter les **mots** de domaine, par radical, répare les trois et élargit la marge :
+au cran suivant (3 mots), il reste 25 objectifs pertinents sur 31, contre 14 avant.
 
 Le banc est la **limite** de l'affirmation, pas sa preuve : il tient en 39 objectifs de routage écrits
 par la personne qui a écrit le routeur. Ce qui lui donne sa valeur n'est donc pas le score absolu,
@@ -1278,7 +1286,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1052 tests verts -> 1052 tests verts
+         - README.md ligne 15 : 1053 tests verts -> 1053 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

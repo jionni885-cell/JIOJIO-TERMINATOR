@@ -81,17 +81,18 @@ POIDS_RADICAL = 0.5
 #: Part de pertinence dans la diversification MMR.
 LAMBDA = 0.7
 
-#: Nombre de CONCEPTS de domaine distincts en dessous duquel le routeur s'abstient.
+#: Nombre de MOTS de domaine distincts en dessous duquel le routeur s'abstient.
 #:
 #: MESURE, et la courbe compte autant que le point. Sur le banc annote (31 objectifs pertinents,
 #: 8 hors sujet) :
-#:   0 concept  -> 0/8 abstentions justes (le routeur repond toujours)
-#:   1 concept  -> 3/8   et 31/31 objectifs pertinents servis
-#:   2 concepts -> 8/8   et 27/31 servis       <- retenu
-#:   3 concepts -> 8/8   et 14/31 servis
+#:   0 mot  -> 0/8 abstentions justes (le routeur repond toujours)
+#:   1 mot  -> 3/8   et 31/31 objectifs pertinents servis
+#:   2 mots -> 8/8   et 31/31 servis       <- retenu
+#:   3 mots -> 8/8   et 25/31 servis
 #: Le seuil de 2 est le seul point ou l'abstention est JUSTE sur tous les cas hors sujet sans
-#: perdre la majorite des cas pertinents. Il coute 13 % des objectifs pertinents, qui sont
-#: declares manques par le banc plutot que caches.
+#: perdre UN SEUL cas pertinent, et il tient encore a 25 sur 31 au cran suivant : la marge
+#: existe des deux cotes. Les huit cas hors sujet portent 0 ou 1 mot de domaine (« document »
+#: pour une traduction, « outil » pour une barre d'outils, aucun pour un menu de la semaine).
 SEUIL_CONCEPTS = 2
 
 #: Mots outils francais et anglais : presents dans presque tous les objectifs, donc ils ne
@@ -252,31 +253,34 @@ class Catalogue:
         apports.sort(key=lambda x: (-x[1], x[0]))
         return tuple(f"{terme} ({valeur:.2f})" for terme, valeur in apports[:combien])
 
-    def concepts_du_domaine(self, objectif: str) -> frozenset[str]:
-        """Les concepts de l'objectif qui parlent VRAIMENT du domaine des competences.
+    def mots_du_domaine(self, objectif: str) -> frozenset[str]:
+        """Les mots de DOMAINE de l'objectif, ramenes a leur RADICAL.
 
-        Un mot ne compte que s'il est un mot de DOMAINE — c'est-a-dire s'il appartient au
-        lexique (`lexique.CONCEPT`) ou s'il figure dans le vocabulaire des competences. Un mot
-        etranger au domaine (« espagnol », « bouton », « semaine ») ne prouve pas que l'objectif
-        releve du domaine, et c'est exactement ce qu'on veut mesurer avant de charger une
-        procedure.
+        Un mot est du domaine s'il appartient a une classe du lexique (`lexique.CONCEPT`) ou
+        s'il figure dans le vocabulaire des competences (nom, tags, description, categorie).
+        Un mot etranger (« espagnol », « bouton », « semaine ») ne prouve rien : c'est
+        exactement ce qu'on veut mesurer avant de charger une procedure.
 
-        Ce que le banc a paye ici, et qu'il faut garder : la stabilite du seuil. Trois comptages
-        differents ont ete essayes — mots de domaine seuls, vocabulaire de l'index seul, et leur
-        union — et les trois donnent **8 abstentions justes sur 8** au seuil de deux concepts, a
-        des rappels differents (respectivement 23, 15 et 27 objectifs pertinents conserves sur
-        31). Le seuil ne depend donc pas du filtre choisi ; c'est ce qui autorise a retenir
-        l'union, qui garde le plus de travail utile.
+        MESURE QUI A FAIT CHANGER CETTE FONCTION, et elle vaut d'etre ecrite. La premiere
+        version comptait des CONCEPTS par classe d'equivalence : trois mots du meme champ
+        (« vote », « critiques », « consensus ») ne faisaient donc qu'UN concept, et le seuil
+        de deux refusait des objectifs qui parlaient clairement du domaine — le banc en
+        comptait deux, plus un troisieme sur la forge de competences. Compter les MOTS de
+        domaine, par radical, repare cela et ameliore la marge dans les deux sens : sur le banc,
+        31 objectifs pertinents sur 31 sont servis au seuil de 2 (contre 28), avec les memes
+        8 abstentions justes sur 8, et au seuil de 3 il en reste 25 (contre 14) — le seuil n'est
+        donc pas sur le fil.
 
-        L'identite d'un concept est son RADICAL, jamais sa forme ecrite : « outil » et « outils »
-        sont un concept, pas deux (defaut mesure et corrige — il laissait passer « Ajouter une
-        icone dans la barre d'outils »).
+        L'identite d'un mot est son RADICAL, jamais sa forme ecrite : « outil » et « outils »
+        sont un mot, pas deux (defaut mesure et corrige — il laissait passer « Ajouter une icone
+        dans la barre d'outils »).
         """
-        from .lexique import CONCEPT, concepts
+        from .lexique import CONCEPT
 
-        mots = [m for m in jetons(objectif)
-                if m in CONCEPT or m in self._vocabulaire or stem(m) in self._vocabulaire]
-        return concepts(" ".join(mots)) if mots else frozenset()
+        return frozenset(
+            stem(m) for m in jetons(objectif)
+            if m in CONCEPT or m in self._vocabulaire or stem(m) in self._vocabulaire
+        )
 
     def interroger(
         self,
@@ -293,7 +297,7 @@ class Catalogue:
 
         # -- 1. l'abstention d'abord : charger une procedure qui ne s'applique pas coute plus
         #       cher que ne rien charger, parce qu'elle detourne le travail en plus de le ralentir.
-        evidence = self.concepts_du_domaine(objectif)
+        evidence = self.mots_du_domaine(objectif)
         if len(evidence) < max(0, seuil):
             return []
 
