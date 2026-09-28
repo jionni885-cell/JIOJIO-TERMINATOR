@@ -162,3 +162,71 @@ def test_le_mode_strict_ne_bloque_pas_sur_du_code_juge(tmp_path: Path) -> None:
 
     assert resultat.returncode == 0, resultat.stdout
     assert "la porte est franchie" in resultat.stdout
+
+
+# --------------------------------------------------------------------------- #
+# 4. Le contrat avec pre-commit : `entry` doit etre une commande jio VALIDE
+# --------------------------------------------------------------------------- #
+
+
+def test_chaque_entry_du_manifeste_est_une_commande_jio_ACCEPTEE_par_le_parseur() -> None:
+    """Le contrat qui manquait : `entry` est une CHAINE, et rien ne la verifiait.
+
+    pre-commit installe l'entree telle quelle. Un `--strict` mal orthographie, une option
+    renommee, une sous-commande supprimee : le hook se met a echouer sur TOUS les commits de
+    l'utilisateur, avec un message qui parle de jio et non de l'erreur. Le manifeste etait
+    teste sur deux fragments (`"--strict" in entree`), ce qui ne dit rien du reste.
+
+    L'oracle est le PARSEUR lui-meme — pas une liste recopiee, qui deriverait.
+    """
+    import shlex
+
+    import yaml
+
+    from jio.cli import build_parser
+
+    parser = build_parser()
+    manifeste = yaml.safe_load((REPO / ".pre-commit-hooks.yaml").read_text(encoding="utf-8"))
+    for hook in manifeste:
+        morceaux = shlex.split(hook["entry"])
+        assert morceaux[0] == "jio", (
+            f"{hook['id']} : l'entree doit appeler `jio` (le script installe par le paquet), "
+            f"pas `{morceaux[0]}`"
+        )
+        # pre-commit AJOUTE les noms de fichiers apres l'entree, sauf si le hook declare
+        # `pass_filenames: false`. On modelise exactement ce qu'il fera : sans cela, un hook
+        # dont le fichier est un argument obligatoire (`jio claims`, qui en exige au moins un)
+        # passerait pour casse alors qu'il est correct.
+        arguments = morceaux[1:]
+        if hook.get("pass_filenames") is not False:
+            arguments = [*arguments, "README.md"]
+        try:
+            parser.parse_args(arguments)
+        except SystemExit as exc:  # argparse sort en 2 sur un usage invalide
+            raise AssertionError(
+                f"{hook['id']} : `{hook['entry']}` est refusee par le parseur de jio "
+                f"(code {exc.code}). Verifiez la sous-commande et les options."
+            ) from None
+
+
+def test_le_script_jio_est_declare_dans_le_paquet() -> None:
+    """Sans point d'entree `jio`, TOUS ces hooks echouent a l'installation.
+
+    pre-commit, en `language: python`, installe le paquet puis appelle l'entree : si
+    `pyproject.toml` ne declare pas le script, l'utilisateur voit « jio: command not found »
+    et aucun de ces controles ne tourne — le manifeste entier serait decoratif.
+    """
+    import tomllib
+
+    projet = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    assert projet["project"]["scripts"]["jio"] == "jio.cli:main"
+
+
+def test_les_hooks_ne_sont_pas_declares_en_LANGUAGE_system() -> None:
+    """`language: system` supposerait jio deja installe : l'utilisateur croirait avoir une
+    porte alors qu'il aurait une erreur d'installation a chaque commit."""
+    import yaml
+
+    manifeste = yaml.safe_load((REPO / ".pre-commit-hooks.yaml").read_text(encoding="utf-8"))
+    for hook in manifeste:
+        assert hook.get("language") == "python", hook["id"]
