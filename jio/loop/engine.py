@@ -224,6 +224,14 @@ class Engine:
         #: pas etre declaree livree sans reserve — c'est la doctrine « un etat se
         #: prouve avant d'etre cru ».
         self._regles_non_prouvees: set[str] = set()
+        #: Tour ou chaque regle non prouvee a ete vue pour la PREMIERE fois. Le constat est
+        #: emis a la FIN, pas au tour ou il est fait : une regle que tous les candidats d'un
+        #: tour echouent peut tres bien etre satisfaite par l'artefact finalement livre, et un
+        #: constat emis trop tot se retrouverait en contradiction avec les preuves affichees
+        #: juste a cote (defaut mesure : « preuves 3/3 » et « NON PROUVEE : R-001 » sur la meme
+        #: page). Ce qui reste faux a la fin se dit ; ce qui a ete rattrape se dit aussi, mais
+        #: comme un rattrapage.
+        self._premier_tour_non_prouve: dict[str, int] = {}
         #: Temoins repris dans la bibliotheque pour la mission en cours (aucune traduction).
         self._temoins_memorises: bool = False
 
@@ -670,16 +678,10 @@ class Engine:
             partielles, key=lambda x: x[1], reverse=True)]
 
         for rid in sorted(discriminants):
-            warnings.append(Finding(
-                agent="temoins",
-                severity=Severity.MEDIUM,
-                message=(
-                    f"regle {rid} NON PROUVEE : son temoin echoue sur TOUS les candidats. "
-                    "Deux causes possibles — le temoin est faux, ou tous les candidats "
-                    "sont faux — et rien ici ne permet de trancher. La regle reste "
-                    "declaree NON PROUVEE, jamais supposee satisfaite."
-                ),
-            ))
+            # Le constat est MEMORISE, pas encore ecrit : il sera emis a la fin, quand on
+            # saura ce que l'artefact LIVRE satisfait. Ecrit ici, il se retrouverait en
+            # contradiction avec la section PREUVES du rapport final des le tour suivant.
+            self._premier_tour_non_prouve.setdefault(rid, rnd)
         # Un temoin REPRIS dans la bibliotheque et qui se met a accuser tout le monde
         # n'est plus un temoin : on le revoque, et la prochaine mission repayera une
         # traduction. C'est le garde-fou qui empeche une memoire de s'auto-entretenir
@@ -1455,6 +1457,55 @@ class Engine:
         else:
             status = MissionStatus.FAILED
             abstention = "aucune verification n'a pu etre menee a bien"
+
+        # RECONCILIATION AVANT LA POST-CONDITION, et elle est obligatoire pour que le rapport
+        # ne se contredise pas. `_regles_non_prouvees` s'ACCUMULE d'un tour a l'autre : une
+        # regle que TOUS les candidats du tour 1 echouaient y entre, et rien ne l'en sort.
+        # Le rapport, lui, affiche a cote les preuves de l'artefact LIVRE.
+        #
+        # Mesure, sur `jio run --simulate --task sum_even --no-oracle` : la MEME page
+        # annoncait « preuves 3/3 regles satisfaites », « [ok] R-001 », puis deux lignes plus
+        # bas « regle(s) NON PROUVEE(s) : R-001, R-003 ». Un rapport qui se contredit n'est
+        # pas « prudent » : il n'est plus verifiable, et c'est tout ce qu'il avait pour lui.
+        #
+        # On retire donc — et SEULEMENT — les regles que l'artefact LIVRE satisfait. Les
+        # faits des tours precedents ne disparaissent pas : ils sont journalises
+        # (`temoins-non-discriminants`), et la reconciliation s'ecrit a son tour pour que
+        # l'ecart entre les deux lectures reste auditable.
+        if best is not None and self._regles_non_prouvees:
+            prouvees_par_le_livre = {w.rule_id for w in best[1].witnesses if w.ok}
+            reconciliees = sorted(self._regles_non_prouvees & prouvees_par_le_livre)
+            if reconciliees:
+                self._regles_non_prouvees -= prouvees_par_le_livre
+                self.journal.append(
+                    "temoins-reconcilies",
+                    {
+                        "regles": reconciliees,
+                        "motif": (
+                            "declaree(s) NON PROUVEE(s) a un tour ou TOUS les candidats "
+                            "echouaient ce temoin ; l'artefact LIVRE le satisfait, donc "
+                            "l'affirmation ne vaut plus pour lui. Les tours precedents "
+                            "restent au journal."
+                        ),
+                    },
+                )
+
+        # Le constat, maintenant qu'il est VRAI pour l'artefact livre : ce qui reste non
+        # prouve est ecrit ici, avec le tour ou le fait a ete vu. Le rapport ne peut donc plus
+        # dire « 3/3 » et « NON PROUVEE » de la meme regle.
+        for rid in sorted(self._regles_non_prouvees):
+            tour = self._premier_tour_non_prouve.get(rid, 0)
+            findings.append(Finding(
+                agent="temoins",
+                severity=Severity.MEDIUM,
+                message=(
+                    f"regle {rid} NON PROUVEE : son temoin echoue sur TOUS les candidats "
+                    f"(constate au tour {tour + 1}, et toujours vrai pour l'artefact livre). "
+                    "Deux causes possibles — le temoin est faux, ou tous les candidats "
+                    "sont faux — et rien ici ne permet de trancher. La regle reste "
+                    "declaree NON PROUVEE, jamais supposee satisfaite."
+                ),
+            ))
 
         # POST-CONDITION, quelle que soit la branche empruntee plus haut : une regle
         # dont le temoin echoue sur TOUS les candidats n'est PAS prouvee. La livrer

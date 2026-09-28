@@ -575,3 +575,88 @@ def test_une_relance_qui_echoue_AUSSI_reste_honnete_et_compte_ses_appels() -> No
     assert temoignage.appels == 2
     assert not temoignage.tests
     assert temoignage.motif, "l'echec doit etre NOMME, pas silencieux"
+
+
+class GenerateurParTour:
+    """Rend une implementation FAUSSE au premier tour, JUSTE ensuite.
+
+    C'est le cas exact du defaut : le temoin traduit est le meme a tous les tours (il est
+    memoise), mais les CANDIDATS changent. Une regle que tous les candidats du tour 1
+    echouent entre dans `_regles_non_prouvees`, et rien ne l'en sortait — meme quand le
+    candidat final, lui, la satisfaisait.
+    """
+
+    name = "gen-par-tour"
+    model = "gen-tour-1"
+
+    def __init__(self, faux: str, juste: str) -> None:
+        self.faux = faux
+        self.juste = juste
+        self.appels = 0
+
+    def complete(self, messages, *, temperature=0.0, max_tokens=2048, seed=None):
+        self.appels += 1
+        code = self.faux if self.appels == 1 else self.juste
+        return Completion(text=f"```python\n{code}\n```", model=self.model, provider=self.name)
+
+
+def test_une_regle_NON_PROUVEE_a_un_tour_et_PROUVEE_par_lartefact_LIVRE_nest_plus_annoncee() -> None:
+    """Le rapport ne doit JAMAIS se contredire sur la meme page.
+
+    `_regles_non_prouvees` s'accumulait d'un tour a l'autre sans jamais se reconcilier, alors
+    que le rapport affiche a cote les preuves de l'artefact LIVRE. Mesure faite sur
+    `jio run --simulate --task sum_even --no-oracle` : la MEME page annoncait
+
+        preuves  3/3 regles satisfaites
+        [ok] R-001
+        ...
+        MOTIF : regle(s) NON PROUVEE(s) : R-001, R-003
+
+    Un rapport qui se contredit n'est pas « prudent » : il n'est plus verifiable — et un
+    lecteur qui ne peut plus rien verifier ne peut plus rien croire, y compris les lignes
+    justes. La reconciliation retire donc les regles que l'artefact LIVRE satisfait, et
+    ELLE-MEME est journalisee : l'ecart entre les deux lectures reste auditable.
+    """
+    from jio.spec.compiler import SpecCompiler
+
+    traduits = json.dumps({
+        "R-001": "assert mean([1, 2]) == 1.5",
+        "R-002": "assert mean([2, 2]) == 2",
+    })
+    faux = "def mean(nums):\n    return sum(nums) / max(len(nums), 1) + 1\n"
+    generateur = GenerateurParTour(faux, JUSTE)
+    moteur = Engine(
+        generators=[generateur],
+        config=EngineConfig(max_rounds=3, candidates_per_round=1, self_check=False,
+                            differential=True, mutation_gate=False, temoins=True),
+        spec_compiler=SpecCompiler(provider=Fournisseur(traduits)),
+        panel=_panel_permissif(),
+    )
+    rapport = moteur.run(
+        Mission(objective="moyenne", id="t-reconcile", max_rounds=3),
+        WorkItem(objective="moyenne", entrypoint="mean", spec=SPEC),
+    )
+
+    kinds = {e.kind for e in moteur.journal.events()}
+    assert generateur.appels >= 2, "le tour 2 doit avoir eu lieu (sinon le test ne mesure rien)"
+
+    prouvees = {w.rule_id for w in rapport.witnesses if w.ok}
+    assert "R-001" in prouvees, [w.rule_id for w in rapport.witnesses]
+    assert "NON PROUVEE" not in rapport.abstention_reason, (
+        "l'artefact livre satisfait R-001 et le motif le declare NON PROUVEE : le rapport "
+        f"se contredit — {rapport.abstention_reason[:200]}"
+    )
+    assert not any(
+        "R-001" in f.message and "NON PROUVEE" in f.message for f in rapport.findings
+    ), [f.message for f in rapport.findings]
+    # La reconciliation est ECRITE, pas silencieuse : on doit pouvoir retrouver au journal
+    # qu'une regle a ete declaree non prouvee puis reconciliee.
+    assert "temoins-reconcilies" in kinds, kinds
+    evenement = next(e.payload for e in moteur.journal.events()
+                     if e.kind == "temoins-reconcilies")
+    # Les DEUX regles : le candidat faux du tour 1 (`... + 1`) echoue les deux temoins, donc
+    # les deux etaient non prouvees — et l'artefact livre les satisfait toutes les deux. Ce qui
+    # compte n'est pas le nombre, c'est que la liste reconciliee soit celle des regles que le
+    # constat de tour 1 nommait ET que l'artefact livre satisfait : ni plus, ni moins.
+    assert evenement["regles"] == ["R-001", "R-002"]
+    assert set(evenement["regles"]) <= prouvees
