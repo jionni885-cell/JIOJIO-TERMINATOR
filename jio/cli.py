@@ -2110,9 +2110,27 @@ def _budget_contexte(args: argparse.Namespace) -> int:
         print(ligne)
     print()
 
-    total_skills = sum(m.jetons for m in mesurer_depuis(Path.cwd(), skills))
+    # La bibliotheque est annoncee en JETONS **et** en CARACTERES, avec l'intervalle. Ce n'est
+    # pas un exces de zele : 24 416 caracteres ressemblent a 98 % d'un seuil de 25 000, alors
+    # que la bibliotheque pese 5 500 a 7 600 jetons — un quart du seuil. Confondre les deux
+    # unites fait conclure a une saturation qui n'existe pas, et retient d'ajouter une
+    # competence utile. Les unites sont donc nommees dans la ligne.
+    mesures_skills = mesurer_depuis(Path.cwd(), skills)
+    total_skills = sum(m.jetons for m in mesures_skills)
+    bas = sum(m.jetons_min for m in mesures_skills)
+    haut = sum(m.jetons_max for m in mesures_skills)
+    caracteres = sum(len(texte) for texte in skills.values())
     print(f"    Bibliotheque de competences : ~{total_skills} jetons "
-          f"(seuil {SEUILS['bibliotheque_jetons']})")
+          f"({bas} a {haut} selon la langue) · {caracteres} caracteres "
+          f"· seuil {SEUILS['bibliotheque_jetons']} jetons")
+    # Un seuil qu'on approche sans le voir est un seuil qu'on depasse par surprise. La marge
+    # est donc dite dans les deux sens : « encore X de disponible » ou « il reste X ».
+    palier = int(0.8 * SEUILS["bibliotheque_jetons"])
+    if bas < palier:
+        print(f"      marge : {palier - bas} jetons avant 80 % du seuil, sur la borne BASSE")
+    else:
+        print("      ATTENTION : la bibliotheque approche le seuil — chaque competence ajoutee "
+              "coute, et le routeur existe pour que vous n'ayez PAS a tout charger.")
     print("    Contexte injecte au demarrage : un seul fichier par outil (voir ci-dessus)")
     print()
     print("    Lecture : les jetons sont un INTERVALLE (3,2 a 4,4 caracteres par jeton "

@@ -175,3 +175,53 @@ def test_les_deux_limites_de_competence_ne_peuvent_pas_diverger() -> None:
     from jio.artifacts.audit_skills import MAX_COMPETENCE
 
     assert MAX_COMPETENCE == SEUILS["competence_jetons"]
+
+
+# --------------------------------------------------------------------------- #
+# Les deux unites : jetons et caracteres
+# --------------------------------------------------------------------------- #
+
+
+def test_la_bibliotheque_est_annoncee_en_JETONS_et_en_CARACTERES() -> None:
+    """DEFAUT DE LECTURE, corrige ici — et il etait dans les notes de ce depot.
+
+    La bibliotheque pese ~24 400 CARACTERES et 5 500 a 7 600 JETONS, pour un seuil de 25 000
+    JETONS. Comparer 24 400 caracteres a 25 000 fait conclure a 98 % de saturation alors qu'on
+    est a un quart du seuil : on se retient d'ajouter une competence utile pour une raison qui
+    n'existe pas. La ligne doit donc NOMMER les deux unites.
+    """
+    from jio.artifacts.budget import SEUILS, mesurer
+    from jio.artifacts.emit import manifest
+
+    skills = {
+        chemin: texte for chemin, texte in manifest().items()
+        if "/skills/" in chemin and chemin.endswith("SKILL.md")
+    }
+    mesures = [mesurer(chemin, texte) for chemin, texte in skills.items()]
+    bas = sum(m.jetons_min for m in mesures)
+    haut = sum(m.jetons_max for m in mesures)
+    caracteres = sum(len(texte) for texte in skills.values())
+
+    assert bas < SEUILS["bibliotheque_jetons"], (
+        "la bibliotheque doit tenir dans le seuil ET avoir de la marge : c'est cette marge qui "
+        "autorise a ajouter une competence"
+    )
+    # Le piege, chiffre : les CARACTERES (24 416) sont proches du SEUIL (25 000), les JETONS
+    # (5 549) en sont a un quart. Lire l'un comme l'autre surestime la saturation d'un facteur
+    # superieur a 3 — et c'est ce que faisaient les notes de ce depot.
+    assert caracteres > 3 * bas, (
+        "si ce rapport tombait sous 3, la confusion d'unites ne serait plus possible ; "
+        "tant qu'il tient, la ligne du rapport doit nommer les deux unites"
+    )
+    assert bas < haut and 0 < bas
+
+
+def test_le_rapport_nomme_les_deux_unites(tmp_path, monkeypatch, capsys) -> None:
+    from jio.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    main(["artifacts", "--budget"])
+    sortie = capsys.readouterr().out
+    assert "Bibliotheque de competences :" in sortie
+    assert "jetons" in sortie and "caracteres" in sortie
+    assert "seuil" in sortie
