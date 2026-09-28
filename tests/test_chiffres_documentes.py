@@ -342,8 +342,13 @@ def test_chiffres_et_coherence_rendent_le_MEME_verdict_sur_le_meme_document(
     (tmp_path / "tests" / "test_rien.py").write_text("def test_ok():\n    assert True\n",
                                                      encoding="utf-8")
     mesures = mesurer(tmp_path)
+    # Les SIX chiffres surveilles, sans exception : un document qui en tairait un serait
+    # incoherent pour `jio chiffres` comme pour la porte (une mention absente est un
+    # signalement, pas un silence neutre). Le document de test doit donc etre juste pour TOUS.
     juste = (f"{mesures['tests']} tests verts, les {mesures['competences']} compétences, "
-             f"les {mesures['agents']} agents, {mesures['objectifs']} objectifs\n")
+             f"les {mesures['agents']} agents, {mesures['objectifs']} objectifs, "
+             f"{mesures['objectifs_routage']} objectifs de routage, "
+             f"premier choix juste dans {mesures['premier_choix']} %\n")
 
     perime = juste.replace(f"{mesures['tests']} tests", f"{mesures['tests'] + 7} tests", 1)
     ampute = juste.replace(f"{mesures['tests']} tests verts, ", "", 1)   # mention disparue

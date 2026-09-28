@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 980 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1016 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -853,14 +853,16 @@ visible :
 ```
   CHARGE AU DEMARRAGE — un outil n'en lit qu'UN (celui de son dialecte)
 
-    CLAUDE.md                          136 ligne(s)    1653-2273   jetons
-    AGENTS.md                          133 ligne(s)    1609-2212   jetons
-    .cursor/rules/jio.mdc              134 ligne(s)    1595-2193   jetons
+    CLAUDE.md                          150 ligne(s)    1901-2613   jetons
+    AGENTS.md                          145 ligne(s)    1843-2535   jetons
+    .cursor/rules/jio.mdc              148 ligne(s)    1842-2533   jetons
+    GEMINI.md                          143 ligne(s)    1828-2513   jetons
+    .github/copilot-instructions.md    143 ligne(s)    1829-2514   jetons
 
-    Cote d'une session REELLE : ~1830 a 1914 jetons selon l'outil, pas la somme.
+    Cote d'une session REELLE : ~2117 a 2201 jetons selon l'outil, pas la somme.
 
   DISPONIBLE A LA DEMANDE — competences
-    TOTAL : 11 fichier(s), ~5715 jetons (estimation)
+    TOTAL : 12 fichier(s), ~6424 jetons (estimation)
 ```
 
 Trois choix de méthode, tous dictés par la même règle :
@@ -882,6 +884,73 @@ Trois choix de méthode, tous dictés par la même règle :
 
 Une compétence doit aussi rester petite : au-delà d'environ 5 000 jetons, elle n'est plus
 chargeable en une fois. La plus longue fait 768 jetons.
+
+### Et les charger, c'est les **choisir** : `jio skills`
+
+Une bibliothèque de compétences ne sert pas en étant énumérée. Deux mesures du domaine le
+disent : un fichier de contexte au-delà d'une centaine de lignes est **survolé, pas lu**, et
+une sélection **ciblée** bat un résumé du même contenu (la précision en tête de classement
+passe de 0,14 à 0,48). Les 12 compétences tiennent donc en réserve, et une commande répond à
+la seule question qui rend cette réserve utile : *pour cet objectif, lesquelles, et pourquoi ?*
+
+```
+$ jio skills "Ajouter un test qui échoue quand sum_even compte les nombres impairs"
+
+  OBJECTIF  Ajouter un test qui échoue quand sum_even compte les nombres impairs
+
+  1. executable-proof  [verification]  score 5.5775  51 jetons
+     pourquoi : test (2.47), executable (1.30), proof (1.30)
+  2. prose-witnesses  [verification]  score 5.4426  53 jetons
+     pourquoi : prose (2.59), claims (1.30), documents (1.30)
+
+  cout d'injection : 152 jetons, contre 583 pour la fiche tier 0 des 12
+  competences et environ 6424 pour leurs corps : le choix est ce qui rend la
+  bibliotheque abordable, pas sa taille.
+```
+
+Quatre décisions, et aucune n'est un goût personnel — chacune a été **mesurée** sur un banc de
+**39 objectifs de routage** annotés à la main (`jio skills --banc`), puis payée quand elle
+était fausse :
+
+- **BM25** (Okapi) plutôt que des mots communs. L'`idf` annule le poids des mots présents
+  partout, la saturation empêche une compétence bavarde de gagner par sa longueur, et la
+  normalisation traite des compétences inégales. L'ablation `mots-clés bruts` chiffre ce que
+  cela apporte — et c'est le témoin qui compte, pas la théorie.
+- **Le tiers 0 est indexé, jamais les corps.** Trouvé par la mesure : indexer les corps
+  faisait gagner `structured-failure` sur l'objectif ci-dessus, parce que son exemple de
+  sortie cite littéralement `sum_even` — du vocabulaire **du dépôt**, pas le sujet de la
+  compétence. Coût du défaut : 29 points de premier choix juste. Un exemple cite le dépôt ;
+  l'intention est dans le nom, les tags et la description.
+- **Diversification MMR** : deux compétences quasi identiques occuperaient deux places du
+  contexte pour une seule information. `lambda` arbitre pertinence et redondance, et quand
+  l'ordre affiché n'est pas celui des scores, la commande le **dit**.
+- **Abstention sur un seuil d'évidence mesuré.** La question à laquelle un routeur doit
+  savoir répondre NON est : « cet objectif relève-t-il seulement du domaine ? » Le seuil porte
+  sur le nombre de **concepts** de domaine, jamais sur un score — un score BM25 n'a pas
+  d'unité, donc pas de seuil honnête. Et un concept est identifié par son **radical** : sans
+  cela, « outil » et « outils » comptaient deux concepts et deux tâches de plomberie
+  déclenchaient une procédure.
+
+Le résultat, témoins compris, est publié par `jio skills --banc` :
+
+| stratégie | équilibre | premier choix juste | ce qu'elle dit |
+|---|---|---|---|
+| **routeur** (BM25 + MMR + abstention) | **0,919** | **77 %** (86 % quand il répond) | — |
+| mots-clés bruts (ablation) | 0,623 | 77 % | ce que l'`idf`, la saturation et la pondération apportent : au témoin, ce n'est pas le score qui manque, c'est l'abstention |
+| alphabétique | 0,145 | 10 % | ce que vaut un choix qui ne regarde pas l'objectif |
+| tout charger | 0,500 | 10 % | rappel parfait **par construction** (6424 jetons) : le coût affiché à côté du rappel |
+
+Premier choix juste dans 77 % des cas au total, et **86 % quand le routeur répond** : les deux
+nombres sont affichés ensemble parce que l'abstention compte comme un échec dans le premier et
+pas dans le second. Le prix est écrit noir sur blanc : refuser 8 objectifs hors sujet sur 8
+coûte 4 objectifs pertinents sur 31, listés un par un par le banc (`MANQUEE ...`). Un rapport
+qui ne montrerait que ses succès ne serait pas une mesure.
+
+Le banc est la **limite** de l'affirmation, pas sa preuve : il tient en 39 objectifs de routage écrits
+par la personne qui a écrit le routeur. Ce qui lui donne sa valeur n'est donc pas le score absolu,
+mais l'**écart aux témoins** — et le fait que le seuil déclaré soit celui que le balayage
+retrouve (`jio skills --seuil-balaye`, vérifié par un test : la constante et la mesure ne
+peuvent pas diverger en silence).
 
 ## Le hook pre-commit qui vérifie les **documents**
 
@@ -1169,7 +1238,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 980 tests verts -> 980 tests verts
+         - README.md ligne 15 : 1016 tests verts -> 1016 tests verts
 ```
 
 ### `--reparer` : réparer le mécanique, nommer le reste

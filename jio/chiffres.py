@@ -105,8 +105,25 @@ CHIFFRES: tuple[Chiffre, ...] = (
     # phrase du README, elle, annoncait toujours 38.
     Chiffre(
         nom="objectifs",
-        motif=r"(\d+) objectifs",
+        motif=r"(\d+) objectifs(?! de routage| hors sujet| pertinents)",
         description="le banc d'objectifs de la porte de clarification (jio/bench/objectifs.py)",
+    ),
+    # Le routeur de competences publie lui aussi deux nombres dans le README : la taille de son
+    # banc et son taux de premier choix juste. Ce sont exactement le genre de chiffres qui
+    # pourrissent en silence — un banc qu'on enrichit sans mettre a jour la phrase, un seuil
+    # qu'on ajuste sans recalculer le taux. Les deux sont donc MESURES, pas recopies.
+    Chiffre(
+        nom="objectifs_routage",
+        motif=r"(\d+) objectifs de routage",
+        description="le banc annote du routeur de competences (jio/skills/banc.py)",
+    ),
+    # Le motif est insensible a la casse parce que la phrase vit en milieu de paragraphe
+    # (« Premier choix juste dans 77 % des cas ») : un chiffre juste mais non surveille a cause
+    # d'une majuscule serait exactement le defaut que ce module supprime.
+    Chiffre(
+        nom="premier_choix",
+        motif=r"[Pp]remier choix juste dans (\d+) %",
+        description="la part d'objectifs du banc dont la premiere competence chargee est la bonne",
     ),
 )
 
@@ -150,12 +167,18 @@ def mesurer(racine: Path | str) -> dict[str, int]:
     # importe la porte de clarification, qui importe ce qu'elle veut de verifier : un import
     # en tete de module ferait dependre le comptage des chiffres de toute la chaine.
     from .bench.objectifs import CORPUS
+    # `skills` : import LOCAL pour la meme raison. Le routeur lit les definitions des
+    # competences et rien d'autre ; le faire remonter en tete de module coupleraient les
+    # chiffres a l'index, qui depend lui-meme des artefacts.
+    from .skills.banc import BANC, mesurer as mesurer_le_routage
 
     return {
         "tests": _compter_tests(racine),
         "competences": len(SKILLS),
         "agents": len(AGENTS),
         "objectifs": len(CORPUS),
+        "objectifs_routage": len(BANC),
+        "premier_choix": round(mesurer_le_routage().precision1 * 100),
     }
 
 

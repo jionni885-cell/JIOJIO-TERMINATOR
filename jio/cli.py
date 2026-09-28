@@ -3245,6 +3245,23 @@ def build_parser() -> argparse.ArgumentParser:
                          "regenere par `jio pr` sans option)")
     pr.set_defaults(func=cmd_pr)
 
+    sk = sub.add_parser(
+        "skills",
+        help="QUELLES competences charger pour cet objectif, et pourquoi — la question qui rend "
+             "la bibliotheque utile sans la charger en entier",
+    )
+    sk.add_argument("objectif", nargs="*", help="l'objectif, en une phrase (entre guillemets)")
+    sk.add_argument("--maximum", type=int, default=3, help="nombre de competences a charger (3)")
+    sk.add_argument("--banc", action="store_true",
+                    help="passer le banc annote au routeur et a ses temoins (mesure, pas avis)")
+    sk.add_argument("--seuil", type=int, default=-1,
+                    help="nombre de concepts de domaine en dessous duquel ne rien charger "
+                         "(defaut : la valeur mesuree). 0 = ne jamais s'abstenir, -1 = defaut")
+    sk.add_argument("--seuil-balaye", action="store_true",
+                    help="le seuil contre ses consequences : rappel et abstentions justes")
+    sk.add_argument("--json", action="store_true", help="verdict lisible par une machine")
+    sk.set_defaults(func=cmd_skills)
+
     co = sub.add_parser(
         "coherence",
         help="LES NEUF CONTROLES d'un coup : tout ce que ce depot affirme est-il encore vrai ?",
@@ -3476,6 +3493,139 @@ def cmd_pr(args: argparse.Namespace) -> int:
     print(f"  {chemin} — {len(corps)} octet(s) ecrit(s)")
     if sauvegarde is not None:
         print(f"  version precedente conservee : {sauvegarde.name}")
+    return 0
+
+
+def cmd_skills(args: argparse.Namespace) -> int:
+    """`jio skills` : le routeur de competences — quelles competences charger, et POURQUOI.
+
+    Trois modes, et le troisieme est le juge des deux premiers :
+
+      * `jio skills "<objectif>"`        le classement, avec les termes qui l'ont produit ;
+      * `jio skills --banc`              la mesure sur le banc annote, temoins compris ;
+      * `jio skills --seuil-balaye`      le seuil d'abstention contre ses consequences.
+
+    Un classement sans raison affichee n'est pas verifiable, et un routeur non verifie n'est
+    qu'un gout personnel. Chaque choix porte donc les termes qui l'ont fait gagner, et la
+    reponse NEGATIVE (« aucune competence ne s'applique ») est un resultat de plein droit :
+    charger une procedure qui ne s'applique pas coute plus cher que ne rien charger.
+    """
+    from .skills import (
+        SEUIL_CONCEPTS,
+        balayer_seuils,
+        catalogue_du_depot,
+        choisir,
+        comparer,
+        cout,
+        mesurer,
+    )
+    from .skills.banc import BANC
+
+    if getattr(args, "seuil_balaye", False):
+        print()
+        print("  LE SEUIL D'ABSTENTION CONTRE SES CONSEQUENCES")
+        print()
+        print(f"    {'concepts':>9}  {'equilibre':>9}  {'abstention juste':>16}  {'rappel':>7}")
+        for seuil, equilibre, negatifs, rappel in balayer_seuils(maximum=args.maximum):
+            marque = "  <- retenu" if seuil == SEUIL_CONCEPTS else ""
+            print(f"    {seuil:>9}  {equilibre:>9.3f}  {negatifs:>10}/{len([o for o in BANC if not o.positif]):<5}  {rappel:>6}%{marque}")
+        print()
+        print("  Le seuil porte sur le nombre de CONCEPTS de domaine que l'objectif met en jeu,")
+        print("  jamais sur un score : un score BM25 n'a pas d'unite, donc pas de seuil honnete.")
+        print()
+        return 0
+
+    if getattr(args, "banc", False):
+        print()
+        print("  LE ROUTEUR ET SES TEMOINS SUR LE MEME BANC ANNOTE")
+        print()
+        rapport = mesurer(maximum=args.maximum)
+        for nom, resume, equilibre in comparer(maximum=args.maximum):
+            marque = "routeur" if nom.startswith("routeur") else "temoin "
+            print(f"    [{marque}] {nom:<20} equilibre {equilibre:.3f}")
+            print(f"             {resume}")
+        print()
+        print(f"    banc : {len(BANC)} objectifs, "
+              f"{len([o for o in BANC if o.positif])} pertinents / "
+              f"{len([o for o in BANC if not o.positif])} hors sujet")
+        for erreur in rapport.erreurs:
+            print(f"      {erreur}")
+        print()
+        print("  Le banc est la LIMITE de l'affirmation, pas sa preuve : il a ete ecrit par la")
+        print("  personne qui a ecrit le routeur. Ce qui vaut ici est l'ECART aux temoins —")
+        print("  `alphabetique` dit ce que vaut un choix qui ne regarde pas l'objectif, et")
+        print("  `mots-cles bruts` ce que BM25, la saturation et la ponderation apportent.")
+        print()
+        return 0
+
+    objectif = " ".join(getattr(args, "objectif", []) or []).strip()
+    if not objectif:
+        print()
+        print("  usage : jio skills \"<objectif en une phrase>\"")
+        print("          jio skills --banc            (la mesure sur le banc annote)")
+        print("          jio skills --seuil-balaye    (le seuil d'abstention et ses consequences)")
+        print()
+        catalogue = catalogue_du_depot()
+        fiches = sum(d.cout_jetons for d in catalogue.documents)
+        corps = sum(1 for d in catalogue.documents)  # le nombre, pour la phrase ci-dessous
+        print(f"  {corps} competences disponibles.")
+        print(f"  Les ENUMERER (fiche tier 0) coute {fiches} jetons ; charger leurs CORPS en coute")
+        print(f"  environ 6424. Le routeur en charge {args.maximum} au plus, et dit pourquoi.")
+        print()
+        return 0
+
+    seuil = args.seuil if getattr(args, "seuil", -1) >= 0 else SEUIL_CONCEPTS
+    choix = choisir(objectif, maximum=args.maximum, seuil=seuil)
+
+    if getattr(args, "json", False):
+        import json
+
+        print(json.dumps(
+            {
+                "objectif": objectif,
+                "seuil_concepts": seuil,
+                "choix": [
+                    {"nom": c.nom, "categorie": c.categorie, "score": c.score,
+                     "raisons": list(c.raisons), "cout_jetons": c.cout_jetons}
+                    for c in choix
+                ],
+                "cout_jetons": cout(choix),
+            },
+            ensure_ascii=False, indent=2,
+        ))
+        return 0 if choix else 0
+
+    print()
+    print(f"  OBJECTIF  {objectif}")
+    print()
+    if not choix:
+        print("  AUCUNE COMPETENCE A CHARGER")
+        print()
+        print(f"  Moins de {seuil} concept(s) de domaine reconnu(s) dans l'objectif : rien ne")
+        print("  garantit qu'une competence s'applique ici. Charger une procedure hors sujet")
+        print("  coute plus cher que ne rien charger — elle detourne le travail en plus de")
+        print("  l'occuper. Pour forcer une reponse, baissez le seuil :")
+        print()
+        print("      jio skills \"...\" --seuil 0")
+        print()
+        return 0
+
+    for rang, c in enumerate(choix, start=1):
+        print(f"  {rang}. {c.nom}  [{c.categorie}]  score {c.score}  {c.cout_jetons} jetons")
+        print(f"     pourquoi : {', '.join(c.raisons) if c.raisons else 'aucun terme commun'}")
+    fiches = sum(d.cout_jetons for d in catalogue_du_depot().documents)
+    desordre = any(choix[i].score > choix[i - 1].score for i in range(1, len(choix)))
+    if desordre:
+        print()
+        print("  L'ordre n'est pas exactement celui des scores : la DIVERSIFICATION a fait")
+        print("  passer devant une competence moins bien classee mais qui n'apprend rien de")
+        print("  plus que la precedente. Deux competences quasi identiques occuperaient deux")
+        print("  places dans le contexte pour une seule information.")
+    print()
+    print(f"  cout d'injection : {cout(choix)} jetons, contre {fiches} pour la fiche tier 0 des 12")
+    print("  competences et environ 6424 pour leurs corps : le choix est ce qui rend la")
+    print("  bibliotheque abordable, pas sa taille.")
+    print()
     return 0
 
 
