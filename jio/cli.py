@@ -3227,6 +3227,17 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"nombre maximum de questions (defaut {MAX_QUESTIONS})")
     cl.set_defaults(func=cmd_clarify)
 
+    pr = sub.add_parser(
+        "pr",
+        help="genere le corps de la PR a partir des COMMITS (rapport reconstruit, jamais recopie)",
+    )
+    pr.add_argument("--root", default=".", help="depot a resumer")
+    pr.add_argument("--depuis", default="", help="ref de base (defaut : la branche par defaut du "
+                                                 "depot, puis main, puis master, puis la racine)")
+    pr.add_argument("--sortie", default="", help="fichier a ecrire (defaut : la sortie standard, "
+                                                 "aucune ecriture)")
+    pr.set_defaults(func=cmd_pr)
+
     co = sub.add_parser(
         "coherence",
         help="LES NEUF CONTROLES d'un coup : tout ce que ce depot affirme est-il encore vrai ?",
@@ -3412,6 +3423,42 @@ def cmd_mutants(args: argparse.Namespace) -> int:
         return 0
     print("    -> la suite attrape chaque mutation mesuree : les affirmations du depot")
     print("       sont tenues par des tests qui savent echouer.")
+    return 0
+
+
+def cmd_pr(args: argparse.Namespace) -> int:
+    """`jio pr` : le corps de la PR, reconstruit depuis les commits.
+
+    Ne fait que deux choses : lire le depot et ecrire un fichier si on le demande. C'est
+    volontaire — un generateur qui decide de ce qu'il faut dire devient une plaidoirie, et
+    ce document sert precisement a ce qu'on puisse VERIFIER ce qui a ete fait.
+    """
+    from .pr import GitAbsent, construire, ecrire
+
+    racine = Path(getattr(args, "root", ".") or ".").expanduser()
+    depuis = (getattr(args, "depuis", "") or "").strip() or None
+    try:
+        corps = construire(racine, depuis=depuis)
+    except GitAbsent as exc:
+        print(f"  corps de la PR impossible : {exc}", file=sys.stderr)
+        print("  Ce rapport resume des COMMITS : sans depot git, il n'y a rien a resumer.",
+              file=sys.stderr)
+        return 1
+
+    sortie = (getattr(args, "sortie", "") or "").strip()
+    if not sortie:
+        print(corps)
+        return 0
+
+    sauvegarde, ecrit = ecrire(sortie, corps)
+    chemin = Path(sortie)
+    if not ecrit:
+        print(f"  {chemin} — inchange, rien n'a ete reecrit "
+              f"({len(corps)} octets, identiques)")
+        return 0
+    print(f"  {chemin} — {len(corps)} octet(s) ecrit(s)")
+    if sauvegarde is not None:
+        print(f"  version precedente conservee : {sauvegarde.name}")
     return 0
 
 

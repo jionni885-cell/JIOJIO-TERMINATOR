@@ -125,6 +125,11 @@ SURES: dict[str, list[str]] = {
     # `coherence` : les neuf controles sur le depot de test. Elle ne modifie RIEN (elle
     # constate) : c'est ce qui la rend utilisable juste avant un commit.
     "coherence": [],
+    # `pr` : le generateur du corps de la PR. Sans `--sortie` il n'ecrit RIEN (il imprime) —
+    # sur un dossier vide il doit sortir proprement en disant qu'il n'y a pas de depot a
+    # resumer, ce que les deux tests ci-dessus verifient. Ses tests propres vivent dans
+    # `tests/test_pr_body.py` (fidelite, mesure, non-destruction).
+    "pr": [],
 }
 
 
