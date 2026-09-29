@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1112 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1125 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -136,6 +136,7 @@ python -m jio mcp --list                 # outils exposés via MCP
 python -m jio trust "<objectif>"         # combien de vérification dépenser (bandit UCB1)
 python -m jio memory --recall "<texte>"  # ce que le système a déjà payé comme erreurs
 python -m jio learn --skill 0.15         # l'auto-amélioration paie-t-elle ? (protocole A/B/C)
+python -m jio learn --cycles 3 --runs 1  # la mémoire qui S'ACCUMULE paie-t-elle ? (froid/chaud apparié)
 python -m jio mutants                    # NOS tests attrapent-ils NOS erreurs ? (mutation)
 python -m jio ablation --missions 10     # quelle brique apporte quoi ? (ablation appariee)
 python -m jio scan jio                   # JIO s'audite lui-même : 0 problème attendu
@@ -1286,7 +1287,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1112 tests verts -> 1112 tests verts
+         - README.md ligne 15 : 1125 tests verts -> 1125 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -1431,6 +1432,54 @@ suffisent, la mémoire n'a rien à ajouter.
 > prompt étaient donc inattribuables. Le tirage ne dépend plus que d'une *disposition*
 > stable (modèle, tâche, tentative), et les effets du prompt sont des mécanismes
 > **déclarés** — donc mesurables.
+
+### La mémoire qui s'accumule : le protocole multi-cycles
+
+L'A/B compare trois bras sur **un** passage. Il ne peut pas répondre à la question
+suivante : *la mémoire qui grandit cycle après cycle finit-elle par payer, ou rend-elle le
+harness plus cher sans le rendre meilleur ?* `jio learn --cycles N` la mesure.
+
+Par cycle, deux bras sur les **mêmes tâches et les mêmes graines** :
+
+| Bras | Mémoire | Routeur | Ce que ça isole |
+|---|---|---|---|
+| **froid** | absente | figé sur le bras que le chaud vient de choisir | le souvenir, et rien d'autre |
+| **chaud** | accumulée | le vrai bandit | le système tel qu'il tourne |
+
+Le bras **chaud tourne d'abord** : il choisit son bras, et le **froid rejoue la même
+mission avec ce même bras**. C'est la correction d'un défaut trouvé en construisant la
+mesure — le froid tournait avec la configuration *par défaut* pendant que le chaud
+tournait avec le bras du routeur, et l'écart mesuré mélangeait **deux** causes. Le
+symptôme était net : au premier cycle, mémoire **vide des deux côtés**, le froid gagnait
+`3/5` contre `2/5`. Aucune mémoire ne pouvait expliquer cette différence.
+
+> | cycle | mémoire | rappels | jetons | froid | chaud | écart |
+> |---|---|---|---|---|---|---|
+> | 1 | 0 | 4 | 489 | 2/5 | 2/5 | +0 |
+> | 2 | 3 | 5 | 868 | 2/5 | 2/5 | +0 |
+> | 3 | 6 | 5 | 870 | 3/5 | 3/5 | +0 |
+>
+> **Verdict : PLATEAU** — écart nul au dernier cycle alors que la mémoire a grandi jusqu'à
+> 8 souvenirs, soit ~870 jetons injectés par cycle. Le rapport écrit la phrase qui
+> déclenche une décision : *« la vérification faisait déjà le travail : le souvenir
+> n'ajoute rien et coûte — il faut la **borner** avant de l'enrichir. »* Un plateau est une
+> mesure, pas une condamnation : ce banc est bâti sur des oracles exécutables, le régime où
+> la mémoire devrait payer (plausibilité, choix de conception) n'y est pas représenté, et
+> le rapport le dit au lieu de le laisser croire.
+
+Trois verdicts, et un seul condamne :
+
+- **PROGRESSE** — écart strictement positif **et** intervalle de confiance qui exclut zéro ;
+- **REGRESSE** — une **rechute** : la mémoire *existait déjà* au début du cycle et le
+  résultat est pire qu'en froid. Le verdict est *calculé* depuis les cycles mesurés, jamais
+  stocké dans un champ qui pourrait mentir ;
+- **PLATEAU** — tout le reste, y compris « écart positif mais intervalle contenant zéro »,
+  qui est une mesure qui **n'a pas conclu** et non un échec.
+
+Un écart négatif au **premier** cycle n'est jamais une rechute : la mémoire y est vide,
+donc rien n'a pu nuire — c'est de la loterie de graine, et l'appeler « rechute » serait un
+faux positif. Le protocole refuse de mesurer au-delà de 200 missions (code `2`,
+`INDÉTERMINÉ`) plutôt que de rendre un chiffre qu'il n'a pas les moyens de rendre.
 
 **L'invariant central est encodé dans le simulateur, et verrouillé par un test :** les
 gains sont **multiplicatifs**, jamais additifs. Un harness *amplifie* la compétence, il

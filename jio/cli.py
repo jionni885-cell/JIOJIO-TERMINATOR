@@ -2401,6 +2401,8 @@ def cmd_memory(args: argparse.Namespace) -> int:
 
 
 def cmd_learn(args: argparse.Namespace) -> int:
+    if getattr(args, "cycles", 0) > 0:
+        return _learn_cycles(args)
     from .learn.experiment import run_abc
 
     print()
@@ -2489,6 +2491,71 @@ def cmd_learn(args: argparse.Namespace) -> int:
     print("      amplifie la competence, il n'en cree pas. A competence nulle, aucun")
     print("      avertissement ne sauve le modele — l'invariant est encode dans le")
     print("      simulateur, et un test le verrouille.")
+    print()
+    return 0
+
+
+def _learn_cycles(args: argparse.Namespace) -> int:
+    """Le protocole MULTI-CYCLES. Mesure separee de l'A/B, jamais melangee.
+
+    L'A/B repond a « la mecanique apporte-t-elle quelque chose en moyenne » ; ce protocole
+    repond a « la memoire qui S'ACCUMULE apporte-t-elle quelque chose, cycle apres cycle ».
+    Ce sont deux questions differentes : la premiere a deja montre un gain NON MESURABLE au
+    niveau du banc, et c'est precisement pour cela que la seconde existe.
+    """
+    from .learn.cycles import TASKS, run_cycles
+
+    missions = args.cycles * 2 * len(TASKS) * max(args.runs, 1)
+    print()
+    print("  AUTO-AMELIORATION MULTI-CYCLES  ·  protocole apparie froid/chaud")
+    print(f"    competence simulee {args.skill}  ·  {args.cycles} cycles  ·  {args.runs} "
+          f"tirage(s) par tache  ·  {args.rounds} tours  ·  {len(TASKS)} taches")
+    print(f"    cout annonce : {missions} missions (mesure a ~1,1 s/mission sur 2 cœurs)")
+    if missions > 200:
+        print()
+        print(f"  [INDETERMINE] {missions} missions depassent le plafond de 200 : ce n'est pas")
+        print("    une mesure impossible, c'est une mesure qui prendrait "
+              f"~{missions * 1.1 / 60:.0f} min sur cette machine.")
+        print("    Reduire --cycles ou --runs. Le protocole ne se degrade PAS en silence :")
+        print("    il refuse plutot que de rendre un chiffre qu'il n'a pas les moyens de")
+        print("    rendre. (Un tour du bras chaud est REJOUE par le bras froid apparie :")
+        print("    la comparaison coute exactement le double de ce qu'elle mesure.)")
+        return 2
+    print("    Le bras chaud tourne D'ABORD (il choisit le bras via le routeur) ; le bras")
+    print("    froid rejoue la MEME mission avec le MEME bras : seule la memoire differe.")
+    print()
+    res = run_cycles(
+        skill=args.skill, runs=args.runs, cycles=args.cycles, rounds=args.rounds,
+    )
+    if not res.cycles:
+        print("  [INDETERMINE] aucun cycle mesure (cycles ou runs nul).")
+        return 2
+    print(f"    {'cycle':>5} {'memoire':>8} {'rappels':>7} {'jetons':>6} "
+          f"{'froid':>9} {'chaud':>9} {'ecart':>7}")
+    print(f"    {'-' * 5} {'-' * 8} {'-' * 7} {'-' * 6} {'-' * 9} {'-' * 9} {'-' * 7}")
+    for cycle in res.cycles:
+        print(cycle.ligne())
+    print()
+    print(f"  MEMOIRE ACCUMULEE : {res.memo_final} souvenir(s) apres {len(res.cycles)} cycle(s)")
+    if res.bras:
+        print("  ROUTAGE (le bandit, mesure sur tout l'historique) :")
+        for nom, tirages, recompense in res.bras:
+            print(f"    {nom:<10} {tirages:>3} tirage(s)   recompense moyenne {recompense:+.3f}")
+    if res.meilleur_bras:
+        print(f"    concentration sur le meilleur bras ({res.meilleur_bras}) : "
+              f"{res.concentration:.0%}   ·   regret mesure : {res.regret:.2f}")
+    print()
+    print(f"  VERDICT : {res.verdict()}")
+    print()
+    for ligne in res.explication().split("\n"):
+        print(f"    {ligne}")
+    print()
+    print("  CE QUE CE PROTOCOLE NE DIT PAS")
+    print("    - le modele est SIMULE : ce n'est pas une mesure de modele reel.")
+    print("    - l'effet d'un souvenir injecte est une MODELISATION declaree (gain relatif).")
+    print("    - un plateau ici ne condamne pas la memoire : il dit qu'a ce niveau de")
+    print("      difficulte la VERIFICATION suffisait deja. Le banc ne represente pas le")
+    print("      regime ou la verification ne voit pas l'erreur (plausibilite, conception).")
     print()
     return 0
 
@@ -3083,7 +3150,7 @@ def cmd_trace(args: argparse.Namespace) -> int:
     # Le journal prouve que rien n'a ete altere. Il ne prouve pas que le monde n'a pas
     # change : c'est le role du sceau porte par chaque evenement.
     mondes = journal.mondes()
-    courant = journal._sceau_du_moment()  # noqa: SLF001 - meme mesure, meme module
+    courant = journal._sceau_du_moment()
     print(f"  MONDE : {len(mondes)} etat(s) distinct(s) dans ce journal")
     for entree in mondes:
         marque = "  (etat actuel)" if entree["sceau"] == courant["sceau"] else ""
@@ -3490,6 +3557,13 @@ def build_parser() -> argparse.ArgumentParser:
     le.add_argument("--runs", type=int, default=3, help="tirages par tache et par phase")
     le.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
                     help="tours de boucle maximum")
+    le.add_argument(
+        "--cycles", type=int, default=0,
+        help="0 = comparaison A/B (defaut). N > 0 = protocole MULTI-CYCLES : la memoire "
+             "s'accumule pendant N cycles et chaque cycle compare froid/chaud a bras "
+             "IDENTIQUE (la seule variable restante est le souvenir). Cout : "
+             "N x 2 x taches x runs missions — refus au-dela de 200 missions.",
+    )
     le.set_defaults(func=cmd_learn)
 
     mu = sub.add_parser(
