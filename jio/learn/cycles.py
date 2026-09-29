@@ -94,8 +94,18 @@ class Cycle:
     memo_apres: int
     rappels: int
     froid: int
-    chaud: int
-    essais: int
+    #: Bras TEMOIN : memoire PRESENTE, effet DESACTIVE. Il isole l'artefact de loterie.
+    #: Sans lui, la mesure du cycle 1 (memoire vide) a rendu -4 : rien ne pouvait venir
+    #: de la memoire, donc quelque chose d'autre differait. Le temoin est ce qui separe
+    #: « la memoire agit » de « les deux bras ne tirent pas les memes cartes ».
+    temoin: int = 0
+    chaud: int = 0
+    essais: int = 0
+    #: Appels de fournisseur ou l'avertissement de memoire a REELLEMENT ete accorde, et
+    #: nombre d'appels total : la PORTEE du levier mesure. Un ecart nul avec portee nulle
+    #: ne dit rien de la memoire ; avec une portee large, il la condamne.
+    avertis: int = 0
+    appels: int = 0
     #: Caracteres de memoire injectes dans les prompts du cycle (le COUT de la memoire).
     #: Sans ce chiffre, un plateau se lit comme « la memoire n'apporte rien » ; avec lui, il
     #: se lit comme « la memoire coute X et n'apporte rien » — deux phrases differentes, et
@@ -103,8 +113,19 @@ class Cycle:
     caracteres_memoire: int = 0
 
     @property
+    def artefact(self) -> int:
+        """Temoin - froid : ce qui bouge SANS que la memoire agisse (loterie, couplage)."""
+        return self.temoin - self.froid
+
+    @property
     def ecart(self) -> int:
-        return self.chaud - self.froid
+        """Chaud - temoin : LE contraste causal, memoire active contre memoire inerte."""
+        return self.chaud - self.temoin
+
+    @property
+    def portee(self) -> float:
+        """Part des appels ou l'avertissement a ete accorde (0.0 si rien n'a ete appele)."""
+        return self.avertis / self.appels if self.appels else 0.0
 
     @property
     def jetons_memoire(self) -> int:
@@ -116,6 +137,10 @@ class Cycle:
         return self.froid / self.essais if self.essais else 0.0
 
     @property
+    def taux_temoin(self) -> float:
+        return self.temoin / self.essais if self.essais else 0.0
+
+    @property
     def taux_chaud(self) -> float:
         return self.chaud / self.essais if self.essais else 0.0
 
@@ -123,7 +148,8 @@ class Cycle:
         return (
             f"    {self.numero:>2}     {self.memo_avant:>5} {self.rappels:>5} "
             f"{self.jetons_memoire:>7} {self.froid:>4}/{self.essais:<3} "
-            f"{self.chaud:>4}/{self.essais:<3} {self.ecart:>+6}"
+            f"{self.temoin:>4}/{self.essais:<3} {self.chaud:>4}/{self.essais:<3} "
+            f"{self.artefact:>+5} {self.ecart:>+6}"
         )
 
 
@@ -135,6 +161,9 @@ class RapportCycles:
     skill: float = 0.0
     runs: int = 0
     rounds: int = 0
+    #: Le gain RELATIF modelise d'un avertissement : sans lui, l'effet attendu n'est pas
+    #: calculable, et un ecart nul resterait sans borne.
+    warning_gain: float = 0.0
     #: Bras du routeur : nom, tirages, recompense moyenne — mesures, pas supposes.
     bras: list[tuple[str, int, float]] = field(default_factory=list)
     #: Part des missions du dernier cycle ou le routeur a choisi le bras qui a la meilleure
@@ -168,6 +197,27 @@ class RapportCycles:
         return sum(c.essais for c in self.cycles)
 
     @property
+    def ecart(self) -> int:
+        """Le contraste causal du dernier cycle : chaud - temoin."""
+        return self.cycles[-1].ecart if self.cycles else 0
+
+    @property
+    def artefact(self) -> int:
+        """Ce qui bouge sans que la memoire agisse, au dernier cycle (froid -> temoin)."""
+        return self.cycles[-1].artefact if self.cycles else 0
+
+    @property
+    def artefact_max(self) -> int:
+        """L'artefact le plus grand observe : la taille du bruit que le temoin absorbe."""
+        return max((abs(c.artefact) for c in self.cycles), default=0)
+
+    @property
+    def portee(self) -> float:
+        """Part des appels de generation ou l'avertissement a ete accorde, sur tout le run."""
+        total = sum(c.appels for c in self.cycles)
+        return sum(c.avertis for c in self.cycles) / total if total else 0.0
+
+    @property
     def memo_final(self) -> int:
         """Ce que la memoire contient a la fin : le stock, pas le flux."""
         return self.cycles[-1].memo_apres if self.cycles else 0
@@ -194,34 +244,83 @@ class RapportCycles:
                 f"la memoire accumulee NUIT. Elaguer (borner la memoire) avant d'accumuler "
                 f"davantage — c'est le resultat que ce protocole existe pour attraper."
             )
+        couplage = (
+            f" L'ecart froid->temoin ({dernier.artefact:+d}) mesure ce qui bouge SANS la "
+            f"memoire : c'est le plancher de bruit de ce protocole, et il est declare plutot "
+            f"que suppose."
+        )
+        # La PORTEE et la borne : sans elles, « ecart nul » ne distingue pas « le levier ne
+        # sert a rien » de « le levier n'a presque jamais ete arme ».
+        portee = (
+            f" Portee du levier : {self.portee:.1%} des appels de generation ont ete "
+            f"avertis ({sum(c.avertis for c in self.cycles)} appel(s))."
+        )
+        borne = ""
+        attendu = self.effet_attendu_max()
+        if attendu:
+            if attendu < 1.0:
+                borne = (
+                    f" Meme accorde partout ou il l'a ete, cet avertissement ne peut "
+                    f"expliquer que {attendu:.1f} reussite(s) de plus sur {dernier.essais} : "
+                    f"c'est SOUS le pas de mesure (1 essai). A ce niveau, le banc ne peut "
+                    f"pas trancher entre « la memoire ne paie pas » et « la memoire paie "
+                    f"trop peu pour etre vue »."
+                )
+            else:
+                borne = (
+                    f" L'effet attendu a cette portee valait {attendu:.1f} reussite(s) sur "
+                    f"{dernier.essais} : il avait de la place pour se voir, et il ne s'est "
+                    f"pas vu. A ce niveau, la memoire est reellement sans effet."
+                )
         if verdict == "PROGRESSE":
             return (
                 f"au cycle {dernier.numero}, +{dernier.ecart} reussite(s) sur {dernier.essais} "
                 f"avec la memoire accumulee ({dernier.memo_avant} souvenir(s)) et l'intervalle "
                 f"exclut zero. Gain cumule sur le premier cycle : "
-                f"{self.gain_cumule():+d} reussite(s)."
+                f"{self.gain_cumule():+d} reussite(s)." + couplage + portee
             )
         if dernier.ecart > 0:
             return (
                 f"ecart positif (+{dernier.ecart} sur {dernier.essais}) mais l'intervalle "
                 f"CONTIENT zero a {self.total_essais} essai(s) par bras : INDETERMINE. "
                 f"Ce n'est pas un echec — c'est une mesure qui n'a pas encore conclu."
+                + couplage + portee + borne
             )
         cout = self.cout_du_plateau()
-        if cout:
-            return (
-                f"ecart nul ou negatif au dernier cycle ({dernier.ecart:+d}) alors que la "
-                f"memoire a grandi jusqu'a {dernier.memo_apres} souvenir(s) — soit environ "
-                f"{cout} jeton(s) injectes par cycle. La verification faisait DEJA le travail : "
-                f"le souvenir n'ajoute rien et coute. Ce n'est pas une condamnation de la "
-                f"memoire, c'est une mesure a ce niveau de difficulte — et le chiffre qui dit "
-                f"qu'il faut la BORNER avant de l'enrichir."
-            )
-        return (
-            f"ecart nul ou negatif au dernier cycle ({dernier.ecart:+d}) sans qu'une rechute "
-            f"soit etablie : plateau. Un plateau n'est pas une condamnation : c'est le moment "
-            f"ou l'on verifie ce que la memoire contient avant d'y ajouter."
+        ouverture = (
+            f"ecart NUL au dernier cycle (+0 sur {dernier.essais} essais par bras) alors que "
+            f"la memoire a grandi jusqu'a {dernier.memo_apres} souvenir(s)"
+            if cout
+            else f"ecart nul ou negatif au dernier cycle ({dernier.ecart:+d} sur "
+                 f"{dernier.essais} essais par bras)"
         )
+        # On ne conclut JAMAIS au-dela de ce que la portee permet : le texte qui suit dit
+        # ce que le chiffre est (un ecart mesure) et ce qu'il n'est pas (une preuve que la
+        # memoire ne sert a rien).
+        lecture = (
+            f" Ce que ce resultat est : un plateau MESURE, paye de "
+            f"~{cout or dernier.jetons_memoire} jeton(s) par cycle. Ce qu'il n'est pas : une "
+            f"preuve que la memoire ne sert a rien — le banc est bati sur des oracles "
+            f"executables, et il ne represente pas le regime ou la VERIFICATION ne voit pas "
+            f"l'erreur (plausibilite, choix de conception)."
+        )
+        return ouverture + "." + couplage + portee + borne + lecture
+
+    def effet_attendu_max(self) -> float:
+        """Combien de reussites EN PLUS l'avertissement peut expliquer, au mieux.
+
+        C'est une borne de PLAUSIBILITE, pas une prevision : portee du levier x gain
+        relatif x taux de reussite observe, ramenee au nombre d'essais. Elle sert a
+        departager deux lectures d'un ecart nul :
+
+          * borne inférieure au pas de mesure (1 essai) -> le banc NE PEUT PAS trancher ;
+          * borne nettement superieure -> l'effet avait de la place pour se voir, et il
+            ne s'est pas vu : la memoire est alors reellement sans effet ici.
+        """
+        if not self.cycles or self.warning_gain <= 0.0:
+            return 0.0
+        dernier = self.cycles[-1]
+        return dernier.portee * self.warning_gain * dernier.taux_chaud * dernier.essais
 
     def cout_du_plateau(self) -> int:
         """Les jetons injectes par cycle quand la memoire a grandi mais que rien ne bouge."""
@@ -259,7 +358,8 @@ def run_cycles(
     from ..loop.engine import WorkItem
     from ..trust import TrustRouter
 
-    result = RapportCycles(skill=skill, runs=runs, rounds=rounds)
+    result = RapportCycles(skill=skill, runs=runs, rounds=rounds,
+                           warning_gain=warning_gain)
     taches = [t for t in TASKS if not task_ids or t.id in task_ids]
     if not taches or cycles <= 0 or runs <= 0:
         return result
@@ -270,17 +370,31 @@ def run_cycles(
         routeur = TrustRouter(path=racine / "trust.json")
 
         def _mission(
-            task, seed: int, *, memoire_vive: bool, phase: str, arm: object | None = None
-        ) -> tuple[bool, str, object | None]:
-            """Une mission. Rend (succes, nom du bras, bras) — le bras sert a apparier le froid."""
+            task, seed: int, *, memoire_vive: bool, phase: str, arm: object | None = None,
+            gain: float | None = None,
+        ) -> tuple[bool, str, object | None, tuple[int, int]]:
+            """Une mission. Rend (succes, nom du bras, bras) — le bras sert a apparier le froid.
+
+            Trois configurations, et la troisieme est la lecon du banc A/B/C :
+
+              * `memoire_vive=True` + `gain` nominal  -> bras CHAUD (la memoire agit) ;
+              * `memoire_vive=True` + `gain=0.0`      -> bras TEMOIN (memoire presente,
+                effet desactive : meme prompt, meme bloc, aucun avertissement accorde) ;
+              * `memoire_vive=False` + `arm`          -> bras FROID (aucune memoire).
+
+            Le temoin existe parce qu'un ecart NON NUL a ete mesure au premier cycle, memoire
+            VIDE des deux cotes : le contraste froid/chaud seul ne separe donc pas l'effet de
+            la memoire de l'artefact de tirage. C'est exactement ce que l'A/B/C avait etabli
+            avant lui (+50 points d'artefact avec un temoin inerte) — la lecon est reprise ici.
+            """
             engine = _simulated_engine(
                 task, skill=skill, seed=seed, max_rounds=rounds,
                 journal_path=racine / "journal.jsonl",
             )
             if memoire_vive:
                 engine.memory = memoire
-                engine.router = routeur
-                _set_gain(engine, warning_gain)
+                engine.router = _RouteurFige(arm) if arm is not None else routeur
+                _set_gain(engine, warning_gain if gain is None else gain)
             elif arm is not None:
                 # Meme bras, AUCUNE memoire : la seule difference restante est le souvenir.
                 engine.router = _RouteurFige(arm)
@@ -291,13 +405,22 @@ def run_cycles(
                          checks=dict(task.checks), spec=task.spec()),
             )
             choisi = getattr(engine, "_arm", None)
-            return bool(_check(report.subject, task)), str(getattr(choisi, "name", "")), choisi
+            # La PORTEE du levier : combien d'appels du GENERATEUR ont ete avertis. Le panel
+            # (critiques) n'est pas compte : c'est la generation qui est le levier de memoire.
+            armes = sum(int(getattr(g, "warned_calls", 0)) for g in engine.generators)
+            total = sum(int(getattr(g, "calls", 0)) for g in engine.generators)
+            return (
+                bool(_check(report.subject, task)),
+                str(getattr(choisi, "name", "")),
+                choisi,
+                (armes, total),
+            )
 
         for numero in range(1, cycles + 1):
             memo_avant = memoire.size
             rappels = 0
-            froid = chaud = 0
-            caracteres = 0
+            froid = temoin = chaud = 0
+            caracteres = avertis = appels = 0
             choix: dict[str, int] = {}
             for task in taches:
                 for run in range(runs):
@@ -309,13 +432,21 @@ def run_cycles(
                     if memoire.recall(task.objective):
                         rappels += 1
                     caracteres += len(memoire.prompt_block(task.objective))
-                    ok_chaud, bras, arm = _mission(task, graine, memoire_vive=True,
-                                                   phase=f"chaud{numero}")
+                    ok_chaud, bras, arm, (armes, total) = _mission(
+                        task, graine, memoire_vive=True, phase=f"chaud{numero}",
+                    )
                     chaud += int(ok_chaud)
+                    avertis += armes
+                    appels += total
                     if bras:
                         choix[bras] = choix.get(bras, 0) + 1
-                    ok_froid, _, _ = _mission(task, graine, memoire_vive=False,
-                                              phase=f"froid{numero}", arm=arm)
+                    ok_temoin, _, _, _ = _mission(
+                        task, graine, memoire_vive=True, phase=f"temoin{numero}",
+                        arm=arm, gain=0.0,
+                    )
+                    temoin += int(ok_temoin)
+                    ok_froid, _, _, _ = _mission(task, graine, memoire_vive=False,
+                                                 phase=f"froid{numero}", arm=arm)
                     froid += int(ok_froid)
             # Borne de securite : une memoire non bornee est la cause d'echec la plus documentee
             # (distraction, confusion). On la tronque par le HAUT, en gardant les plus recents.
@@ -323,8 +454,9 @@ def run_cycles(
                 _tronquer(memoire, max_memo)
             result.cycles.append(Cycle(
                 numero=numero, memo_avant=memo_avant, memo_apres=memoire.size,
-                rappels=rappels, froid=froid, chaud=chaud, essais=len(taches) * runs,
-                caracteres_memoire=caracteres,
+                rappels=rappels, froid=froid, temoin=temoin, chaud=chaud,
+                essais=len(taches) * runs, caracteres_memoire=caracteres,
+                avertis=avertis, appels=appels,
             ))
             result.choix_dernier_cycle = choix
 
@@ -371,9 +503,9 @@ def run_cycles(
             # `intervalle_difference` prend deux ECHANTILLONS (des 0/1), pas deux couples
             # (succes, total) : on lui donne ce qu'il attend, en le construisant depuis les
             # compteurs du cycle. Une seule implementation de l'intervalle dans ce depot.
-            froid = [1.0] * dernier.froid + [0.0] * (dernier.essais - dernier.froid)
+            temoin = [1.0] * dernier.temoin + [0.0] * (dernier.essais - dernier.temoin)
             chaud = [1.0] * dernier.chaud + [0.0] * (dernier.essais - dernier.chaud)
-            bas, haut = intervalle_difference(froid, chaud)
+            bas, haut = intervalle_difference(temoin, chaud)
             result.bas, result.haut = bas, haut
             result.tranche = bool(bas > 0.0 or haut < 0.0)
     return result

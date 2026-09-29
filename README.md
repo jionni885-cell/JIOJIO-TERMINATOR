@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1125 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1129 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1287,7 +1287,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1125 tests verts -> 1125 tests verts
+         - README.md ligne 15 : 1129 tests verts -> 1129 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -1439,46 +1439,75 @@ L'A/B compare trois bras sur **un** passage. Il ne peut pas répondre à la ques
 suivante : *la mémoire qui grandit cycle après cycle finit-elle par payer, ou rend-elle le
 harness plus cher sans le rendre meilleur ?* `jio learn --cycles N` la mesure.
 
-Par cycle, deux bras sur les **mêmes tâches et les mêmes graines** :
+Par cycle, **trois bras** sur les mêmes tâches, les mêmes graines et le **même bras de
+routeur** :
 
-| Bras | Mémoire | Routeur | Ce que ça isole |
+| Bras | Mémoire | Avertissement | Ce qu'il isole |
 |---|---|---|---|
-| **froid** | absente | figé sur le bras que le chaud vient de choisir | le souvenir, et rien d'autre |
-| **chaud** | accumulée | le vrai bandit | le système tel qu'il tourne |
+| **chaud** | accumulée | actif | le système tel qu'il tourne |
+| **témoin** | présente | désactivé | l'artefact : le même prompt, sans effet |
+| **froid** | absente | — | la référence sans souvenir |
 
-Le bras **chaud tourne d'abord** : il choisit son bras, et le **froid rejoue la même
-mission avec ce même bras**. C'est la correction d'un défaut trouvé en construisant la
-mesure — le froid tournait avec la configuration *par défaut* pendant que le chaud
-tournait avec le bras du routeur, et l'écart mesuré mélangeait **deux** causes. Le
-symptôme était net : au premier cycle, mémoire **vide des deux côtés**, le froid gagnait
-`3/5` contre `2/5`. Aucune mémoire ne pouvait expliquer cette différence.
+Le bras **chaud tourne d'abord** : il choisit son bras via le vrai bandit, et les deux
+autres **rejouent la même mission avec ce bras figé**. Le contraste causal est
+`chaud − témoin` ; `froid − témoin` est le **bruit de fond déclaré** du protocole.
 
-> | cycle | mémoire | rappels | jetons | froid | chaud | écart |
-> |---|---|---|---|---|---|---|
-> | 1 | 0 | 4 | 489 | 2/5 | 2/5 | +0 |
-> | 2 | 3 | 5 | 868 | 2/5 | 2/5 | +0 |
-> | 3 | 6 | 5 | 870 | 3/5 | 3/5 | +0 |
+> **Deux défauts trouvés en construisant cette mesure, et corrigés.**
 >
-> **Verdict : PLATEAU** — écart nul au dernier cycle alors que la mémoire a grandi jusqu'à
-> 8 souvenirs, soit ~870 jetons injectés par cycle. Le rapport écrit la phrase qui
-> déclenche une décision : *« la vérification faisait déjà le travail : le souvenir
-> n'ajoute rien et coûte — il faut la **borner** avant de l'enrichir. »* Un plateau est une
-> mesure, pas une condamnation : ce banc est bâti sur des oracles exécutables, le régime où
-> la mémoire devrait payer (plausibilité, choix de conception) n'y est pas représenté, et
-> le rapport le dit au lieu de le laisser croire.
+> **1. L'appariement.** Le froid tournait avec la configuration *par défaut* pendant que
+> le chaud tournait avec le bras du routeur : l'écart mélangeait deux causes. Symptôme :
+> au premier cycle, mémoire **vide des deux côtés**, le froid gagnait `3/5` contre `2/5`.
+>
+> **2. Le levier était inatteignable.** Le bloc de mémoire ne **nommait jamais** la tâche
+> dont il parlait. Or l'effet d'avertissement n'est accordé que si le souvenir concerne
+> *cette* tâche : mesuré à l'époque, **28 avertissements examinés, 0 déclenché**. Le
+> résultat publié jusqu'ici (« gain attribuable : 0,0 point ») était donc, pour partie,
+> l'écho d'un mécanisme jamais armé — pas une conclusion sur la mémoire. Le bloc porte
+> maintenant sa ligne `ON TASK:` ; la portée est mesurée, et le taux est passé de **0 %**
+> à **14 % des appels de génération** (`7/50`).
+
+Avec le témoin, la mesure devient lisible. Régime : compétence simulée `0.4`, 5 tâches,
+4 tirages, 2 tours, 3 cycles (180 missions, ~8 min sur deux cœurs) :
+
+| cycle | mémoire | jetons/cycle | froid | témoin | chaud | artefact | **écart** |
+|---|---|---|---|---|---|---|---|
+| 1 | 0 | 4 797 | 18/20 | 18/20 | 18/20 | +0 | **+0** |
+| 2 | 4 | 5 944 | 17/20 | 13/20 | 13/20 | −4 | **+0** |
+| 3 | 10 | 5 972 | 14/20 | 11/20 | 11/20 | −3 | **+0** |
+
+**Verdict : PLATEAU.** L'écart causal est nul aux trois cycles, pendant que la mémoire
+grandit de 0 à 20 souvenirs et coûte ~6 000 jetons par cycle. Et l'`artefact` de −4 puis −3
+montre à quoi ressemblait le « résultat » avant le témoin : du bruit pur, de la même taille
+que l'effet qu'on cherchait.
+
+Le rapport **borne** ensuite sa propre conclusion, et c'est le chiffre qui décide :
+
+```
+  PORTEE DU LEVIER : 7/50 appel(s) de generation avertis (14.0 %)
+    Meme accorde partout ou il l'a ete, cet avertissement ne peut expliquer que
+    0.2 reussite(s) de plus sur 10 : c'est SOUS le pas de mesure (1 essai).
+    A ce niveau, le banc ne peut pas trancher entre « la memoire ne paie pas » et
+    « la memoire paie trop peu pour etre vue ».
+```
+
+Sans ce calcul, « écart nul » se lirait « la mémoire ne sert à rien » — une conclusion que
+la mesure ne porte pas. Si la portée avait été large (levier armé partout), le même rapport
+écrit l'inverse, et le condamne : *« il avait de la place pour se voir, et il ne s'est pas
+vu. À ce niveau, la mémoire est réellement sans effet. »* Le banc ne tranche pas toujours,
+mais il dit toujours **ce qu'il peut trancher**.
 
 Trois verdicts, et un seul condamne :
 
 - **PROGRESSE** — écart strictement positif **et** intervalle de confiance qui exclut zéro ;
 - **REGRESSE** — une **rechute** : la mémoire *existait déjà* au début du cycle et le
-  résultat est pire qu'en froid. Le verdict est *calculé* depuis les cycles mesurés, jamais
+  résultat est pire qu'au témoin. Le verdict est *calculé* depuis les cycles mesurés, jamais
   stocké dans un champ qui pourrait mentir ;
 - **PLATEAU** — tout le reste, y compris « écart positif mais intervalle contenant zéro »,
   qui est une mesure qui **n'a pas conclu** et non un échec.
 
 Un écart négatif au **premier** cycle n'est jamais une rechute : la mémoire y est vide,
 donc rien n'a pu nuire — c'est de la loterie de graine, et l'appeler « rechute » serait un
-faux positif. Le protocole refuse de mesurer au-delà de 200 missions (code `2`,
+faux positif. Le protocole refuse de mesurer au-delà de **200 missions** (code `2`,
 `INDÉTERMINÉ`) plutôt que de rendre un chiffre qu'il n'a pas les moyens de rendre.
 
 **L'invariant central est encodé dans le simulateur, et verrouillé par un test :** les

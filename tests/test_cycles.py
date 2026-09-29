@@ -58,9 +58,12 @@ def test_memoire_vide_ecart_nul(rapport_petit: RapportCycles) -> None:
     premier = rapport.cycles[0]
     assert premier.memo_avant == 0, "le premier cycle part d'une memoire vide"
     assert premier.ecart == 0, (
-        f"memoire vide mais ecart {premier.ecart:+d} : le protocole compare autre chose "
-        "que le souvenir (verifier l'appariement du bras)"
+        f"memoire vide mais ecart chaud/temoin {premier.ecart:+d} : le protocole compare "
+        "autre chose que le souvenir (verifier l'appariement du bras)"
     )
+    # Le TEMOIN, lui, peut s'ecarter du froid : c'est le bruit que le protocole mesure au
+    # lieu de le confondre avec un effet de la memoire.
+    assert 0 <= premier.temoin <= premier.essais
 
 
 def test_le_routeur_fige_ne_choisit_jamais_autre_chose() -> None:
@@ -85,6 +88,7 @@ def test_un_cycle_respecte_le_nombre_d_essais_annonce(rapport_petit: RapportCycl
     assert essais == 1, f"1 tache x 1 run = 1 essai, pas {essais}"
     for cycle in rapport.cycles:
         assert 0 <= cycle.froid <= essais
+        assert 0 <= cycle.temoin <= essais
         assert 0 <= cycle.chaud <= essais
 
 
@@ -95,11 +99,13 @@ def _rapport(*cycles: Cycle) -> RapportCycles:
     return RapportCycles(cycles=list(cycles), skill=0.5, runs=1, rounds=2)
 
 
-def _cycle(numero: int, froid: int, chaud: int, *, memo_avant: int = 0,
-           memo_apres: int = 0, essais: int = 10, caracteres: int = 0) -> Cycle:
+def _cycle(numero: int, froid: int, chaud: int, *, temoin: int = 0, memo_avant: int = 0,
+           memo_apres: int = 0, essais: int = 10, caracteres: int = 0,
+           avertis: int = 0, appels: int = 0) -> Cycle:
     return Cycle(
         numero=numero, memo_avant=memo_avant, memo_apres=memo_apres, rappels=0,
-        froid=froid, chaud=chaud, essais=essais, caracteres_memoire=caracteres,
+        froid=froid, temoin=temoin, chaud=chaud, essais=essais,
+        caracteres_memoire=caracteres, avertis=avertis, appels=appels,
     )
 
 
@@ -109,14 +115,56 @@ def test_le_vocabulaire_des_verdicts_est_ferme(rapport_petit: RapportCycles) -> 
 
 
 def test_une_rechute_condamne() -> None:
-    """Le seul verdict qui condamne : la memoire accumulee fait PERDRE."""
+    """Le seul verdict qui condamne : la memoire accumulee fait PERDRE.
+
+    Et l'ecart qui compte est CHAUD - TEMOIN, pas chaud - froid : le temoin porte la meme
+    memoire, il ne s'en distingue que par l'effet. Un ecart negatif face au FROID seul ne
+    prouve rien — c'est exactement ce que la mesure a montre (-4 au cycle 1, memoire vide).
+    """
     rapport = _rapport(
-        _cycle(1, froid=4, chaud=5, memo_avant=3, memo_apres=6),
-        _cycle(2, froid=6, chaud=3, memo_avant=6, memo_apres=9),
+        _cycle(1, froid=4, temoin=4, chaud=5, memo_avant=3, memo_apres=6),
+        _cycle(2, froid=6, temoin=6, chaud=3, memo_avant=6, memo_apres=9),
     )
     assert rapport.rechutes == [2]
     assert rapport.verdict() == "REGRESSE"
     assert "NUIT" in rapport.explication()
+
+
+def test_l_ecart_ignore_le_bras_froid() -> None:
+    """Le contraste causal est chaud/temoin. Un froid tres en dessous ne doit pas
+    transformer un plateau en progres, ni l'inverse."""
+    rapport = _rapport(_cycle(1, froid=1, temoin=8, chaud=8, memo_avant=2, memo_apres=3))
+    assert rapport.ecart == 0
+    assert rapport.artefact == 7, "l'artefact est declare, pas cache"
+    assert rapport.verdict() == "PLATEAU"
+
+
+def test_la_portee_borne_l_interpretation() -> None:
+    """Un ecart nul avec une portee de 1 % ne dit RIEN de la memoire : le levier n'a
+    presque jamais ete arme. Le rapport doit le dire, sinon il conclut au-dela de sa
+    mesure — le peche qu'il existe pour empecher."""
+    rapport = RapportCycles(
+        cycles=[_cycle(1, froid=8, temoin=8, chaud=8, memo_avant=5, memo_apres=9,
+                       caracteres=4000, avertis=1, appels=100)],
+        warning_gain=0.20,
+    )
+    assert rapport.portee == pytest.approx(0.01)
+    assert rapport.effet_attendu_max() < 1.0
+    texte = rapport.explication()
+    assert "1.0%" in texte
+    assert "SOUS le pas de mesure" in texte
+
+
+def test_une_portee_large_autorise_a_conclure() -> None:
+    """Symetrique du precedent : si le levier etait arme partout, un ecart nul CONDAMNE
+    l'effet a ce niveau — et le rapport le dit aussi."""
+    rapport = RapportCycles(
+        cycles=[_cycle(1, froid=8, temoin=8, chaud=8, memo_avant=5, memo_apres=9,
+                       caracteres=4000, avertis=100, appels=100)],
+        warning_gain=0.20,
+    )
+    assert rapport.effet_attendu_max() >= 1.0
+    assert "il ne s'est pas vu" in rapport.explication()
 
 
 def test_un_ecart_negatif_a_memoire_vide_n_est_pas_une_rechute() -> None:
@@ -131,13 +179,13 @@ def test_un_ecart_negatif_a_memoire_vide_n_est_pas_une_rechute() -> None:
     assert rapport.verdict() != "REGRESSE"
 
 
-def test_un_plateau_chiffre_ce_qu_il_coute() -> None:
+def test_le_temoin_separe_l_effet_de_la_loterie() -> None:
     """Un plateau sans son cout se lit mal : « la memoire n'apporte rien » n'est pas
     « la memoire coute 868 jetons par cycle et n'apporte rien ». Le second declenche une
     decision, le premier laisse l'utilisateur sans action."""
     rapport = _rapport(
-        _cycle(1, froid=4, chaud=4, memo_apres=3, caracteres=100),
-        _cycle(2, froid=4, chaud=4, memo_avant=3, memo_apres=8, caracteres=3400),
+        _cycle(1, froid=4, temoin=4, chaud=4, memo_apres=3, caracteres=100),
+        _cycle(2, froid=4, temoin=4, chaud=4, memo_avant=3, memo_apres=8, caracteres=3400),
     )
     assert rapport.verdict() == "PLATEAU"
     assert rapport.cout_du_plateau() == 850, "3400 caracteres ~ 850 jetons"
@@ -146,16 +194,16 @@ def test_un_plateau_chiffre_ce_qu_il_coute() -> None:
 
 def test_pas_de_cout_affiche_si_la_memoire_n_a_pas_grandi() -> None:
     rapport = _rapport(
-        _cycle(1, froid=4, chaud=4, memo_apres=5, caracteres=900),
-        _cycle(2, froid=4, chaud=4, memo_avant=5, memo_apres=5, caracteres=900),
+        _cycle(1, froid=4, temoin=4, chaud=4, memo_apres=5, caracteres=900),
+        _cycle(2, froid=4, temoin=4, chaud=4, memo_avant=5, memo_apres=5, caracteres=900),
     )
     assert rapport.cout_du_plateau() == 0
 
 
 def test_memo_final_rend_le_stock_pas_le_flux() -> None:
     rapport = _rapport(
-        _cycle(1, froid=1, chaud=1, memo_apres=3),
-        _cycle(2, froid=1, chaud=1, memo_avant=3, memo_apres=7),
+        _cycle(1, froid=1, temoin=1, chaud=1, memo_apres=3),
+        _cycle(2, froid=1, temoin=1, chaud=1, memo_avant=3, memo_apres=7),
     )
     assert rapport.memo_final == 7
     assert RapportCycles().memo_final == 0

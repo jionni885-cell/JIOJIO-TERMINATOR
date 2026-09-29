@@ -61,8 +61,24 @@ class FailureRecord:
     seq: int = 0
 
     def as_block(self) -> str:
+        """Le bloc injecte. Il NOMME la tache, et ce n'est pas cosmetique.
+
+        DEFAUT MESURE, corrige ici : le bloc ne contenait que le symptome, la cause, le
+        remede et le garde — jamais la tache d'origine. Or le simulateur (et, dans la
+        vraie mecanique, tout consommateur de ce bloc) n'accorde l'effet d'avertissement
+        que si le souvenir concerne CETTE tache precise (`_warns_about`). Mesure sur un
+        protocole multi-cycles reel : **28 avertissements examines, 0 declenche**. Le
+        levier « memoire » du harness etait donc INATTEIGNABLE, et le « gain attribuable :
+        0,0 point » publie jusqu'ici etait en partie l'echo de ce defaut, pas une
+        conclusion sur la memoire.
+
+        La ligne dit la tache, et rien de plus : le texte reste un PRIOR, jamais une
+        preuve — `re-measure before relying`.
+        """
+        tete = f"- ON TASK: {self.objective[:160]}\n" if self.objective else "- "
         return (
-            f"- SYMPTOM: {self.symptom}\n"
+            tete
+            + f"  SYMPTOM: {self.symptom}\n"
             f"  CAUSE: {self.root_cause}\n"
             f"  WRONG FIX (do not repeat): {self.wrong_fix or 'n/a'}\n"
             f"  RIGHT FIX: {self.correct_fix}\n"

@@ -83,6 +83,38 @@ def test_bloc_de_prompt_vide_sans_souvenir():
     assert FailureMemory().prompt_block("n'importe quoi") == ""
 
 
+def test_le_bloc_NOMME_la_tache_dont_il_parle():
+    """DEFAUT MESURE, verrouille ici : le bloc ne nommait pas la tache d'origine.
+
+    Consequence invisible et devastratrice : le mecanisme qui accorde l'effet
+    d'avertissement exige que le souvenir concerne CETTE tache precise
+    (`_warns_about`), et il ne pouvait donc JAMAIS l'accorder. Mesure sur un protocole
+    multi-cycles reel avant correction : 28 avertissements examines, 0 declenche. Le
+    levier « memoire » du harness etait inatteignable, et le chiffre publie (« gain
+    attribuable : 0,0 point ») etait en partie l'echo de ce defaut.
+
+    Ce test regarde la seule chose qui compte : le bloc doit permettre de distinguer
+    « ce souvenir parle de MA tache » de « ce souvenir parle d'une autre ».
+    """
+    from jio.providers.simulated import _WARNING_MARKER
+
+    memory = FailureMemory()
+    _record(memory, "sum_even", "odd numbers were summed")
+    block = memory.prompt_block("sum_even")
+    corps = block[block.index(_WARNING_MARKER):]
+
+    assert "sum_even" in corps, "le bloc doit nommer la tache DANS le bloc lui-meme"
+    assert "SYMPTOM" in corps, "et il doit continuer de dire ce qui a echoue"
+
+    # Le critere qui arme le levier, mesure sur le vrai mecanisme : la tache concernee
+    # arme, une autre n'arme pas.
+    from jio.providers.simulated import _warns_about
+
+    prompt = f"fais la tache sum_even\n{block}"
+    assert _warns_about(prompt, "sum_even") is True
+    assert _warns_about(prompt, "parse_duration") is False
+
+
 def test_chaine_detecte_une_reecriture(tmp_path: Path):
     """Une memoire editable est la chose la plus facile a reecrire discretement.
 

@@ -2505,9 +2505,9 @@ def _learn_cycles(args: argparse.Namespace) -> int:
     """
     from .learn.cycles import TASKS, run_cycles
 
-    missions = args.cycles * 2 * len(TASKS) * max(args.runs, 1)
+    missions = args.cycles * 3 * len(TASKS) * max(args.runs, 1)
     print()
-    print("  AUTO-AMELIORATION MULTI-CYCLES  ·  protocole apparie froid/chaud")
+    print("  AUTO-AMELIORATION MULTI-CYCLES  ·  trois bras apparies par cycle")
     print(f"    competence simulee {args.skill}  ·  {args.cycles} cycles  ·  {args.runs} "
           f"tirage(s) par tache  ·  {args.rounds} tours  ·  {len(TASKS)} taches")
     print(f"    cout annonce : {missions} missions (mesure a ~1,1 s/mission sur 2 cœurs)")
@@ -2521,8 +2521,9 @@ def _learn_cycles(args: argparse.Namespace) -> int:
         print("    rendre. (Un tour du bras chaud est REJOUE par le bras froid apparie :")
         print("    la comparaison coute exactement le double de ce qu'elle mesure.)")
         return 2
-    print("    Le bras chaud tourne D'ABORD (il choisit le bras via le routeur) ; le bras")
-    print("    froid rejoue la MEME mission avec le MEME bras : seule la memoire differe.")
+    print("    Par mission : CHAUD (memoire, avertissement actif) -> TEMOIN (memoire")
+    print("    presente, avertissement desactive) -> FROID (aucune memoire). Memes taches,")
+    print("    memes graines, MEME bras : le temoin separe l'effet de la memoire du bruit.")
     print()
     res = run_cycles(
         skill=args.skill, runs=args.runs, cycles=args.cycles, rounds=args.rounds,
@@ -2531,12 +2532,19 @@ def _learn_cycles(args: argparse.Namespace) -> int:
         print("  [INDETERMINE] aucun cycle mesure (cycles ou runs nul).")
         return 2
     print(f"    {'cycle':>5} {'memoire':>8} {'rappels':>7} {'jetons':>6} "
-          f"{'froid':>9} {'chaud':>9} {'ecart':>7}")
-    print(f"    {'-' * 5} {'-' * 8} {'-' * 7} {'-' * 6} {'-' * 9} {'-' * 9} {'-' * 7}")
+          f"{'froid':>9} {'temoin':>9} {'chaud':>9} {'artef':>6} {'ecart':>7}")
+    print(f"    {'-' * 5} {'-' * 8} {'-' * 7} {'-' * 6} {'-' * 9} {'-' * 9} {'-' * 9} "
+          f"{'-' * 6} {'-' * 7}")
     for cycle in res.cycles:
         print(cycle.ligne())
     print()
     print(f"  MEMOIRE ACCUMULEE : {res.memo_final} souvenir(s) apres {len(res.cycles)} cycle(s)")
+    print(f"  BRUIT DE FOND (froid -> temoin, sans effet de memoire) : "
+          f"{res.artefact_max} reussite(s) au pire cycle")
+    armes = sum(c.avertis for c in res.cycles)
+    total = sum(c.appels for c in res.cycles)
+    print(f"  PORTEE DU LEVIER : {armes}/{total} appel(s) de generation avertis "
+          f"({res.portee:.1%}) — c'est ce qui borne tout effet possible de la memoire.")
     if res.bras:
         print("  ROUTAGE (le bandit, mesure sur tout l'historique) :")
         for nom, tirages, recompense in res.bras:

@@ -83,6 +83,11 @@ class SimulatedProvider:
     persona: Persona = field(default_factory=Persona)
     bank: Mapping[str, tuple[str, Sequence[str]]] = field(default_factory=dict)
     calls: int = 0
+    #: Nombre d'appels ou l'avertissement de memoire a REELLEMENT ete accorde. Sans ce
+    #: compteur, un ecart nul est ambigu : « le levier ne sert a rien » et « le levier n'a
+    #: jamais ete arme » se lisent pareil. Le premier condamne un mecanisme, le second dit
+    #: qu'on ne l'a pas encore essaye.
+    warned_calls: int = 0
     #: Gain RELATIF de competence lorsque le prompt contient l'avertissement
     #: precis issu de la memoire des echecs. MODELISE et declare (voir plus bas),
     #: mesurable isolement par `jio learn`.
@@ -184,6 +189,7 @@ class SimulatedProvider:
         # contrairement a une simple reecriture du prompt.
         warned = _warns_about(prompt, key)
         if warned:
+            self.warned_calls += 1
             effective = self._amplify(effective, self.warning_gain)
 
         # --- effet d'un RETOUR D'ECHEC structure --------------------------- #
