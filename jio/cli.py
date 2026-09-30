@@ -4097,7 +4097,7 @@ def cmd_ablation(args: argparse.Namespace) -> int:
         ),
     )
     if args.json:
-        print(json.dumps(rapport.en_dict(), ensure_ascii=False, indent=2))
+        _charge_utile(json.dumps(rapport.en_dict(), ensure_ascii=False, indent=2))
         return 1 if rapport.silencieuses else 0
     print(formater(rapport))
     print()
@@ -4330,7 +4330,7 @@ def cmd_skills(args: argparse.Namespace) -> int:
     if getattr(args, "json", False):
         import json
 
-        print(json.dumps(
+        _charge_utile(json.dumps(
             {
                 "objectif": objectif,
                 "seuil_concepts": seuil,
@@ -4466,7 +4466,7 @@ def cmd_sorties(args: argparse.Namespace) -> int:
             divergences.append((chemin.name, str(divergence)))
 
     if getattr(args, "json", False):
-        print(_json.dumps(
+        _charge_utile(_json.dumps(
             {
                 "documents": [str(c) for c in chemins],
                 "blocs": total_blocs,
@@ -4547,7 +4547,7 @@ def cmd_coherence(args: argparse.Namespace) -> int:
     else:
         rapport = controler(racine)
     if getattr(args, "json", False):
-        print(_json.dumps(rapport.as_dict(), ensure_ascii=False, indent=2))
+        _charge_utile(_json.dumps(rapport.as_dict(), ensure_ascii=False, indent=2))
     else:
         print(formater(rapport))
     return rapport.code
@@ -4623,7 +4623,7 @@ def cmd_clarify(args: argparse.Namespace) -> int:
         args.objective, contexte=contexte, max_questions=max(1, args.maximum), mode=mode
     )
     if args.json:
-        print(json.dumps(analyse.as_dict(), ensure_ascii=False, indent=2))
+        _charge_utile(json.dumps(analyse.as_dict(), ensure_ascii=False, indent=2))
     else:
         print(BANNER)
         print(formater(analyse))
@@ -5214,7 +5214,7 @@ def cmd_auto(args: argparse.Namespace) -> int:
     enregistrer(resultat, chemin_etat)
     print()
     if args.json:
-        print(json.dumps(resultat.as_dict(), ensure_ascii=False, indent=2))
+        _charge_utile(json.dumps(resultat.as_dict(), ensure_ascii=False, indent=2))
     else:
         print(formater(resultat))
         print()
@@ -5261,6 +5261,48 @@ def _argv_de_preuve(commande: str) -> list[str] | None:
 
 
 
+# --------------------------------------------------------------------------- #
+# Mode machine : une seule regle, et elle est mecanique
+# --------------------------------------------------------------------------- #
+
+#: Le VRAI stdout, garde de cote quand une commande demande une sortie lisible par une
+#: machine. Voir `_mode_machine`.
+_FLUX_MACHINE: Any = None
+
+
+def _mode_machine(actif: bool) -> None:
+    """Bascule la sortie : en mode machine, l'humain lit la sortie d'ERREUR.
+
+    POURQUOI, mesure faite : `jio coherence --json` et `jio ablation --json` melangeaient leur
+    banniere et leur en-tete avec la charge utile. `jio ablation --json > rapport.json` donnait
+    un fichier qui COMMENCE par un logo, et `--json | jq .` echouait. Un mode machine qui n'est
+    pas lisible par une machine ne sert a rien : celui qui veut un chiffre doit le recopier a la
+    main, c'est-a-dire que la commande n'a pas de mode machine du tout.
+
+    Le choix de conception : on ne patche PAS chaque `print` du programme (il y en a des
+    centaines, et le prochain oublie recommencerait le defaut). On retourne la sortie standard
+    vers la sortie d'erreur UNE fois : tout ce qui est ecrit pour l'humain — banniere, en-tete,
+    progression, conseils — part alors sur la sortie d'erreur, ou personne ne le confond avec
+    la charge utile. Seule la reponse finale, ecrite par `_charge_utile`, reste sur la vraie
+    sortie standard. Le defaut possible devient « la charge utile part sur la sortie d'erreur »
+    — visible en une seconde, et verrouille par un test qui lit la sortie de la VRAIE commande.
+    """
+    global _FLUX_MACHINE
+    if actif:
+        _FLUX_MACHINE = sys.stdout
+        sys.stdout = sys.stderr
+    elif _FLUX_MACHINE is not None:
+        sys.stdout = _FLUX_MACHINE
+        _FLUX_MACHINE = None
+
+
+def _charge_utile(texte: str) -> None:
+    """Ecrit la reponse lisible par une machine sur la VRAIE sortie standard."""
+    flux = _FLUX_MACHINE if _FLUX_MACHINE is not None else sys.stdout
+    print(texte, file=flux)
+    flux.flush()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -5268,6 +5310,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(BANNER)
         parser.print_help()
         return 0
+    # `is True` et non « vrai » : pour `jio bench --json CHEMIN.json`, l'argument est un
+    # CHEMIN, pas une demande de sortie machine — le confondre enverrait le rapport d'un
+    # autre cote sans que personne ne le demande.
+    _mode_machine(getattr(args, "json", None) is True)
     try:
         return int(args.func(args) or 0)
     except SystemExit as sortie:
@@ -5287,6 +5333,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return code
         print(code, file=sys.stderr)
         return 1
+    finally:
+        # Toujours rendre la sortie standard : `main()` est appelee plusieurs fois dans le
+        # meme processus par les tests, et une bascule qui survit a un appel ferait ecrire la
+        # commande SUIVANTE dans le vide.
+        _mode_machine(False)
 
 
 if __name__ == "__main__":  # pragma: no cover
