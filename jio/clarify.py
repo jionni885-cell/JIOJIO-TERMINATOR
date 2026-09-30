@@ -253,6 +253,24 @@ _CRITERES = (
     # francais, et l'utilisateur ecrit dans les deux langues.
     re.compile(r"\b(proving|proves|proven|must\s+(stay|remain|pass|be)|should\s+(stay|remain|"
                r"pass|be)|so\s+that|stay\s+green|passing|green|within\s+\d+)\b"),
+    # -- l'anglais, mesure sur le JEU DE CONTROLE (objectifs d'un autre projet) ------------- #
+    #
+    # Le meme raisonnement que ci-dessus, applique a la seconde langue : la porte connaissait
+    # trois tournures anglaises et manquait toutes les autres. Mesure : sur 4 objectifs anglais
+    # parfaitement bornes d'un projet ETRANGER, **4 recevaient la question « comment
+    # saura-t-on que c'est FINI ? »** — soit 50 % d'exactitude en anglais contre 100 % en
+    # francais. A l'usage, c'est le defaut le plus couteux : une question inutile A CHAQUE
+    # objectif, et l'utilisateur apprend a ignorer la porte.
+    #
+    # Bornes quantitatives : « below 200 MB », « in under 60 lines », « at least 90 % ».
+    re.compile(r"\b(below|under|above|over|at\s+most|at\s+least|no\s+more\s+than)\s+\d+"),
+    # Un TEST nomme est un critere verificable : « cover it in tests/test_limits.py »,
+    # « test it in `tests/test_deploy.py` ». Le francais avait l'equivalent (« avec un test
+    # dans tests/… »), l'anglais ne l'avait pas.
+    re.compile(r"\b(cover(?:ed|ing|s)?|test(?:ed|ing|s)?|check(?:ed|ing|s)?)\s+(?:it\s+)?"
+               r"(?:in|by|with)\s+`?[\w./-]*tests?/"),
+    # Un invariant explicite : « keeping `docker compose up` working », « keep the tests green ».
+    re.compile(r"\bkeep(?:ing|s)?\s+[\w`./-]+\s+(working|green|passing|intact|unchanged)\b"),
 )
 
 #: Actions dont le RESULTAT est directement observable sur la cible : supprimer X (X a
@@ -262,10 +280,18 @@ _CRITERES = (
 #:
 #: La liste est VOLONTAIREMENT courte : « corriger », « optimiser » ou « ameliorer » n'y sont
 #: pas, parce qu'un fichier qui existe encore ne dit pas s'il est CORRECT.
+#: Les verbes anglais sont ceux du FRANCAIS traduits, famille par famille : la regle est la
+#: meme, elle n'etait simplement ecrite qu'en une langue. Mesure sur le jeu de controle :
+#: « Write `docs/install.md` … » et « Add a `--dry-run` flag … » sortaient avec la question du
+#: critere alors que l'action ET la cible nommee suffisaient — exactement comme « ecris » et
+#: « ajoute » en francais, qui, eux, etaient reconnus.
 _CRITERE_IMPLIQUE = {
-    "supprimer": r"\b(supprimer|supprime|effacer|efface|retirer|retire|enlever|enleve)\b",
-    "renommer": r"\b(renommer|renomme|deplacer|deplace)\b",
-    "creer": r"\b(ecrire|ecris|creer|cree|generer|genere|ajouter|ajoute)\b",
+    "supprimer": r"\b(supprimer|supprime|effacer|efface|retirer|retire|enlever|enleve|"
+                 r"remove|removes|removed|delete|deletes|deleted|drop|drops|dropped)\b",
+    "renommer": r"\b(renommer|renomme|deplacer|deplace|rename|renames|renamed|move|moves|"
+                r"moved)\b",
+    "creer": r"\b(ecrire|ecris|creer|cree|generer|genere|ajouter|ajoute|write|writes|written|"
+             r"create|creates|created|generate|generates|generated|add|adds|added)\b",
 }
 
 

@@ -80,6 +80,27 @@ class Chiffre:
     #: documentation, c'est-a-dire un bug du controle lui-meme.
     ancre: bool = True
 
+    def annonce(self, texte: str) -> bool:
+        """Le document annonce-t-il ce chiffre, sous la forme surveillee ?
+
+        Question differente de « le chiffre est-il juste », et elle manquait : `ecarts()` rend
+        une ABSENCE comme un ecart (c'est voulu — sinon un controle devient vert parce qu'il ne
+        trouve plus rien a verifier). Mais ce raisonnement vaut pour les documents de CE depot,
+        qui se sont engages a annoncer ces grandeurs. Applique au README d'un projet TIERS, il
+        reprochait a ce projet de ne pas annoncer les huit chiffres de JIO et faisait echouer
+        son portail — mesure sur un projet etranger, avec un README qui dit seulement
+        « python -m pytest lance les tests ». Un controle doit savoir si son sujet PARTICIPE
+        avant de le declarer en faute.
+        """
+        hors_controle, _ = zones_hors_controle(texte)
+        motif = re.compile(self.motif)
+        for indice, ligne in enumerate(texte.splitlines(), start=1):
+            if indice in hors_controle:
+                continue
+            if motif.search(ligne):
+                return True
+        return False
+
 
 CHIFFRES: tuple[Chiffre, ...] = (
     Chiffre(
@@ -105,7 +126,7 @@ CHIFFRES: tuple[Chiffre, ...] = (
     # phrase du README, elle, annoncait toujours 38.
     Chiffre(
         nom="objectifs",
-        motif=r"(\d+) objectifs(?! de routage| de contr| du jeu de contr| hors sujet| pertinents)",
+        motif=r"(\d+) objectifs(?! de routage| de contr| du jeu de contr| d'un projet| hors sujet| pertinents)",
         description="le banc d'objectifs de la porte de clarification (jio/bench/objectifs.py)",
     ),
     # Le routeur de competences publie lui aussi deux nombres dans le README : la taille de son
@@ -125,6 +146,15 @@ CHIFFRES: tuple[Chiffre, ...] = (
         nom="objectifs_controle",
         motif=r"(\d+) objectifs (?:de |du jeu de )contr[oô]le",
         description="le jeu de controle du routeur, ecrit avant la derniere retouche des fiches",
+    ),
+    # Le MEME dispositif pour la porte de clarification : son banc cite les chemins de ce
+    # depot, donc un second jeu (d'un projet etranger) mesure ce que le banc ne peut pas. Sa
+    # taille est un chiffre annonce — elle est donc verifiee comme les autres, sinon la phrase
+    # qui dit « 22 objectifs » survivrait a un jeu devenu 30.
+    Chiffre(
+        nom="objectifs_controle_clarify",
+        motif=r"(\d+) objectifs d'un projet",
+        description="le jeu de controle de la porte de clarification (un projet etranger)",
     ),
     # Le motif est insensible a la casse parce que la phrase vit en milieu de paragraphe
     # (« Premier choix juste dans 77 % des cas ») : un chiffre juste mais non surveille a cause
@@ -180,6 +210,7 @@ def mesurer(racine: Path | str) -> dict[str, int]:
     # competences et rien d'autre ; le faire remonter en tete de module coupleraient les
     # chiffres a l'index, qui depend lui-meme des artefacts.
     from .skills.banc import BANC, mesurer as mesurer_le_routage
+    from .bench.controle_clarify import CAS as CAS_CLARIFY
     from .skills.controle import CAS
 
     return {
@@ -190,6 +221,7 @@ def mesurer(racine: Path | str) -> dict[str, int]:
         "objectifs_routage": len(BANC),
         "premier_choix": round(mesurer_le_routage().precision1 * 100),
         "objectifs_controle": len(CAS),
+        "objectifs_controle_clarify": len(CAS_CLARIFY),
     }
 
 
@@ -302,6 +334,21 @@ def reparer(
     original = chemin.read_text(encoding="utf-8")
     trouves = ecarts(original, mesures)
     reparables = [ecart for ecart in trouves if ecart.reparable]
+
+    # LA QUESTION SE POSE AVANT LE VERDICT : ce document PARTICIPE-t-il au controle ? S'il
+    # n'annonce aucun chiffre surveille, tout ce que `ecarts` rend pour lui est une ABSENCE —
+    # et une absence n'est un defaut que pour un document qui s'est engage a annoncer. Mesure
+    # faite sur un projet ETRANGER apres `jio start` : `jio chiffres` y sortait en 1 et
+    # reprochait au README du projet les huit chiffres de jio, alors que `jio coherence`,
+    # corrige pour la meme raison, disait « hors de portee ». Deux commandes qui mesurent la
+    # meme chose ne peuvent pas rendre deux verdicts opposes — celle qu'on mettrait dans un
+    # pre-commit serait celle qui crie a tort.
+    if trouves and not reparables and not any(chiffre.annonce(original) for chiffre in CHIFFRES):
+        return 0, trouves, (
+            f"hors de portee : {chemin.name} n'annonce aucun chiffre surveille — rien a "
+            "confronter. Les grandeurs mesurees sont affichees ci-dessus ; pour que le controle "
+            "s'applique, ecrivez-en une sous la forme surveillee."
+        )
     if not reparables:
         if not trouves:
             return 0, [], f"aucun ecart : {chemin.name} dit vrai."

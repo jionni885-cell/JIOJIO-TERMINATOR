@@ -147,21 +147,54 @@ def _documents(racine: Path) -> list[Path]:
     return trouves
 
 
+def manifeste_attendu(racine: Path) -> dict[str, str]:
+    """Ce que `jio start` ECRIRAIT dans cette racine, exactement.
+
+    Un seul endroit, parce que deux endroits se contredisent : le controle comparait a la
+    commande RESOLUE par la sonde, la reparation ecrivait la commande CANONIQUE, et le fichier
+    fraichement repare etait declare divergent. C'est le meme piege que la double ecriture des
+    artefacts, deja corrige une fois dans ce depot : une doctrine, un ecrivain.
+    """
+    from ..artifacts import manifest
+    from ..artifacts.wiring import commande_qui_marche
+
+    commande, _note = commande_qui_marche(racine=racine)
+    return manifest(commande=commande)
+
+
 def _controle_artefacts(racine: Path) -> Constat:
     """Les artefacts sur le disque sont-ils exactement ce que la doctrine produit ?
 
     On REGENERE en memoire et on compare. C'est la seule facon de voir une derive : un fichier
     a la main apres une modification de la doctrine reste coherent avec lui-meme, et faux.
     """
-    from ..artifacts import manifest
-
     from ..artifacts.write_guard import REGISTRE, _porte_la_marque, lire_registre
+
+    # DEUX corrections, toutes deux trouvees en lancant `jio start` sur un projet ETRANGER.
+    #
+    # 1. La portee. Dans un projet ou JIO n'a jamais ete lance, les trente artefacts generes
+    #    sont — par definition — absents : ce controle annoncait « 30 manquant(s) » et faisait
+    #    echouer le portail d'un depot tiers qui n'avait rien demande. Les trois controles
+    #    voisins declarent deja « hors de portee » dans ce cas ; celui-ci ne le faisait pas.
+    # 2. La FORME attendue. Les artefacts de cablage nomment un interpreteur, et cet
+    #    interpreteur est choisi par `wiring.commande_qui_marche()` selon le projet : comparer
+    #    a la forme canonique signalait « divergent » deux fichiers que `jio start` venait
+    #    d'ecrire correctement. Le controle doit comparer au manifeste que CE projet produirait,
+    #    sinon il declare fausse la seule ecriture juste.
+    attendus = manifeste_attendu(racine)
+
+    # PAS de « hors portee » ici, et c'est delibere : dans une racine ou jio n'a jamais ete
+    # lance, les artefacts manquants sont un FAIT — et un fait ACTIONNABLE (`jio start`). Le
+    # rendre « hors portee » eteindrait le seul signal qui dit a une IA « ce projet n'est pas
+    # encore cable ». La distinction que ce module defend est ailleurs : un controle qui a
+    # MESURE et trouve bon n'est pas un controle qui n'avait rien a mesurer — et ici il avait
+    # trente choses a mesurer, toutes absentes.
 
     registre = lire_registre(racine) if (racine / REGISTRE).is_file() else {}
     divergents: list[str] = []
     manquants: list[str] = []
     proteges: list[str] = []
-    for rel, attendu in sorted(manifest().items()):
+    for rel, attendu in sorted(attendus.items()):
         chemin = racine / rel
         if not chemin.is_file():
             manquants.append(rel)
@@ -178,19 +211,37 @@ def _controle_artefacts(racine: Path) -> Constat:
             proteges.append(rel)
         else:
             divergents.append(rel)
-    ok = not manquants and not divergents and not proteges
+    # « PRESERVE » n'est pas un echec de coherence, et le compter comme tel etait faux : c'est un
+    # fichier de l'UTILISATEUR, que jio n'ecrase pas (c'est la promesse du garde d'ecriture). Le
+    # verdict le penalisait, donc un projet etranger ou l'utilisateur avait deja un `AGENTS.md` —
+    # cas banal — avait un portail rouge PERMANENT, a propos d'un fichier que jio a precisement
+    # refuse de toucher. L'information ne disparait pas : elle reste dans le resume et dans les
+    # details, et c'est ce qu'un agent doit lire (« ta consigne est la tienne, la notre est dans
+    # AGENTS.md.jio »). Un rouge permanent pour un fait normal est un rouge qu'on apprend a
+    # ignorer — puis on ignore les autres.
+    ok = not manquants and not divergents
     if ok:
-        resume = f"{len(manifest())} artefact(s) generes, tous a jour"
+        resume = f"{len(attendus)} artefact(s) generes, tous a jour"
+        if proteges:
+            resume += f" · {len(proteges)} fichier(s) de l'utilisateur conserves"
     else:
         resume = f"{len(manquants)} manquant(s), {len(divergents)} divergent(s)"
         if proteges:
-            resume += f", {len(proteges)} non ecrasable(s) par jio"
+            resume += f", {len(proteges)} fichier(s) de l'utilisateur conserves"
+        # Une racine SANS aucune trace d'integration n'a pas besoin qu'on lui enumere trente
+        # fichiers : elle a besoin d'UNE commande. C'est le premier contact d'une IA avec ce
+        # dispositif, et le constat doit y repondre en une ligne.
+        if manquants and not divergents and not proteges and not (
+            (racine / ".jio").is_dir() or (racine / "jio" / "__init__.py").is_file()
+        ):
+            resume += " — `jio start` installe l'integration"
     details = tuple(f"manquant : {m}" for m in manquants[:4])
     details += tuple(f"a regenerer : {d} (`jio artifacts --write`)" for d in divergents[:4])
     details += tuple(
-        f"{p} n'est pas marque comme genere par jio : `jio artifacts --write` le PRESERVERA "
-        f"(notre version ira en {p}.jio). Comparez les deux, puis supprimez-le si vous voulez "
-        "que jio le gere."
+        f"{p} est a vous (pas marque comme genere par jio) : `jio artifacts --write` le "
+        f"PRESERVERA — notre version est a cote, en {p}.jio. Comparez les deux, puis supprimez "
+        "la votre si vous voulez que jio le gere ; tant qu'il est la, c'est VOTRE consigne que "
+        "l'IA lit."
         for p in proteges[:3]
     )
     return Constat("artefacts", ok, resume, details)
@@ -198,7 +249,25 @@ def _controle_artefacts(racine: Path) -> Constat:
 
 def _controle_nombres(racine: Path) -> Constat:
     """Les chiffres annonces dans les documents sont-ils ceux mesures MAINTENANT ?"""
-    from ..chiffres import ecarts, mesurer
+    from ..chiffres import CHIFFRES, ecarts, mesurer
+
+    # ORDRE : la PARTICIPATION d'abord, la mesure ensuite. Le controle de portee voisin
+    # (`environnement`) a paye ce defaut avant celui-ci — « le controle plantait sur le cas meme
+    # pour lequel il declare n'avoir rien a dire ». Ici, le README d'un projet tiers etait
+    # confronte a la mesure des huit chiffres de CE depot avant qu'on sache si ce README en
+    # annonce un seul : la mesure echouait (« impossible de lire le nombre de tests »), et le
+    # portail d'un depot tiers annoncait un echec a propos d'un controle qui ne le concerne pas.
+    textes = {
+        nom: (racine / nom).read_text(encoding="utf-8")
+        for nom in DOCUMENTS_CHIFFRES
+        if (racine / nom).is_file()
+    }
+    participants = {nom: t for nom, t in textes.items()
+                    if any(chiffre.annonce(t) for chiffre in CHIFFRES)}
+    if not participants:
+        return Constat("nombres", True,
+                       "hors de portee : les documents de cette racine n'annoncent aucun "
+                       "chiffre surveille", portee=False)
 
     if not (racine / "tests").is_dir():
         # Sans dossier de tests, il n'y a aucun chiffre a mesurer — et un controle muet rendu
@@ -211,12 +280,11 @@ def _controle_nombres(racine: Path) -> Constat:
         # Ici, des tests EXISTENT mais la mesure echoue : c'est un echec, pas une absence.
         return Constat("nombres", False, f"mesure IMPOSSIBLE alors que des tests existent : {exc}"[:150])
     tous: list[str] = []
-    for nom in DOCUMENTS_CHIFFRES:
-        chemin = racine / nom
-        if not chemin.is_file():
-            continue
-        for ecart in ecarts(chemin.read_text(encoding="utf-8"), mesures):
-            tous.append(f"{chemin.name} ligne {ecart.ligne} : {ecart.ancien} -> {ecart.nouveau}")
+    for nom, texte in participants.items():
+        tous.extend(
+            f"{nom} ligne {ecart.ligne} : {ecart.ancien} -> {ecart.nouveau}"
+            for ecart in ecarts(texte, mesures)
+        )
     ok = not tous
     return Constat(
         "nombres",
@@ -695,10 +763,9 @@ def reparer(
         if constat.controle in REPARABLES:
             raison, commande = REPARABLES[constat.controle]
             if constat.controle == "artefacts":
-                from ..artifacts import manifest
                 from ..artifacts.write_guard import ecrire_manifest
 
-                decisions = ecrire_manifest(base, manifest())
+                decisions = ecrire_manifest(base, manifeste_attendu(base))
                 ecrits = [d for d in decisions if d.action not in {"inchange", "preserve"}]
                 proteges = [d for d in decisions if d.action == "preserve"]
                 faits.append(f"artefacts : {len(ecrits)} fichier(s) regenere(s) — {raison}")

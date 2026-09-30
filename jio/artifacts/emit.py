@@ -232,7 +232,7 @@ def _target_copilot() -> dict[str, str]:
     }
 
 
-def _target_opencode_mcp() -> dict[str, str]:
+def _target_opencode_mcp(*, commande=None) -> dict[str, str]:
     """`opencode.json` : le cablage du serveur MCP pour opencode.
 
     Les agents `jio-*` de `.opencode/agents/` n'avaient AUCUN moyen d'appeler les outils
@@ -241,7 +241,8 @@ def _target_opencode_mcp() -> dict[str, str]:
     """
     from .wiring import fragment_opencode
 
-    return {"opencode.json": json.dumps(fragment_opencode(), indent=2, ensure_ascii=False) + "\n"}
+    return {"opencode.json": json.dumps(fragment_opencode(commande), indent=2,
+                                        ensure_ascii=False) + "\n"}
 
 
 def _target_hermes_mcp() -> dict[str, str]:
@@ -263,12 +264,19 @@ def _target_hermes_mcp() -> dict[str, str]:
     }
 
 
-def _target_mcp() -> dict[str, str]:
+def _target_mcp(*, commande=None) -> dict[str, str]:
+    """`.mcp.json` (dialecte Claude Code / MCP generique).
+
+    `commande` : la commande qui sert REELLEMENT des outils sur cette machine, etablie par
+    `wiring.commande_qui_marche()`. Sans elle — c'est le cas du depot JIO, ou la forme
+    canonique marche — le fichier garde sa forme canonique, a l'octet pres.
+    """
+    resolue = tuple(commande) if commande else ("python3", "-m", "jio.mcp_server")
     config = {
         "mcpServers": {
             "jio": {
-                "command": "python3",
-                "args": ["-m", "jio.mcp_server"],
+                "command": resolue[0],
+                "args": list(resolue[1:]),
                 "env": {"JIO_ROOT": "."},
             }
         }
@@ -319,15 +327,25 @@ _EMITTERS = {
 }
 
 
-def manifest(targets: tuple[str, ...] | None = None) -> dict[str, str]:
-    """Chemin relatif -> contenu, pour tous les artefacts demandes."""
+def manifest(targets: tuple[str, ...] | None = None, *,
+             commande: tuple[str, ...] | None = None) -> dict[str, str]:
+    """Chemin relatif -> contenu, pour tous les artefacts demandes.
+
+    `commande` ne concerne que le cablage MCP (aujourd'hui `opencode.json`) : c'est la
+    commande qui sert REELLEMENT des outils sur cette machine, telle que
+    `wiring.commande_qui_marche()` l'a etablie. Sans elle, les artefacts gardent leur forme
+    canonique — c'est le cas du depot JIO, ou la forme canonique marche.
+    """
     wanted = targets or TARGETS
     unknown = [t for t in wanted if t not in _EMITTERS]
     if unknown:
         raise ValueError(f"cible inconnue : {', '.join(unknown)}")
     files: dict[str, str] = {}
     for target in wanted:
-        files.update(_EMITTERS[target]())
+        if commande is not None and target in ("opencode-mcp", "mcp"):
+            files.update(_EMITTERS[target](commande=commande))
+        else:
+            files.update(_EMITTERS[target]())
     return files
 
 

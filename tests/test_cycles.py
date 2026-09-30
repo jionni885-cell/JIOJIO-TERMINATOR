@@ -15,6 +15,10 @@ different, c'est qu'autre chose que la memoire avait change.
 
 from __future__ import annotations
 
+import tempfile
+import uuid
+from pathlib import Path
+
 import pytest
 
 from jio.learn.cycles import (
@@ -688,3 +692,51 @@ def test_le_plafond_de_cout_refuse_au_lieu_de_mesurer(capsys) -> None:
     # interdiction, c'est un choix a assumer.
     # 99 cycles x 3 bras x 5 taches x 3 tirages (defauts de la commande)
     assert "--plafond-missions 4455" in sortie
+
+
+# --------------------------------------------------------------------------- #
+# Une preuve rangee dans un repertoire temporaire n'est pas une preuve
+# --------------------------------------------------------------------------- #
+
+def test_le_cumul_dans_un_repertoire_TEMPORAIRE_est_signale(tmp_path) -> None:
+    """Le constat qui a fait naitre cet avertissement : une campagne perdue EN ENTIER.
+
+    Le pilote, le cumul deja mesure et les sorties vivaient dans `/tmp` ; le redemarrage de
+    la machine les a effaces. Le programme faisait pourtant ce qu'il fallait — chaque cycle
+    etait ecrit des qu'il etait mesure. C'est l'EMPLACEMENT qui rendait la preuve mortelle a
+    perdre, et c'est la seule chose que le programme ne regardait pas.
+    """
+    from jio.cli import _preuve_dans_un_repertoire_temporaire
+
+    # Un chemin temporaire : signale, avec le remede exact. `tmp_path` de pytest en fait
+    # PARTIE (il vit sous /tmp) — ce qui est une bonne demonstration : le controle ne
+    # reconnait pas un nom de fichier, il regarde l'endroit.
+    for chemin in (Path("/tmp/cumul.jsonl"), Path("/var/tmp/cumul.jsonl"),
+                   tmp_path / "cumul.jsonl"):
+        message = _preuve_dans_un_repertoire_temporaire(chemin)
+        assert "repertoire EFFACE" in message, f"{chemin} aurait du etre signale"
+        assert "evidence/" in message, "le message doit dire OU ecrire a la place"
+
+    # Un chemin du depot : rien a signaler. Un avertissement qui se declenche toujours ne
+    # dit plus rien — c'est la meme regle que le reste du depot.
+    for chemin in (Path("evidence/cumul.jsonl"),
+                   Path(__file__).resolve().parents[1] / "evidence" / "cumul.jsonl"):
+        assert _preuve_dans_un_repertoire_temporaire(chemin) == ""
+
+
+def test_la_commande_learn_affiche_l_avertissement_avant_de_mesurer(tmp_path, capsys) -> None:
+    """L'avertissement doit arriver AVANT la mesure, pas apres : sinon il est trop tard."""
+    from jio.cli import main
+
+    chemin = Path(tempfile.gettempdir()) / f"jio-test-{uuid.uuid4().hex[:8]}.jsonl"
+    code = main(["learn", "--cycles", "1", "--runs", "1", "--rounds", "1", "--skill", "0.4",
+                 "--plafond-missions", "100", "--cumul", str(chemin)])
+    sortie = capsys.readouterr().out
+    assert code == 0, f"la mesure elle-meme doit reussir (code {code})"
+    assert "repertoire EFFACE" in sortie
+    position = sortie.index("repertoire EFFACE")
+    assert "Chaque cycle est ECRIT" not in sortie[:position], (
+        "l'avertissement doit preceder le lancement de la mesure"
+    )
+    for reste in (chemin, chemin.with_suffix(".jsonl.verrou")):
+        reste.unlink(missing_ok=True)

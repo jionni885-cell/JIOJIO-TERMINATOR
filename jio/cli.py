@@ -2261,10 +2261,18 @@ def cmd_artifacts(args: argparse.Namespace) -> int:
         return _hermes_installer(Path(args.root), desinstaller=bool(
             getattr(args, "desinstaller", False)), lier=bool(getattr(args, "lier", False)))
     from .artifacts import TARGETS, manifest
+    from .verify.coherence import manifeste_attendu
 
     targets = tuple(args.target) if args.target else TARGETS
     try:
-        files = manifest(targets)
+        # LE MANIFESTE DU PROJET, PAS LA FORME CANONIQUE : c'est celui que `jio coherence` exige.
+        # Deux formes pour un meme fichier font tourner l'utilisateur en boucle — reparer, se
+        # voir reprocher la reparation, reparer. Mesure faite sur un projet ETRANGER : juste
+        # apres `jio artifacts --write`, le portail declarait `.mcp.json` et `opencode.json`
+        # « divergents », et la commande qu'il recommandait etait celle-la meme.
+        canonique = manifest(targets)
+        files = {rel: texte for rel, texte in manifeste_attendu(Path(args.root)).items()
+                 if rel in canonique}
     except ValueError as exc:
         print(f"  {exc}", file=sys.stderr)
         return 2
@@ -2398,6 +2406,35 @@ def cmd_memory(args: argparse.Namespace) -> int:
     print(memory.report())
     print()
     return 0
+
+
+def _preuve_dans_un_repertoire_temporaire(chemin: Path) -> str:
+    """Avertit quand la trace d'une mesure longue est ecrite dans un repertoire temporaire.
+
+    Ce n'est pas une precaution theorique : une campagne de vingt minutes a ete perdue EN
+    ENTIER — le pilote, le cumul deja mesure, les sorties — quand le bac a sable a efface
+    `/tmp`. Le programme, lui, faisait ce qu'il fallait : chaque cycle etait ecrit des qu'il
+    etait mesure. C'est l'EMPLACEMENT de la preuve qui la rendait mortelle a perdre.
+
+    On avertit au lieu de refuser : ecrire dans un temporaire est parfois volontaire (essai
+    rapide). Mais une mesure longue qui doit servir de preuve doit vivre avec le depot, et le
+    message dit ou.
+    """
+    import tempfile
+
+    temporaires = {Path(tempfile.gettempdir()).resolve()}
+    for candidat in ("/tmp", "/var/tmp", "/dev/shm"):
+        temporaires.add(Path(candidat))
+    resolu = chemin.resolve() if chemin.exists() else chemin.absolute()
+    for racine in temporaires:
+        if resolu == racine or racine in resolu.parents:
+            return (
+                f"cette mesure ecrit sa trace dans {racine} — un repertoire EFFACE au "
+                f"redemarrage de la machine. Une campagne de vingt minutes y a deja ete "
+                f"perdue en entier. Pour une preuve qui doit survivre, ecrivez-la dans le "
+                f"depot : `--cumul evidence/{chemin.name}`."
+            )
+    return ""
 
 
 def cmd_learn(args: argparse.Namespace) -> int:
@@ -2566,6 +2603,10 @@ def _learn_cycles(args: argparse.Namespace) -> int:
     seed_base = 0
     cumul: Cumul | None = None
     if chemin is not None:
+        avertissement = _preuve_dans_un_repertoire_temporaire(chemin)
+        if avertissement:
+            print(f"  [ATTENTION] {avertissement}")
+            print()
         deja = len(depuis_cumul(chemin).cycles)
         if deja:
             # DES GRAINES DISTINCTES, sinon ce n'est pas une replication. Rejouer les memes
@@ -2819,6 +2860,43 @@ def cmd_scan(args: argparse.Namespace) -> int:
         if root.is_dir() else []
     )
 
+    # LA PROSE DE JIO N'EST PAS CELLE DU PROJET. Mesure faite sur un projet ETRANGER, apres
+    # `jio start` : le scan y trouvait 22 « chemin cite INTROUVABLE » — `jio/artifacts/doctrine.py`,
+    # `jio/artifacts/definitions.py` — tous cites par les documents que jio venait d'installer
+    # (`.github/copilot-instructions.md`, `.hermes/skills/*/SKILL.md`, `AGENTS.md`, `CLAUDE.md`).
+    # Ces chemins existent dans le depot de jio, pas chez l'utilisateur, et ils ne PEUVENT pas y
+    # exister : ce n'est pas un defaut de son projet, c'est le notre, installe chez lui. Un
+    # balayage qui reproche a l'utilisateur nos propres fichiers obtient exactement ce qu'il
+    # merite : il est ignore, et avec lui les vrais defauts qu'il aurait trouves.
+    #
+    # Deux preuves de provenance, parce qu'une ne suffisait pas : la MARQUE du garde d'ecriture
+    # (les documents generes la portent) et l'ORIGINE du fichier (les competences installees sont
+    # des copies, et leurs `SKILL.md` ne portent pas la marque). Un document est de jio quand il
+    # vit dans un dossier que jio gere (`SKILL.md` d'une competence, agents `.opencode`, consignes
+    # d'agent) — ce que `artifacts.definitions` declare — ou quand il porte la marque.
+    from .artifacts.write_guard import _porte_la_marque
+    from .scan_champ import est_un_document_de_jio
+
+    # SAUF DANS LE DEPOT DE JIO. Ici, les chemins cites par nos documents existent (c'est leur
+    # maison), et exclure nos propres documents reduirait l'audit de 28 a 2 — mesure faite, et
+    # c'est exactement le genre de « correction » qui rend un outil aveugle en le rendant
+    # silencieux. Le filtre ne sert qu'a un projet qui N'EST PAS jio.
+    proscrits: list[Path] = []
+    if (root.is_dir() and not getattr(args, "tout", False)
+            and not (root / "jio" / "__init__.py").is_file()):
+        gardes_documents = []
+        for document in documents:
+            marque = False
+            try:
+                marque = _porte_la_marque(document.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                pass
+            if marque or est_un_document_de_jio(document, root):
+                proscrits.append(document)
+                continue
+            gardes_documents.append(document)
+        documents = gardes_documents
+
     prover = ExecutableProver(sandbox=Sandbox(timeout=args.timeout))
     problems: list[tuple[Path, str, str]] = []    # fichier, regle, preuve
     environment: list[tuple[Path, str, str]] = []  # verification impossible : pas un defaut
@@ -2983,6 +3061,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if corpus_volontaire:
         print(f"  corpus de fautes VOLONTAIRES : {len(corpus_volontaire)} fichier(s) "
               f"exclu(s) sur leur propre declaration ({MARQUEUR_CORPUS})")
+    if proscrits:
+        # Ce qui est ecarte est DIT : un balayage qui se tairait sur ce qu'il n'a pas regarde
+        # serait le silence que ce projet refuse. Et la raison est donnee, pour que l'utilisateur
+        # qui veut vraiment auditer nos documents puisse le faire (`--tout` les remet dedans).
+        print(f"  document(s) de jio hors du champ : {len(proscrits)} "
+              "(ils citent les chemins de jio, pas ceux de ce projet) — `--tout` pour les inclure")
     print()
     # --- les DEPENDANCES du projet : un rouge qui attend son heure ---------------- #
     # Un test qui importe un paquet non declare passe chez celui qui l'a installe un jour
@@ -3811,6 +3895,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "quand une IA doit DEMANDER avant d'agir)")
     cl.add_argument("--json", action="store_true", help="analyse lisible par une machine")
     cl.add_argument(
+        "--controle", dest="controle", action="store_true",
+        help="passer a la porte le jeu de CONTROLE : des objectifs d'un AUTRE projet "
+             "(aucun chemin de ce depot) — le banc seul ne peut pas dire si la porte "
+             "generalise hors de ce depot",
+    )
+    cl.add_argument(
         "--mesure", "--bench", dest="mesure", action="store_true",
         help="mesure la porte sur le banc d'objectifs REELS annote a la main "
              "(`jio/bench/objectifs.py`) : precision, rappel, et chaque erreur en clair",
@@ -4463,6 +4553,23 @@ def cmd_clarify(args: argparse.Namespace) -> int:
     """
     from .clarify import analyser, formater, resume
 
+    if getattr(args, "controle", False):
+        from .bench.controle_clarify import CAS, resume_controle
+
+        print(BANNER)
+        print(resume_controle())
+        print()
+        for objectif, question_attendue, langue in CAS:
+            analyse = analyser(objectif)
+            obtenu = bool(analyse.questions)
+            marque = "ok " if obtenu == question_attendue else "RATE"
+            attendu = "question" if question_attendue else "travaille"
+            print(f"    [{marque}] [{langue}] {objectif[:64]}")
+            if obtenu != question_attendue:
+                obtenu_txt = "question posee" if obtenu else "partie sans demander"
+                print(f"           attendu : {attendu} — obtenu : {obtenu_txt}")
+        return 0
+
     if getattr(args, "mesure", False):
         from .bench.objectifs import formater as formater_banc, mesurer as mesurer_banc
 
@@ -4474,8 +4581,19 @@ def cmd_clarify(args: argparse.Namespace) -> int:
             print("    -> la porte se trompe : chaque erreur ci-dessus est un cas a corriger")
             print("       avant de lui faire confiance sur une vraie mission.")
             return 1
+        from .bench.controle_clarify import mesurer_controle
+
+        controle = mesurer_controle()
         print("    -> sur ce corpus annote, la porte ne se trompe pas. Le corpus est la")
         print("       limite de cette affirmation, et il est ecrit dans le depot.")
+        print()
+        print(f"    ET SUR DES OBJECTIFS D'UN AUTRE PROJET (`jio clarify --controle`) : "
+              f"{controle['exactitude']:.0%} d'exactitude "
+              f"({controle['exactitude_en']:.0%} en anglais, "
+              f"{controle['exactitude_fr']:.0%} en francais), "
+              f"{controle['faux_positifs']:.0f} question(s) inutile(s).")
+        print("       Le banc cite les chemins de CE depot : il ne peut pas dire si la porte")
+        print("       fonctionne sur le projet de quelqu'un d'autre.")
         return 0
 
     contexte = ""
@@ -4528,13 +4646,28 @@ def cmd_start(args: argparse.Namespace) -> int:
     Elle est IDEMPOTENTE : relancee, elle ne reecrit rien et le dit.
     """
     from .artifacts import TARGETS, manifest
-    from .artifacts.wiring import DIALECTES, NOM_SERVEUR, brancher, prouver_branchement
+    from .artifacts.wiring import (
+        _COMMANDE as _COMMANDE_DEFAUT,
+        DIALECTES,
+        NOM_SERVEUR,
+        brancher,
+        commande_qui_marche,
+        prouver_branchement,
+    )
     from .artifacts.write_guard import ecrire_manifest
     from .providers.registry import detect_clis
 
     racine = Path(args.root).expanduser().resolve()
     etat = racine / ".jio"
     detectees = [p.name.replace("cli::", "") for p in detect_clis()]
+    # LA COMMANDE QUI MARCHE ICI, resolue une fois et utilisee partout : les artefacts ecrits,
+    # les fragments affiches et la preuve parlent alors de la MEME commande. Mesure faite sur un
+    # projet etranger : `python3 -m jio.mcp_server` y sert zero outil (il resout `jio` par le
+    # dossier courant), la configuration etait ecrite quand meme, et la preuve — correcte —
+    # arrivait APRES la panne. Une integration qui s'avere fausse en le disant reste fausse.
+    commande, note_commande = (
+        commande_qui_marche(racine=racine) if not args.sans_mcp else (_COMMANDE_DEFAUT, "")
+    )
 
     print(BANNER)
     print(f"  INTEGRATION  ·  racine : {racine}")
@@ -4558,8 +4691,13 @@ def cmd_start(args: argparse.Namespace) -> int:
         print("    mode simulation : rien n'a ete ecrit. Relance SANS --dry-run.")
         return 0
 
-    decisions = ecrire_manifest(racine, manifest(cibles))
-    ecrits = [d for d in decisions if d.action != "inchange"]
+    decisions = ecrire_manifest(racine, manifest(cibles, commande=commande))
+    # Ce qui compte comme ECRIT : les actions qui touchent le disque. `preserve` n'en est pas
+    # une, et la compter en etait une : mesure faite sur un projet ETRANGER, la seconde
+    # execution de `jio start` annoncait « 29 deja a jour, 1 ecrit(s) » — le fichier de
+    # l'utilisateur qu'elle venait de NE PAS ecrire. La promesse du README (« relancee, elle ne
+    # reecrit rien ») etait donc fausse au rapport, alors qu'elle etait tenue au disque.
+    ecrits = [d for d in decisions if d.action not in {"inchange", "preserve"}]
     print(f"    artefacts : {len(decisions) - len(ecrits)} deja a jour, {len(ecrits)} ecrit(s)")
     for decision in sorted(ecrits, key=lambda d: d.chemin):
         marque = {"preserve": "PRESERVE (le tien)", "remplace": "mis a jour",
@@ -4582,6 +4720,9 @@ def cmd_start(args: argparse.Namespace) -> int:
     cables: list[str] = []      # l'ETAT du cablage, toutes cibles confondues
     if not args.sans_mcp:
         print()
+        if note_commande:
+            print(f"    COMMANDE MCP RESOLUE ICI : {note_commande}")
+            print()
         print("    cablage MCP (jamais dans un fichier qui existe sans nous)")
         # `brancher` a DEUX formes de retour selon le dialecte : `(ecrit, message)` pour le
         # cablage, `(deja, message)` pour les dialectes sans fichier (Hermes, Codex, Claude
@@ -4589,7 +4730,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         # devine pas : on lit le couple rendu, et on dit lequel des deux cas on a.
         for dialecte, _fichier, description in DIALECTES:
             try:
-                ecrit, message = brancher(racine, dialecte)
+                ecrit, message = brancher(racine, dialecte, commande=commande)
             except (KeyError, ValueError, OSError) as exc:
                 print(f"      {dialecte:<12} impossible : {exc}")
                 continue
@@ -4614,7 +4755,7 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     print()
     print("    PREUVE DU CABLAGE (le serveur est reellement demarre)")
-    preuve = prouver_branchement(("python3", "-m", "jio.mcp_server"))
+    preuve = prouver_branchement(commande, racine=racine)
     for ligne in str(preuve).splitlines():
         print(f"    {ligne.strip()}" if ligne.strip() else "")
 

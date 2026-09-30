@@ -496,3 +496,56 @@ def test_le_banc_regarde_les_signaux_DANS_LES_DEUX_SENS() -> None:
     complet = mesurer()
     assert complet.signaux_en_trop == 0, "\n".join(complet.erreurs)
     assert complet.signaux_oublies == 0, "\n".join(complet.erreurs)
+
+
+# --------------------------------------------------------------------------- #
+# Le jeu de CONTROLE : la porte generalise-t-elle hors de ce depot ?
+# --------------------------------------------------------------------------- #
+
+def test_la_porte_generalise_sur_un_AUTRE_projet() -> None:
+    """Le banc cite les chemins de CE depot : il ne peut pas mesurer la generalisation.
+
+    Constate en ecrivant ce jeu : sur 4 objectifs ANGLAIS parfaitement bornes d'un projet
+    etranger, les 4 recevaient la question « comment saura-t-on que c'est FINI ? » — soit
+    50 % d'exactitude en anglais contre 100 % en francais. A l'usage, c'est le defaut le plus
+    couteux : une question inutile a chaque objectif, et l'utilisateur apprend a ignorer la
+    porte. Apres la parite des motifs (bornes « below 200 MB », test nomme, verbes d'action
+    anglais), l'exactitude est de 100 % dans les deux langues.
+
+    Verifie AUSSI le banc du depot : une correction qui repare l'anglais en cassant le
+    francais ne serait pas une correction.
+    """
+    from jio.bench.controle_clarify import CAS, mesurer_controle
+
+    m = mesurer_controle()
+    assert m["faux_positifs"] == 0, f"questions inutiles : {m['erreurs']}"
+    assert m["faux_negatifs"] == 0, f"objectifs ambigus partis sans demander : {m['erreurs']}"
+    assert m["exactitude"] == 1.0
+    assert m["exactitude_en"] >= 0.95, "l'anglais est la langue de travail des agents cibles"
+    assert m["exactitude_fr"] >= 0.95
+
+    # Le jeu doit rester un jeu : deux langues, les deux sens, et aucun chemin de ce depot.
+    langues = {langue for _, _, langue in CAS}
+    assert langues == {"fr", "en"}
+    assert sum(1 for _, attendu, _ in CAS if attendu) >= 8, "pas assez de cas ambigus"
+    assert sum(1 for _, attendu, _ in CAS if not attendu) >= 8, "pas assez d'actionnables"
+    for texte, _, _ in CAS:
+        assert "jio/" not in texte, f"le jeu doit venir d'un AUTRE projet : {texte[:40]!r}"
+
+
+def test_les_deux_mesures_sont_affichees_ENSEMBLE(capsys) -> None:
+    """Un chiffre sans son pendant trompe : le banc seul annoncerait 100 % sans nuance."""
+    from jio.cli import main
+
+    code = main(["clarify", "--mesure"])
+    sortie = capsys.readouterr().out
+    assert code == 0
+    assert "AUTRE PROJET" in sortie, "le rapport du banc doit renvoyer au jeu de controle"
+    assert "question(s) inutile(s)" in sortie
+
+    code = main(["clarify", "--controle"])
+    sortie = capsys.readouterr().out
+    assert code == 0
+    assert "JEU DE CONTROLE" in sortie
+    assert "en anglais" in sortie
+    assert "[ok ]" in sortie or "[RATE]" in sortie

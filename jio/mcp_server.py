@@ -503,11 +503,16 @@ def _tool_status(_args: dict[str, Any]) -> str:
     """
     import json
 
-    from .artifacts import TARGETS, manifest
+    from .artifacts import manifest  # noqa: F401 - garde la surface d'import stable
     from .artifacts.write_guard import REGISTRE
 
     racine = _root()
-    attendus = manifest(TARGETS)
+    # Meme source que le portail et que `jio artifacts --write` : la commande MCP du projet,
+    # resolue. Sinon l'outil MCP annonce « 30/30 presents » pendant que le portail en declare
+    # deux divergents — deux mesures de la meme chose qui ne peuvent pas se contredire.
+    from .verify.coherence import manifeste_attendu
+
+    attendus = manifeste_attendu(_root())
     manquants = [rel for rel in sorted(attendus) if not (racine / rel).is_file()]
     fiche = racine / ".jio" / "ACTIVE.md"
     lignes = [

@@ -291,11 +291,16 @@ def test_sur_une_racine_etrangere_aucun_controle_ne_rend_un_FAUX_VERT(tmp_path: 
         assert constat.marque == "--"
         assert "hors de portee" in constat.resume, constat.resume
         assert constat.details == ()
-    # Le seul controle qui MESURE ici est `artefacts` : rien n'est integre. Le depot n'est donc
-    # pas coherent — et l'IA a la commande exacte pour le rendre tel.
-    assert not rapport.ok and rapport.code == 1
+    # Ce qui reste : `plan` (« aucun plan autonome en cours ») et `artefacts`, qui MESURE
+    # vraiment — trente artefacts absents sont un fait, et un fait actionnable. Le depot n'est
+    # donc pas coherent, et l'IA a la commande exacte pour le rendre tel. C'est une CONSIGNE,
+    # pas du bruit : elle disparait a la premiere execution de `jio start`, ce que mesure
+    # `tests/test_integration_projet_etranger.py`.
     assert [c.controle for c in rapport.incoherents] == ["artefacts"]
-    assert all("jio artifacts --write" in d for d in rapport.incoherents[0].details if "regenerer" in d)
+    assert "30 manquant" in rapport.incoherents[0].resume
+    donnees = rapport.as_dict()
+    assert len(donnees["hors_portee"]) == len(noms)
+    assert all(c["portee"] is False for c in donnees["constats"] if not c["portee"])
     assert "HORS PORTEE" in formater(rapport)
 
 
@@ -412,6 +417,13 @@ def test_le_portail_voit_ce_qu_AUCUNE_brique_separee_ne_voit(tmp_path: Path) -> 
 def test_un_artefact_derive_NON_MARQUE_recoit_conseil_utile(tmp_path: Path) -> None:
     """Quand `--write` ne peut pas reparer, le portail doit le dire — pas le recommander.
 
+    Et ce n'est PAS un echec de coherence. Le verdict a change apres une mesure sur un projet
+    ETRANGER : un `AGENTS.md` ecrit par l'utilisateur — cas banal — etait conserve par jio (c'est
+    la promesse du garde d'ecriture) puis reproche a l'utilisateur comme un defaut, a chaque
+    execution. Un rouge permanent pour un fait normal est un rouge qu'on apprend a ignorer. Le
+    fichier reste SIGNALE (resume + details), parce que tant qu'il est la, c'est la consigne de
+    l'utilisateur que l'IA lit et non celle de jio — mais le portail n'en fait pas un echec.
+
     Defaut trouve sur ce depot, sur `.hermes/skills/README.md` : le constat signalait la
     divergence ET recommandait `jio artifacts --write`, alors que le garde d'ecriture, ne
     reconnaissant pas le fichier comme sien (aucune marque, hors registre), le PRESERVE et
@@ -430,9 +442,13 @@ def test_un_artefact_derive_NON_MARQUE_recoit_conseil_utile(tmp_path: Path) -> N
     chemin.write_text("fichier ecrit par la main de l'utilisateur\n", encoding="utf-8")
 
     constat = _constat(controler(tmp_path), "artefacts")
-    assert not constat.ok
-    assert "non ecrasable(s) par jio" in constat.resume, constat.resume
+    # Le KO vient des artefacts ABSENTS (29 ici), jamais du fichier de l'utilisateur : le resume
+    # nomme les deux separement, et seul « manquant » est un defaut.
+    assert "manquant" in constat.resume, constat.resume
+    assert "fichier(s) de l'utilisateur conserves" in constat.resume, constat.resume
     assert any("PRESERVERA" in d for d in constat.details), constat.details
+    assert any("c'est VOTRE consigne" in d for d in constat.details), constat.details
+    # Le defaut d'ORIGINE reste corrige : on ne recommande pas une commande qui ne repare rien.
     assert not any(d.startswith(f"a regenerer : {rel}") for d in constat.details)
 
 
@@ -769,3 +785,87 @@ def test_sur_un_depot_FRAICHEMENT_CLONE_la_porte_est_verte(monkeypatch) -> None:
     assert "hors de portee" in journal.resume and "aucun journal" in journal.resume
     # Et les huit autres controles s'appliquent TOUS : un clone neuf n'est pas un depot vide.
     assert len(rapport.constats) - len(rapport.hors_portee) == len(CONTROLES) - 1
+
+
+# --------------------------------------------------------------------------- #
+# Un projet ETRANGER : le portail ne doit ni crier, ni se taire
+# --------------------------------------------------------------------------- #
+
+def _projet_vierge(tmp_path):
+    """Un petit projet Python sans aucun rapport avec JIO : c'est le cas d'usage reel."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text("def test_x():\n    assert 1 == 1\n",
+                                                 encoding="utf-8")
+    (tmp_path / "README.md").write_text(
+        "# Panier\n\nUn petit panier d'achat. `python -m pytest` lance les tests.\n",
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def test_le_portail_ne_reproche_pas_a_un_projet_etranger_les_chiffres_de_CE_depot(
+    tmp_path,
+) -> None:
+    """Ce que `jio coherence` disait d'un projet ETRANGER, et ce qu'il doit en dire.
+
+    Mesure d'origine, sur un petit projet Python sans rapport avec JIO, APRES `jio start` :
+    « 2 controle(s) en echec » — `artefacts`, parce qu'il comparait les fichiers de cablage a
+    leur forme canonique au lieu de la commande que la sonde venait de verifier comme marchant
+    dans ce projet ; et `nombres`, qui confrontait le README du projet a la mesure des huit
+    chiffres de CE depot et echouait (« impossible de lire le nombre de tests ») avant meme de
+    savoir si ce README annonce un chiffre. Les deux rouges parlaient de JIO, pas du projet.
+
+    Ce qui reste vrai et doit rester : un projet ou rien n'est integre recoit la CONSIGNE exacte
+    (`jio start`), et un document qui n'annonce aucun chiffre surveille est HORS DE PORTEE — ni
+    vert, ni rouge.
+    """
+    from jio.verify.coherence import controler
+
+    racine = _projet_vierge(tmp_path)
+    par_nom = {c.controle: c for c in controler(racine).constats}
+
+    # 1. Le README du projet n'annonce aucun chiffre surveille : le controle est hors de portee,
+    #    ni faux vert ni faux rouge. Avant, il levait une mesure impossible et comptait comme un
+    #    echec du projet.
+    assert par_nom["nombres"].portee is False
+    assert "aucun chiffre surveille" in par_nom["nombres"].resume
+
+    # 2. Avant integration, les artefacts manquants restent un FAIT signale, et actionnable :
+    #    c'est la seule incoherence, et elle nomme la commande qui la fait disparaitre.
+    incoherents = [c.controle for c in controler(racine).incoherents]
+    assert incoherents == ["artefacts"], incoherents
+    assert "jio start" in par_nom["artefacts"].resume or "jio artifacts" in " ".join(
+        par_nom["artefacts"].details
+    )
+
+
+def test_apres_jio_start_le_portail_accepte_la_commande_ecrite(tmp_path) -> None:
+    """L'integration ecrite doit etre celle que le portail attend — les deux se mesurent.
+
+    Le controle `artefacts` comparait les fichiers de cablage a leur forme CANONIQUE, alors que
+    `jio start` a le droit d'y ecrire une autre commande : celle que la sonde a verifiee comme
+    MARCHANT dans ce projet. Le portail declarait alors « divergent » les deux fichiers que
+    `jio start` venait d'ecrire correctement — un controle qui declare fausse la seule
+    ecriture juste. Defaut trouve en lancant `jio start` puis `jio coherence` sur un projet
+    ETRANGER, ou `python3 -m jio.mcp_server` ne sert rien.
+    """
+    from jio.artifacts import manifest
+    from jio.artifacts.wiring import commande_qui_marche
+    from jio.artifacts.write_guard import ecrire_manifest
+    from jio.verify.coherence import controler
+
+    racine = _projet_vierge(tmp_path)
+    (racine / ".jio").mkdir()
+    commande, _ = commande_qui_marche(racine=racine)
+    cablage = {rel: texte for rel, texte in manifest(commande=commande).items()
+               if rel in (".mcp.json", "opencode.json")}
+    assert cablage
+    ecrire_manifest(racine, cablage)
+
+    constat = {c.controle: c for c in controler(racine).constats}["artefacts"]
+    details = " ".join(constat.details)
+    for rel in ("opencode.json", ".mcp.json"):
+        assert f"a regenerer : {rel}" not in details, (
+            f"`{rel}` a ete ecrit avec la commande RESOLUE et est declare divergent : {details}"
+        )
+        assert f"manquant : {rel}" not in details, details

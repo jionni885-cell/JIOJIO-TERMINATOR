@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1167 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1183 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -73,6 +73,62 @@ Pour que ce soit vrai, la fiche décrit un **état** (« artefacts natifs : 30/3
 d'activité dans un fichier d'état est un fichier qui bat à chaque passage — et un fichier qui
 bat finit par faire croire que le projet a bougé. Mesuré sur un dépôt tiers : deux `jio start`
 d'affilée, **zéro** fichier réécrit, sur les 30 artefacts **et** sur la fiche.
+
+### L'intégration mesurée sur un projet **étranger** : quatre défauts, tous du même genre
+
+Tout ce qui précède avait été mesuré **dans ce dépôt** — c'est-à-dire dans le seul endroit où
+`python3 -m jio.mcp_server` marche *par accident* : `jio/` est un sous-dossier du dossier courant.
+Le vrai cas d'usage est l'inverse : on donne **son** dépôt à son IA, et `jio start` s'y installe.
+Un petit projet Python sans rapport avec JIO (code, tests, `README`, et un `AGENTS.md` déjà écrit
+par l'utilisateur) a donc servi de banc. Quatre défauts, tous invisibles d'ici :
+
+| Ce qui était écrit / dit | Ce qui se passait sur le projet étranger | Correction |
+|---|---|---|
+| `.mcp.json` et `opencode.json` nommaient `python3 -m jio.mcp_server` | depuis ce projet, la commande ne trouve pas `jio` : **la configuration est morte** — et la preuve, correcte, arrivait *après* l'écriture | la commande est **résolue** par une sonde (`python3`, puis l'interpréteur qui a servi à lancer `jio`), testée **depuis le projet**, et c'est celle qui sert vraiment 8 outils qui est écrite |
+| le portail comparait les fichiers de cablage à leur forme canonique | il déclarait « divergent » les deux fichiers que `jio start` venait d'écrire correctement | contrôle et réparation s'adossent au **même** manifeste (« ce que jio écrirait ici ») |
+| `nombres` confrontait le `README` du projet aux chiffres de **ce** dépôt | échec du contrôle, et mesure impossible, sur un projet dont le `README` ne dit que « `python -m pytest` lance les tests » | un document qui n'annonce aucun chiffre surveillé est **hors de portée** — ni vert, ni rouge |
+| un `AGENTS.md` écrit par l'utilisateur était **conservé**… puis reproché | portail rouge **permanent** pour un fichier que jio a précisément refusé de toucher | le fichier reste signalé (« tant qu'il est là, c'est **votre** consigne que l'IA lit »), mais n'est plus un échec |
+
+Deux défauts de plus, trouvés par la mesure « deux `jio start` d'affilée » — celle qui est écrite
+juste au-dessus : la seconde exécution annonçait « **1 écrit** » (c'était le fichier de
+l'utilisateur qu'elle venait de *ne pas* écrire), et la version déposée à côté (`AGENTS.md.jio`)
+était réécrite à contenu identique, donc sa date de modification bougeait. Les deux sont
+corrigés ; la promesse d'idempotence tient maintenant **aussi** quand l'utilisateur a ses
+propres fichiers.
+
+Ce que la mesure a **refusé** de « corriger » : sur un projet où rien n'est intégré, le portail
+reste rouge — « artefacts manquants » est un fait, et un fait actionnable, qui nomme désormais la
+commande (`jio start` installe l'intégration). Le rendre vert aurait éteint le seul signal qui
+dit à une IA « ce projet n'est pas encore câblé ». La différence entre les deux cas est celle que
+ce dépôt applique partout : *un contrôle qui a mesuré et trouve bon* n'est pas *un contrôle qui
+n'avait rien à mesurer*.
+
+La preuve est exécutable, pas racontée : `tests/test_integration_projet_etranger.py` fabrique un
+projet étranger, lance `jio start`, **relit la configuration écrite**, démarre le serveur MCP
+depuis ce projet avec `initialize` et `tools/list`, exige des outils en retour, puis lance le
+portail et exige qu'il soit vert — et qu'un second `jio start` ne touche à rien.
+
+Deux autres commandes ont été passées au même banc, avec le même résultat — chacune parlait de
+**nous** plutôt que du projet :
+
+- **`jio scan .`** produisait 22 constats « chemin cité INTROUVABLE » (`jio/artifacts/doctrine.py`,
+  `jio/artifacts/definitions.py`)… tous cités par les documents que `jio start` venait d'installer
+  chez l'utilisateur. Ces chemins existent dans notre dépôt, pas chez lui, et ne peuvent pas y
+  exister. Le balayage ne trouvait donc **aucun défaut de son projet** tout en l'abreuvant de
+  constats sur le nôtre — c'est-à-dire qu'il apprenait à l'utilisateur à ignorer ses constats.
+  Désormais les documents qui vivent dans un emplacement géré par `jio` (`.jio/`,
+  `.hermes/skills/`, `.opencode/agents/`, consignes d'agent à la racine) sortent du champ, et la
+  sortie le **dit** (`--tout` les remet dedans). Et dans le dépôt de JIO, **rien** n'est filtré :
+  les chemins cités y existent, c'est leur maison.
+- **`jio chiffres`** sortait en 1 en reprochant à un `README` tiers les huit chiffres de ce dépôt,
+  alors que le même constat côté portail était déclaré hors de portée. Un document qui n'annonce
+  aucun chiffre surveillé ne participe pas au contrôle : les deux commandes le disent maintenant
+  de la même façon — deux mesures de la même chose ne peuvent pas rendre deux verdicts opposés.
+- **`jio artifacts --write`**, la réparation *recommandée* par le portail, en laissait deux
+  derrière elle : elle écrivait la forme canonique pendant que le contrôle exigeait la commande
+  résolue (`python3` contre l'interpréteur qui a JIO). L'utilisateur réparait, se voyait reprocher
+  sa réparation, réparait… Le contrôle, la réparation automatique (`--reparer`) et la commande
+  manuelle s'adossent au même manifeste : « ce que jio écrirait **ici** ».
 
 ---
 
@@ -1327,7 +1383,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1167 tests verts -> 1167 tests verts
+         - README.md ligne 15 : 1183 tests verts -> 1183 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2834,3 +2890,38 @@ proprement. Un contrôle qui ne contrôle rien doit échouer ; il l'a fait.
 ## Licence
 
 MIT
+
+### Et sur le projet de quelqu'un d'autre ? Un second jeu, écrit avant la correction
+
+Le banc de clarification cite les chemins de **ce** dépôt (« corriger `jio/verify/entropy.py`… »).
+Il a donc réglé la porte — et il ne peut pas dire si elle fonctionne ailleurs, alors que l'outil se
+pose sur n'importe quel dépôt. Un jeu de contrôle de **22 objectifs d'un projet étranger**
+(application web, pipeline de données, infrastructure, documentation ; aucun chemin de ce dépôt),
+écrit **avant** toute retouche, moitié anglais moitié français, a mesuré ceci :
+
+```
+  avant :  82 % d'exactitude — 100 % en français, 50 % en ANGLAIS
+           les quatre objectifs anglais actionnables recevaient TOUS la question
+           « comment saura-t-on que c'est FINI et CORRECT ? »
+  après : 100 % d'exactitude — 100 % en anglais, 100 % en français, 0 question inutile
+```
+
+Le défaut était une **asymétrie de langue** : les motifs de critère et les verbes d'action
+n'existaient qu'en français. Une question inutile sur *chaque* objectif anglais est le défaut
+qui fait désactiver un outil ; c'est exactement le travail d'Hermes et d'opencode, dont les
+prompts sont anglais. Les motifs anglais ajoutés sont de la **parité**, pas des exceptions :
+bornes quantitatives (« below 200 MB »), test nommé (« cover it in `tests/…` »), invariants
+(« keeping `docker compose up` working »), et les verbes d'action des trois familles
+(remove/delete, rename/move, write/create/add).
+
+Et le banc du dépôt n'a **pas bougé** : 100 % de précision et de rappel avant comme après. Une
+correction qui répare une langue en cassant l'autre n'est pas une correction — c'est pourquoi
+les deux chiffres sont affichés ensemble (`jio clarify --mesure` renvoie à `--controle`).
+
+Une erreur **de la mesure elle-même** est corrigée au passage, et elle est instructive : le
+premier jet devinait la langue à la présence d'accents. Or ce dépôt écrit le français sans
+accents dans le code, le jeu a suivi cette convention, et onze cas sur vingt-deux se sont
+retrouvés dans la mauvaise langue — le rapport affichait alors « 0 % en français », un chiffre
+faux produit par la mesure et non par la porte mesurée. La langue est désormais une **donnée**
+du cas. Un calcul sur une étiquette devinée n'est pas une mesure.
+

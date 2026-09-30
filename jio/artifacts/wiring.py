@@ -50,13 +50,119 @@ ID_TOOLS_LIST = 2
 
 NOM_SERVEUR = "jio"
 
-#: L'outil est recherche comme module Python (`python3 -m jio.mcp_server`) : cela marche
-#: partout ou `jio` est importable, sans dependre du PATH ni d'un chemin absolu — un
-#: chemin absolu copie dans une config ne survit pas au deplacement du depot.
+#: L'outil est recherche comme module Python (`python3 -m jio.mcp_server`), sans dependre du
+#: PATH ni d'un chemin ABSOLU DE DEPOT : un chemin de depot copie dans une configuration ne
+#: survit pas au deplacement du depot.
+#:
+#: CE QUE CETTE LIGNE NE DISAIT PAS, et qui a ete mesure sur un projet ETRANGER : `python3`
+#: resout `jio` par le DOSSIER COURANT. Dans le depot JIO — ou `jio/` est un sous-dossier —
+#: la commande marche par accident ; dans un projet sans paquet `jio`, elle existe et ne sert
+#: RIEN. La sonde du branchement le disait (« ne sert AUCUN outil »), mais la configuration
+#: etait ecrite AVANT la sonde, donc le diagnostic arrivait apres la panne. La commande est
+#: desormais RESOLUE par la sonde, et c'est la commande qui marche qui est ecrite.
 _COMMANDE = ("python3", "-m", "jio.mcp_server")
 
 
-def fragment_opencode() -> dict[str, object]:
+def _candidats() -> list[tuple[str, ...]]:
+    """Les commandes essayees, dans l'ordre : la plus portable d'abord.
+
+    `sys.executable` vient en second parce qu'il est un chemin absolu d'INTERPRETEUR — pas de
+    depot : il ne bouge pas quand le projet bouge, et il est forcement l'interpreteur qui a
+    servi a lancer JIO, donc celui pour qui `jio` est importable.
+    """
+    import sys
+
+    candidats: list[tuple[str, ...]] = [_COMMANDE]
+    if sys.executable and sys.executable != "python3":
+        candidats.append((sys.executable, "-m", "jio.mcp_server"))
+    return candidats
+
+
+def _parler_au_serveur(commande: Sequence[str], delai: float,
+                       racine: Path | None = None) -> tuple[list[str], str, str]:
+    """Demarre le serveur et lui parle vraiment. Rend (outils, version, detail d'echec)."""
+    import json
+    import subprocess
+
+    requetes = (
+        json.dumps({"jsonrpc": "2.0", "id": ID_INITIALIZE, "method": "initialize", "params": {}}),
+        json.dumps({"jsonrpc": "2.0", "id": ID_TOOLS_LIST, "method": "tools/list", "params": {}}),
+    )
+    try:
+        processus = subprocess.run(
+            list(commande),
+            input="\n".join(requetes) + "\n",
+            capture_output=True, text=True, timeout=delai, check=False,
+            cwd=str(racine) if racine else None,
+        )
+    except FileNotFoundError:
+        return [], "", f"`{commande[0]}` est INTROUVABLE sur cette machine"
+    except subprocess.TimeoutExpired:
+        return [], "", f"le serveur n'a pas repondu en {delai:.0f}s (lancement bloque)"
+
+    outils: list[str] = []
+    serveur = ""
+    for ligne in processus.stdout.splitlines():
+        ligne = ligne.strip()
+        if not ligne.startswith("{"):
+            continue
+        try:
+            reponse = json.loads(ligne)
+        except json.JSONDecodeError:
+            continue
+        resultat = reponse.get("result") or {}
+        if "serverInfo" in resultat:
+            serveur = str(resultat["serverInfo"].get("version", ""))
+        for outil in resultat.get("tools", []):
+            outils.append(str(outil.get("name", "?")))
+    if outils:
+        return outils, serveur, ""
+    detail = (processus.stderr or processus.stdout or "").strip().splitlines()
+    return [], "", "\n".join(ligne[:160] for ligne in detail[-5:])
+
+
+def _prog(commande: Sequence[str] | None) -> str:
+    """Le nom du programme d'une commande, pour les dialectes en TEXTE (YAML, TOML)."""
+    return (commande or _COMMANDE)[0]
+
+
+def _args_toml(commande: Sequence[str] | None) -> str:
+    """Les arguments, au format tableau TOML/YAML — echappes pour ne pas casser la syntaxe."""
+    return "[" + ", ".join(json.dumps(a) for a in (commande or _COMMANDE)[1:]) + "]"
+
+
+def commande_qui_marche(*, racine: Path | None = None,
+                        delai: float = 20.0) -> tuple[tuple[str, ...], str]:
+    """La commande a ECRIRE dans les configurations : la premiere qui sert des outils.
+
+    Rend `(commande, note)`. La note est vide quand la commande par defaut suffit — c'est le
+    cas dans le depot JIO, ou la configuration generee ne doit donc pas changer d'un octet.
+    Elle dit, sinon, ce qui a ete essaye et pourquoi la commande par defaut a ete ecartee :
+    un remplacement silencieux serait un remplacement qu'on ne peut pas auditer.
+
+    `racine` : le projet DEPUIS LEQUEL le serveur sera lance. C'est le point de tout ce
+    module, et la deuxieme version de cette fonction a du le corriger : interrogee depuis le
+    depot JIO — ou `jio/` est un sous-dossier du dossier courant — `python3 -m jio.mcp_server`
+    « marche », donc la sonde declarait la commande par defaut valide et ecrivait dans un
+    projet ETRANGER une configuration qui n'y sert rien. Une sonde qui mesure dans un autre
+    contexte que le contexte d'usage mesure autre chose que ce qu'elle pretend.
+    """
+    essais: list[str] = []
+    for commande in _candidats():
+        outils, _, detail = _parler_au_serveur(commande, delai, racine)
+        if outils:
+            if commande == _COMMANDE:
+                return _COMMANDE, ""
+            return commande, (
+                f"`{' '.join(_COMMANDE)}` ne sert aucun outil ici ("
+                + (detail.splitlines()[0] if detail else "aucun outil annonce")
+                + f") ; la configuration ecrit donc `{' '.join(commande)}`, verifie en direct."
+            )
+        essais.append(f"{' '.join(commande)} ({detail.splitlines()[0] if detail else 'rien'})")
+    return _COMMANDE, "aucune commande n'a servi d'outil : " + " ; ".join(essais)
+
+
+def fragment_opencode(commande: Sequence[str] | None = None) -> dict[str, object]:
     """Bloc `mcp` de `opencode.json` (schema opencode.ai).
 
     `enabled: true` est explicite : un serveur present mais desactive serait un cablage
@@ -66,7 +172,7 @@ def fragment_opencode() -> dict[str, object]:
         "mcp": {
             NOM_SERVEUR: {
                 "type": "local",
-                "command": list(_COMMANDE),
+                "command": list(commande or _COMMANDE),
                 "enabled": True,
                 "environment": {"JIO_ROOT": "."},
             }
@@ -74,7 +180,7 @@ def fragment_opencode() -> dict[str, object]:
     }
 
 
-def fragment_hermes() -> str:
+def fragment_hermes(commande: Sequence[str] | None = None) -> str:
     """Bloc YAML `mcp_servers` de `~/.hermes/config.yaml`.
 
     Rend du TEXTE : on ne peut pas fusionner un YAML sans charger puis reecrire le fichier
@@ -85,35 +191,36 @@ def fragment_hermes() -> str:
         "# ~/.hermes/config.yaml, puis `/reload-mcp` dans une session :\n"
         "mcp_servers:\n"
         f"  {NOM_SERVEUR}:\n"
-        '    command: "python3"\n'
-        '    args: ["-m", "jio.mcp_server"]\n'
+        f'    command: "{_prog(commande)}"\n'
+        f"    args: {_args_toml(commande)}\n"
         "    env:\n"
         '      JIO_ROOT: "${JIO_ROOT}"\n'
     )
 
 
-def fragment_codex() -> str:
+def fragment_codex(commande: Sequence[str] | None = None) -> str:
     """Bloc TOML `[mcp_servers.jio]` de `~/.codex/config.toml`."""
     return (
         "# Ajouter a ~/.codex/config.toml :\n"
         f"[mcp_servers.{NOM_SERVEUR}]\n"
-        'command = "python3"\n'
-        'args = ["-m", "jio.mcp_server"]\n'
+        f'command = "{_prog(commande)}"\n'
+        f"args = {_args_toml(commande)}\n"
     )
 
 
-def fragment_claude_code() -> str:
+def fragment_claude_code(commande: Sequence[str] | None = None) -> str:
     """`claude mcp add` — la CLI ecrit la config elle-meme, on donne la commande."""
     return (
         "# Ajouter le serveur avec la CLI (elle ecrit la configuration) :\n"
-        f"claude mcp add {NOM_SERVEUR} -- python3 -m jio.mcp_server\n"
+        f"claude mcp add {NOM_SERVEUR} -- {' '.join(commande or _COMMANDE)}\n"
     )
 
 
-def fragment_cursor() -> str:
+def fragment_cursor(commande: Sequence[str] | None = None) -> str:
     """Bloc `mcpServers` de `.cursor/mcp.json` (ou ~/.cursor/mcp.json)."""
     return json.dumps(
-        {"mcpServers": {NOM_SERVEUR: {"command": "python3", "args": list(_COMMANDE[1:])}}},
+        {"mcpServers": {NOM_SERVEUR: {"command": (commande or _COMMANDE)[0],
+                                      "args": list((commande or _COMMANDE)[1:])}}},
         indent=2,
         ensure_ascii=False,
     ) + "\n"
@@ -130,24 +237,25 @@ DIALECTES: tuple[tuple[str, str | None, str], ...] = (
 )
 
 
-def _contenu(dialecte: str) -> str:
+def _contenu(dialecte: str, commande: Sequence[str] | None = None) -> str:
     """Le fragment d'un dialecte, en texte pret a coller."""
     if dialecte == "opencode":
-        return json.dumps(fragment_opencode(), indent=2, ensure_ascii=False) + "\n"
+        return json.dumps(fragment_opencode(commande), indent=2, ensure_ascii=False) + "\n"
     return {
         "hermes": fragment_hermes,
         "codex": fragment_codex,
         "claude-code": fragment_claude_code,
         "cursor": fragment_cursor,
-    }[dialecte]()
+    }[dialecte](commande)
 
 
-def fragments() -> dict[str, str]:
+def fragments(commande: Sequence[str] | None = None) -> dict[str, str]:
     """Tous les fragments, dans l'ordre de `DIALECTES`."""
-    return {nom: _contenu(nom) for nom, _, _ in DIALECTES}
+    return {nom: _contenu(nom, commande) for nom, _, _ in DIALECTES}
 
 
-def brancher(racine: Path, dialecte: str = "opencode") -> tuple[bool, str]:
+def brancher(racine: Path, dialecte: str = "opencode", *,
+             commande: Sequence[str] | None = None) -> tuple[bool, str]:
     """Branche le serveur MCP pour un dialecte. Rend `(ecrit, message)`.
 
     Trois issues, et la troisieme est la plus importante :
@@ -182,71 +290,50 @@ def brancher(racine: Path, dialecte: str = "opencode") -> tuple[bool, str]:
             )
         )
     chemin.parent.mkdir(parents=True, exist_ok=True)
-    chemin.write_text(_contenu(dialecte), encoding="utf-8")
+    chemin.write_text(_contenu(dialecte, commande), encoding="utf-8")
     return True, f"{rel} cree — le serveur `{NOM_SERVEUR}` est branche."
 
 
-def prouver_branchement(commande: Sequence[str] = _COMMANDE, delai: float = 20.0) -> str:
-    """Demarre le serveur MCP et lui parle vraiment (initialize + tools/list).
-
-    Pourquoi ce n'est pas une precaution theorique : les fragments ci-dessus nomment
-    `python3 -m jio.mcp_server`. Si `jio` a ete installe dans un environnement virtuel qui
-    n'est pas active, cette commande EXISTE et ne trouve RIEN — la configuration est
-    correcte, la branche ne l'est pas, et rien ne le dit avant la premiere mission. On
-    lance donc reellement le serveur, on compte les outils qu'il annonce, et on rapporte
-    la sortie d'erreur sinon.
-
-    Rend un texte a afficher ; ne lève jamais : un diagnostic qui plante ne diagnostique
-    rien.
-    """
-    import json
-    import subprocess
+def _rapport_de_sonde(commande: Sequence[str], delai: float, note: str,
+                      racine: Path | None = None) -> str:
+    """Le texte de la preuve : ce que la commande sert VRAIMENT, et d'ou elle vient."""
     import sys
 
-    requetes = (
-        json.dumps({"jsonrpc": "2.0", "id": ID_INITIALIZE, "method": "initialize", "params": {}}),
-        json.dumps({"jsonrpc": "2.0", "id": ID_TOOLS_LIST, "method": "tools/list", "params": {}}),
-    )
-    try:
-        processus = subprocess.run(
-            list(commande),
-            input="\n".join(requetes) + "\n",
-            capture_output=True, text=True, timeout=delai, check=False,
-        )
-    except FileNotFoundError:
-        return (
-            f"  ECHEC : `{commande[0]}` est INTROUVABLE sur cette machine.\n"
-            "  C'est exactement le defaut que cette sonde existe pour attraper : une\n"
-            "  configuration correcte qui ne branche rien."
-        )
-    except subprocess.TimeoutExpired:
-        return f"  ECHEC : le serveur n'a pas repondu en {delai:.0f}s (lancement bloque)."
-
-    outils: list[str] = []
-    serveur = ""
-    for ligne in processus.stdout.splitlines():
-        ligne = ligne.strip()
-        if not ligne.startswith("{"):
-            continue
-        try:
-            reponse = json.loads(ligne)
-        except json.JSONDecodeError:
-            continue
-        resultat = reponse.get("result") or {}
-        if "serverInfo" in resultat:
-            serveur = str(resultat["serverInfo"].get("version", ""))
-        for outil in resultat.get("tools", []):
-            outils.append(str(outil.get("name", "?")))
-
+    outils, serveur, detail = _parler_au_serveur(commande, delai, racine)
     if not outils:
-        detail = (processus.stderr or processus.stdout or "").strip().splitlines()
         return (
             f"  ECHEC : `{' '.join(commande)}` ne sert AUCUN outil.\n"
-            + "\n".join(f"    {ligne[:160]}" for ligne in detail[-5:])
+            + "\n".join(f"    {ligne[:160]}" for ligne in detail.splitlines()[-5:])
         )
+    lignes = [
+        f"  `{' '.join(commande)}` sert {len(outils)} outil(s) [version {serveur}] :",
+        *(f"    - {nom}" for nom in outils),
+        f"  (interpreteur de cette sonde : {sys.executable})",
+    ]
+    if note:
+        lignes.append(f"  NOTE : {note}")
+    return "\n".join(lignes)
 
-    return (
-        f"  `{' '.join(commande)}` sert {len(outils)} outil(s) [version {serveur}] :\n"
-        + "\n".join(f"    - {nom}" for nom in outils)
-        + f"\n  (interpreteur de cette sonde : {sys.executable})"
-    )
+
+def prouver_branchement(commande: Sequence[str] | None = None, delai: float = 20.0,
+                        racine: Path | None = None) -> str:
+    """Demarre le serveur MCP et lui parle vraiment (initialize + tools/list).
+
+    Pourquoi ce n'est pas une precaution theorique : les fragments nomment
+    `python3 -m jio.mcp_server`. Sur un projet SANS paquet `jio`, cette commande existe et ne
+    sert RIEN — la configuration est correcte, la branche ne l'est pas, et rien ne le dit avant
+    la premiere mission. On lance donc reellement le serveur, on compte les outils qu'il
+    annonce, et on rapporte la sortie d'erreur sinon.
+
+    Sans `commande`, la sonde RESOUT : elle essaie les candidats et rend la preuve de celui qui
+    marche, avec la note qui dit pourquoi la commande par defaut a ete ecartee. Rendre un
+    diagnostic juste sur une configuration qu'on vient d'ecrire fausse serait une drole de
+    preuve.
+
+    Rend un texte a afficher ; ne lève jamais : un diagnostic qui plante ne diagnostique rien.
+    """
+    if commande is None:
+        resolue, note = commande_qui_marche(racine=racine, delai=delai)
+        return _rapport_de_sonde(resolue, delai, note, racine)
+    return _rapport_de_sonde(commande, delai, "", racine)
+

@@ -412,3 +412,56 @@ def test_le_banc_borne_par_taches_dit_le_VRAI_nombre_de_taches() -> None:
 
     code = main(["bench", "--runs", "1", "--taches", "1"])
     assert code == 0
+
+
+# --------------------------------------------------------------------------- #
+# La commande ecrite doit MARCHER sur le projet ou elle est ecrite
+# --------------------------------------------------------------------------- #
+
+def test_la_commande_par_defaut_ne_resout_pas_jio_hors_du_depot(tmp_path) -> None:
+    """Le defaut, mesure sur un projet ETRANGER — et pourquoi il fallait une sonde.
+
+    `python3 -m jio.mcp_server` resout `jio` par le DOSSIER COURANT. Dans le depot JIO, ou
+    `jio/` est un sous-dossier, la commande marche par accident ; dans un projet sans paquet
+    `jio`, elle existe et ne sert RIEN. La sonde du branchement le disait bien (« ne sert
+    AUCUN outil »), mais la configuration etait ecrite AVANT la sonde : le diagnostic arrivait
+    apres la panne. Une integration qui s'avere fausse en le disant reste fausse.
+    """
+    import subprocess
+
+    from jio.artifacts.wiring import _COMMANDE, commande_qui_marche
+
+    # Dans un projet vide, la commande par defaut ne sert aucun outil...
+    essai = subprocess.run(list(_COMMANDE), input="\n", capture_output=True, text=True,
+                           cwd=tmp_path, timeout=60, check=False)
+    assert "No module named 'jio'" in (essai.stderr + essai.stdout), (
+        "ce test suppose que le dossier courant ne contient pas `jio/`"
+    )
+
+    # ...et la sonde, elle, rend une commande qui en sert.
+    commande, note = commande_qui_marche(racine=tmp_path)
+    assert commande[1:] == ("-m", "jio.mcp_server")
+    from jio.artifacts.wiring import _parler_au_serveur
+
+    outils, _, detail = _parler_au_serveur(commande, 60.0, tmp_path)
+    assert outils, (
+        f"la commande resolue `{' '.join(commande)}` ne sert rien depuis {tmp_path} : {detail}"
+    )
+    if commande != _COMMANDE:
+        assert "ne sert aucun outil" in note, "la note doit dire pourquoi la defaut a ete ecartee"
+
+
+def test_les_fragments_ecrivent_la_commande_qu_on_leur_donne() -> None:
+    """Les cinq dialectes parlent de la MEME commande : sinon la configuration ment."""
+    from jio.artifacts.wiring import fragments
+
+    commande = ("/opt/venv/bin/python", "-m", "jio.mcp_server")
+    textes = fragments(commande)
+    assert commande[0] in textes["opencode"]
+    assert commande[0] in textes["hermes"]
+    assert commande[0] in textes["codex"]
+    assert commande[0] in textes["claude-code"], "la ligne de commande CLI doit la porter aussi"
+    assert commande[0] in textes["cursor"]
+    # Et sans commande, la forme canonique est inchangee : c'est ce qui protege les artefacts
+    # du depot, verifies a l'octet par `jio coherence`.
+    assert "python3" in fragments()["codex"]

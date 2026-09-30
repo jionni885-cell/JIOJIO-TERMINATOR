@@ -156,8 +156,14 @@ def ecrire_manifest(
         notre_empreinte = connu.get(rel)
         if notre_empreinte is None and not _porte_la_marque(existant):
             apart = racine / (rel + ".jio")
-            apart.parent.mkdir(parents=True, exist_ok=True)
-            apart.write_text(contenu, encoding="utf-8")
+            # La version a cote n'est reecrite que si elle DIFFERE : sinon la date de modification
+            # du fichier bougeait a chaque `jio start`, et la promesse « relancee, elle ne
+            # reecrit rien » etait fausse a la deuxieme execution. Mesure faite sur un projet
+            # ETRANGER, en comparant les dates de tous les fichiers avant/apres : `AGENTS.md.jio`
+            # etait le seul a changer, sans qu'un octet de son contenu change.
+            if not apart.is_file() or apart.read_text(encoding="utf-8", errors="replace") != contenu:
+                apart.parent.mkdir(parents=True, exist_ok=True)
+                apart.write_text(contenu, encoding="utf-8")
             decisions.append(
                 Decision(
                     rel, "preserve",

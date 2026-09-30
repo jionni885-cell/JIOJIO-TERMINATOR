@@ -353,6 +353,10 @@ def test_chiffres_et_coherence_rendent_le_MEME_verdict_sur_le_meme_document(
              f"les {mesures['agents']} agents, {mesures['objectifs']} objectifs, "
              f"{mesures['objectifs_routage']} objectifs de routage, "
              f"{mesures['objectifs_controle']} objectifs de contrôle, "
+             # Le HUITIEME est ne en meme temps que le jeu de controle de la porte de
+             # clarification. Le meme test a echoue une seconde fois, pour la meme raison, et
+             # c'est le comportement voulu : un document fabrique ici n'a aucune dispense.
+             f"{mesures['objectifs_controle_clarify']} objectifs d'un projet, "
              f"premier choix juste dans {mesures['premier_choix']} %\n")
 
     perime = juste.replace(f"{mesures['tests']} tests", f"{mesures['tests'] + 7} tests", 1)
