@@ -1004,7 +1004,10 @@ class Engine:
         if self.router is not None and self._arm is not None:
             self.router.observe(mission.objective, self._arm, success=delivered)
 
-        if self.memory is None or delivered:
+        if self.memory is None:
+            return
+        if delivered:
+            self._resoudre_la_memoire(mission, report)
             return
         failing = [w for w in report.witnesses if not w.ok]
         if not failing:
@@ -1014,13 +1017,43 @@ class Engine:
             self.memory.record(
                 objective=mission.objective,
                 symptom=f"regle {first.rule_id} non satisfaite",
+                # La CAUSE est la sortie d'erreur REELLE du controle, pas une etiquette.
                 root_cause=(first.stderr or "").strip().splitlines()[-1][:200]
                 if first.stderr
                 else "cause inconnue : aucune sortie d'erreur capturee",
-                correct_fix="atteint dans une mission ulterieure",
+                # Le remede est INCONNU a cet instant, et le texte le dit. La version
+                # precedente ecrivait « atteint dans une mission ulterieure » : un texte qui
+                # se lit comme un remede, qui partait ensuite dans tous les prompts, et dont
+                # aucun modele ni relecteur ne pouvait rien tirer. Il est rempli par
+                # `_resoudre_la_memoire` des qu'une mission reussit sur le meme objectif.
+                correct_fix="",
                 # Le GARDE est obligatoire : sans controle, la memoire n'est qu'un journal.
                 guard=f"regle {first.rule_id} du banc d'essai",
                 mission_id=mission.id,
+            )
+        except Exception:  # une memoire defaillante ne doit jamais faire echouer la mission
+            pass
+
+    def _resoudre_la_memoire(self, mission: Mission, report: MissionReport) -> None:
+        """Une mission a REUSSI : les echecs ouverts sur cet objectif ont un remede.
+
+        C'est ce qui ferme la boucle. Sans cette etape, la memoire ne contient que des
+        plaintes ; avec elle, elle contient ce qui a MARCHE, sur quel controle, et depuis
+        quelle mission. On n'invente rien : le remede cite les regles qui etaient en echec
+        et qui passent maintenant, plus la forme livree (un extrait court, assaini a
+        l'ecriture — le contenu d'un artefact est une source HOSTILE).
+        """
+        try:
+            if self.memory is None or not getattr(self.memory, "en_attente", 0):
+                return
+            satisfaites = ",".join(w.rule_id for w in report.witnesses if w.ok) or "aucune"
+            extrait = " ".join((report.subject or "").split())[:120]
+            remede = (
+                f"regle(s) satisfaite(s) depuis la mission {mission.id} : {satisfaites}"
+                + (f" ; forme livree : {extrait}" if extrait else "")
+            )
+            self.memory.resoudre(
+                objective=mission.objective, correct_fix=remede, mission_id=mission.id
             )
         except Exception:  # une memoire defaillante ne doit jamais faire echouer la mission
             pass

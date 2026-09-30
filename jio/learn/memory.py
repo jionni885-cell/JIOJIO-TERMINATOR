@@ -35,6 +35,42 @@ __all__ = ["FailureRecord", "FailureMemory", "fingerprint"]
 
 _WORD = re.compile(r"[a-z0-9_]{3,}")
 
+#: Les marqueurs que JIO LUI-MEME pose dans les prompts. Un contenu externe qui les
+#: contient cherche a fabriquer un bloc de memoire ou un retour d'echec : c'est
+#: exactement le vecteur d'injection que l'architecture traite comme HOSTILE.
+_MARQUEURS_RESERVES = (
+    "PAST FAILURES ON SIMILAR TASKS",
+    "PREVIOUS ATTEMPT FAILED",
+    "ENUMERATED REQUIREMENTS",
+)
+#: Formules qui transforment un contenu en instruction. Un message d'erreur utile ne
+#: commence pas par « ignore les instructions precedentes ».
+_DIRECTIVES = re.compile(
+    r"^\s*(system|assistant|instruction|ignore|oublie|disregard|forget)\b",
+    re.IGNORECASE,
+)
+
+
+def _assainir(texte: str, limite: int = 200) -> str:
+    """Rend un contenu EXTERNE inoffensif avant qu'il entre dans la memoire.
+
+    La memoire n'est pas un fichier de notes : son contenu repart dans les PROMPTS
+    (`prompt_block`). Un artefact qui echoue peut donc ecrire dans son message d'erreur une
+    fausse memoire — un faux « RIGHT FIX » est une instruction deguisee. On neutralise :
+
+      * les marqueurs reserves a JIO (sinon un contenu peut forger un bloc de memoire) ;
+      * les tournures d'instruction en debut de texte ;
+      * les sauts de ligne (une memoire tient sur une ligne : elle reste lisible dans un
+        rapport et ne peut pas simuler une structure) ;
+      * la longueur (un souvenir doit tenir dans un prompt).
+    """
+    une_ligne = " ".join((texte or "").split())
+    for marque in _MARQUEURS_RESERVES:
+        une_ligne = une_ligne.replace(marque, "[marqueur retire]")
+    if _DIRECTIVES.match(une_ligne):
+        une_ligne = "[instruction retiree] " + _DIRECTIVES.sub("", une_ligne)
+    return une_ligne[:limite]
+
 
 def _tokens(text: str) -> set[str]:
     return set(_WORD.findall(text.lower()))
@@ -76,12 +112,16 @@ class FailureRecord:
         preuve — `re-measure before relying`.
         """
         tete = f"- ON TASK: {self.objective[:160]}\n" if self.objective else "- "
+        # Un remede NON OBSERVE est declare comme tel. La version precedente affichait
+        # « atteint dans une mission ulterieure », qui se lit comme un remede et n'en est
+        # pas un : un modele reel ne peut rien en faire, et un relecteur non plus.
+        remede = self.correct_fix or "inconnu (aucun remede observe pour l'instant)"
         return (
             tete
             + f"  SYMPTOM: {self.symptom}\n"
             f"  CAUSE: {self.root_cause}\n"
             f"  WRONG FIX (do not repeat): {self.wrong_fix or 'n/a'}\n"
-            f"  RIGHT FIX: {self.correct_fix}\n"
+            f"  RIGHT FIX: {remede}\n"
             f"  GUARD: {self.guard}"
         )
 
@@ -131,11 +171,14 @@ class FailureMemory:
             )
         rec = FailureRecord(
             fingerprint=fingerprint(objective, symptom),
-            symptom=symptom.strip(),
-            root_cause=root_cause.strip(),
-            wrong_fix=wrong_fix.strip(),
-            correct_fix=correct_fix.strip(),
-            guard=guard.strip(),
+            # TOUT contenu qui repartira dans un prompt passe par `_assainir` : ces champs
+            # viennent d'un artefact en echec (sa sortie d'erreur), donc d'une source que
+            # l'architecture traite comme HOSTILE.
+            symptom=_assainir(symptom),
+            root_cause=_assainir(root_cause),
+            wrong_fix=_assainir(wrong_fix),
+            correct_fix=_assainir(correct_fix),
+            guard=_assainir(guard, 120),
             objective=objective,
             mission_id=mission_id,
         )
@@ -152,6 +195,51 @@ class FailureMemory:
         rec = FailureRecord(**{**rec.__dict__, "seq": event.seq})
         self._records.append(rec)
         return rec
+
+    def resoudre(
+        self, *, objective: str, correct_fix: str, mission_id: str = "", symptom: str = ""
+    ) -> int:
+        """Enregistre le REMEDE qui a fonctionne, sur les echecs encore ouverts.
+
+        POURQUOI CETTE METHODE EXISTE. La version precedente ecrivait, a chaque echec,
+        `correct_fix="atteint dans une mission ulterieure"` : un texte VIDE DE SENS, injecte
+        ensuite dans chaque prompt comme « RIGHT FIX ». Une memoire qui dit « ce sera
+        resolu plus tard » n'apprend rien a personne — ni a un modele, ni a un humain qui
+        relit le journal. Un echec se resout ICI : quand une mission ulterieure reussit sur
+        le meme objectif, le remede observe remplace le texte creux.
+
+        L'ecriture est un evenement APPEND-ONLY (`resolution`), jamais une reecriture :
+        la chaine de hashes reste verifiable, et une memoire qu'on peut reecrire
+        discretement est une memoire qu'on peut empoisonner.
+        """
+        remede = _assainir(correct_fix)
+        if not remede:
+            return 0
+        ouverts = [
+            rec for rec in self._records
+            if rec.objective == objective and not rec.correct_fix
+            and (not symptom or rec.symptom == symptom)
+        ]
+        if not ouverts:
+            return 0
+        self.journal.append("resolution", {
+            "fingerprint": ouverts[0].fingerprint,
+            "correct_fix": remede,
+            "objective": objective,
+            "mission_id": mission_id,
+            "symptom": ouverts[0].symptom,
+        })
+        from dataclasses import replace as _replace
+
+        for i, rec in enumerate(self._records):
+            if rec in ouverts:
+                self._records[i] = _replace(rec, correct_fix=remede, mission_id=mission_id)
+        return len(ouverts)
+
+    @property
+    def en_attente(self) -> int:
+        """Echecs enregistres SANS remede observe : la dette de la memoire."""
+        return sum(1 for rec in self._records if not rec.correct_fix)
 
     # -- lecture ------------------------------------------------------------ #
 
@@ -212,6 +300,21 @@ class FailureMemory:
     def _load(self) -> list[FailureRecord]:
         out: list[FailureRecord] = []
         for event in self.journal:
+            if event.kind == "resolution":
+                # Une resolution ne cree pas de souvenir : elle REMPLIT un echec ouvert.
+                # Rejouee a l'identique au chargement, elle garde la memoire coherente
+                # entre deux processus (le defaut « memoire qui oublie » a deja ete paye).
+                cible = str(event.payload.get("fingerprint", ""))
+                for i, rec in enumerate(out):
+                    if rec.fingerprint == cible and not rec.correct_fix:
+                        from dataclasses import replace as _replace
+
+                        out[i] = _replace(
+                            rec, correct_fix=str(event.payload.get("correct_fix", "")),
+                            mission_id=str(event.payload.get("mission_id", "")),
+                        )
+                        break
+                continue
             if event.kind != "failure":
                 continue
             payload = dict(event.payload)
@@ -232,17 +335,27 @@ class FailureMemory:
 
     def report(self) -> str:
         ok, bad = self.verify()
+        resolus = self.size - self.en_attente
         lines = [
-            f"memoire : {self.size} echec(s) enregistre(s)",
+            f"memoire : {self.size} echec(s) enregistre(s) "
+            f"({resolus} avec un remede OBSERVE, {self.en_attente} en attente)",
             f"integrite : {'chaine valide' if ok else f'CHAINE CASSEE @ {bad}'}",
             f"tete : {self.head}",
         ]
+        if self.en_attente:
+            lines.append(
+                f"  <- {self.en_attente} souvenir(s) sans remede : ils disent ce qui a echoue, "
+                "pas ce qui repare. Ils se remplissent quand une mission reussit sur le "
+                "meme objectif."
+            )
         if self.size:
             lines.append("")
             lines.append("5 derniers echecs retenus :")
             for rec in self._records[-5:]:
+                remede = "inconnu" if not rec.correct_fix else rec.correct_fix[:60]
                 lines.append(f"  [{rec.seq}] {rec.symptom[:78]}")
                 lines.append(f"        garde : {rec.guard[:70]}")
+                lines.append(f"        remede : {remede}")
         else:
             lines.append("")
             lines.append(
