@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1183 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1185 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -129,6 +129,16 @@ Deux autres commandes ont été passées au même banc, avec le même résultat 
   résolue (`python3` contre l'interpréteur qui a JIO). L'utilisateur réparait, se voyait reprocher
   sa réparation, réparait… Le contrôle, la réparation automatique (`--reparer`) et la commande
   manuelle s'adossent au même manifeste : « ce que jio écrirait **ici** ».
+
+Et la fiche que l'IA lit **en premier** — `.jio/ACTIVE.md` — parlait encore de nous : elle
+demandait d'éditer `jio/artifacts/doctrine.py` (fichier qui n'existe pas chez l'utilisateur),
+renvoyait à `docs/VISION-ARCHITECTURE.md` (absent lui aussi), et annonçait « **Trois** règles »
+suivies de **cinq**. Une fiche qui envoie son lecteur vers des fichiers inexistants fait douter
+de tout ce qu'elle affirme, y compris de ce qui est vrai. Elle distingue maintenant le projet
+hôte de l'installation de JIO, cite chaque chemin avec sa maison, **compte** ses propres règles
+(le titre est dérivé de la liste) et **mesure** le coût de la bibliothèque de procédures
+(6 424 jetons) au lieu de le recopier. Deux tests l'interdisent désormais : « aucun chemin cité
+n'est orphelin » et « le titre compte ce que la liste contient ».
 
 ---
 
@@ -1383,7 +1393,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1183 tests verts -> 1183 tests verts
+         - README.md ligne 15 : 1185 tests verts -> 1185 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

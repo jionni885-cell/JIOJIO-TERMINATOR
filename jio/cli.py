@@ -4863,12 +4863,26 @@ def _fiche_active(
 ) -> str:
     """`.jio/ACTIVE.md` : ce qu'une IA doit lire avant de toucher ce projet.
 
-    Deux principes y sont ecrits parce qu'ils sont mesurables dans ce depot :
+    Deux principes y sont ecrits parce qu'ils sont mesurables : les artefacts sont GENERES
+    (`jio artifacts`), et la revendication sans preuve est refusee (`jio claims`). La fiche ne
+    contient donc que ce qui a ete verifie a l'instant de son ecriture.
 
-      * les artefacts sont GENERES (`jio artifacts`) : les editer a la main est perdu ;
-      * la revendication sans preuve est refusee : `jio claims` la refute, et cette fiche
-        ne contient donc que ce qui a ete verifie a l'instant de son ecriture.
+    CE QU'ELLE A DU APPRENDRE, et c'est la meme lecon que le reste de l'integration. Ecrite dans
+    un projet ETRANGER, elle parlait encore de NOTRE depot : elle demandait d'editer
+    `jio/artifacts/doctrine.py` — un fichier qui n'existe pas chez l'utilisateur — renvoyait a
+    `docs/VISION-ARCHITECTURE.md`, absent lui aussi, et annoncait « Trois regles » suivies de
+    cinq. Or c'est la premiere chose que la machine suivante lit. Une fiche qui envoie son
+    lecteur vers des fichiers inexistants n'est pas une aide : c'est une trahison de plus, et
+    elle coute la confiance dans tout le reste de la fiche.
+
+    La regle est donc : chaque chemin cite est soit un chemin DU PROJET, soit un chemin de
+    l'installation de jio — et dans ce cas il est ecrit comme tel, avec sa raison d'etre la.
     """
+    # Le depot de jio lui-meme se reconnait a son paquet ; tout le reste est un projet hote.
+    propre_depot = (racine / "jio" / "__init__.py").is_file()
+    # Le dossier de l'installation de jio : c'est `jio/cli.py` qui parle, donc son parent EST le
+    # paquet. Aucune recherche, aucun `pip show` : ce qui est ecrit est ce qui tourne.
+    paquet = Path(__file__).resolve().parent
     outils = ", ".join(detectees) if detectees else "aucune CLI detectee (ce n'est pas bloquant)"
     cable = ", ".join(cables) if cables else "aucun (--sans-mcp)"
     # L'ETAT des artefacts, jamais l'activite de l'execution qui a ecrit cette fiche : c'est la
@@ -4879,9 +4893,80 @@ def _fiche_active(
     # L'installation des competences chez Hermes est un FAIT DU MONDE, pas une activite : elle
     # appartient donc a la fiche. Sans cette ligne, une IA lisait douze procedures dans le
     # depot et ne pouvait pas savoir si SON outil les avait chargees.
-    competences_hermes = (
-        f"\nCOMPETENCES HERMES : {hermes}" if hermes else ""
+    competences_hermes = f"\nCOMPETENCES HERMES : {hermes}" if hermes else ""
+
+    # Les nombres de procedures et d'agents sont COMPTES dans la doctrine qui les produit, pas
+    # recopies : un chiffre annonce que rien ne mesure redevient faux au premier ajout.
+    from .artifacts import manifest
+
+    tous = manifest()
+    procedures = [c for c in tous if "/skills/" in c and c.endswith("SKILL.md")]
+    agents = [c for c in tous if c.startswith(".opencode/agents/") and c.endswith(".md")
+              and not c.endswith("README.md")]
+    # Le cout de la bibliotheque ENTIERE, mesure sur les textes qui seront charges — c'est ce
+    # que paie une session qui les chargerait toutes. Un chiffre annonce que rien ne mesure
+    # redevient faux au premier ajout : celui-ci est calcule ici, comme les autres.
+    from .artifacts.budget import mesurer as _mesurer
+
+    cout_procedures = sum(_mesurer(rel, tous[rel]).jetons for rel in procedures)
+
+    # Les regles sont CONSTRUITES et leur nombre est COMPTE. « Trois regles » suivi de cinq
+    # entrees est exactement le defaut qu'un chiffre verifie empeche ailleurs : la fiche doit
+    # satisfaire la meme exigence qu'elle impose au reste du depot.
+    regles: list[tuple[str, str]] = [
+        ("Aucune affirmation sans preuve executable.",
+         "`jio claims <document>` verifie un document et sort en 1 s'il refute quoi que ce "
+         "soit — un document de ce projet n'a pas d'exception."),
+        ("Les artefacts sont generes.",
+         "Les editer a la main est perdu : "
+         + ("editer `jio/artifacts/doctrine.py`, puis `jio sync`."
+            if propre_depot else
+            f"ils sont regeneres par `jio start` depuis l'installation de jio (`{paquet}`). "
+            "Pour les faire evoluer, editer cette installation, puis relancer `jio start`.")),
+        ("Trois etats, pas quatre.",
+         "`DELIVERED`, `DELIVERED_UNDER_RESERVATION`, `ABSTAINED`. « Ca devrait marcher » "
+         "n'est pas un etat."),
+        ("Une etape sans preuve n'existe pas.",
+         "En mode autonome (`jio auto`), chaque etape du plan porte la commande qui peut "
+         "echouer ; un echec non resolu ARRETE le plan au lieu de l'enchainer, et ce qui reste "
+         "est declare NON TENTE."),
+        ("Une preuve ne se reprend pas d'un autre monde.",
+         "`jio auto --reprendre` saute les etapes deja prouvees SEULEMENT si la revision git "
+         "n'a pas bouge. Sinon le plan est rejoue entier : re-verifier coute une commande par "
+         "etape, croire coute une mission batie sur du vide."),
+    ]
+    ordre = {1: "Une", 2: "Deux", 3: "Trois", 4: "Quatre", 5: "Cinq", 6: "Six", 7: "Sept"}
+    titre_regles = (f"## {ordre.get(len(regles), str(len(regles)))} regles, "
+                    "et ce qui les tient")
+    corps_regles = "\n".join(
+        f"{rang}. **{titre}** {texte}" for rang, (titre, texte) in enumerate(regles, 1)
     )
+
+    # Ce que « fini » veut dire : la ligne sur les tests n'est ecrite que si le projet a des
+    # tests. Annoncer `python -m pytest -q` a un projet qui n'a pas de dossier de tests, c'est
+    # envoyer l'IA vers une commande qui echoue — le petit mensonge qui fait douter du reste.
+    fini: list[str] = []
+    if (racine / "tests").is_dir() or (racine / "test").is_dir():
+        fini.append("la suite de tests passe (`python -m pytest -q` s'il s'agit de pytest) et "
+                    "`jio scan .` ne signale rien ;")
+    else:
+        fini.append("`jio scan .` ne signale rien sur le code et les documents du projet ;")
+    fini.append("`jio claims` sur les documents touches : 0 refutation ;")
+    fini.append("les reserves restantes sont NOMMEES, jamais tues ;")
+    fini.append("`jio mutants` ne regresse pas (une ligne non protegee est une preuve "
+                "manquante).")
+
+    # Le renvoi final : dans le depot de jio, il nomme nos fichiers ; ailleurs, il nomme
+    # l'installation (et dit que le README du projet decrit, lui, le projet).
+    detail = (
+        "Detail complet : `README.md`, `docs/VISION-ARCHITECTURE.md`, doctrine : "
+        "`jio/artifacts/doctrine.py`."
+        if propre_depot else
+        "La documentation de l'outil vit a cote du paquet, dans "
+        f"`{paquet.parent}` : `README.md` pour la vue d'ensemble, `docs/DOSSIER-TECHNIQUES.md` "
+        "pour les mesures qui la fondent. Le `README.md` de CE projet decrit, lui, ce projet."
+    )
+
     return f"""# JIO est actif sur ce projet
 
 > Fiche ecrite par `jio start`. Elle decrit l'etat REEL au moment de l'ecriture.
@@ -4896,7 +4981,7 @@ PROJET : {racine}{competences_hermes}
 - cablage MCP : {cable}
 - coherence du depot a l'instant de l'ecriture : {coherence}
 
-## Avant de travailler : trois commandes, dans cet ordre
+## Avant de travailler : les commandes, dans cet ordre
 
 ```sh
 jio doctor                  # etat reel : fournisseurs, artefacts, journal, garde-fous
@@ -4917,21 +5002,21 @@ jio coherence --reparer     # repare ce qui est MECANIQUE (artefacts generes, va
 `jio clarify` sort en **3** quand une question essentielle reste sans reponse. Dans ce cas,
 la bonne action est de POSER la question a l'utilisateur, pas de commencer.
 
-## Les procedures du depot : lesquelles charger, et quand
+## Les procedures livrees avec jio : lesquelles charger, et quand
 
-Ce depot livre **12 procedures** (`.hermes/skills/`) et **7 agents** (`.opencode/agents/`). Chez
-Hermes, `jio start` les INSTALLE la ou l'agent les lit (`~/.hermes/skills/`), par lien pour
-qu'une mise a jour du depot les mette a jour sans recopie. Les
-charger TOUTES coute 6424 jetons dans la fenetre — mesure du domaine : un contexte sature fait
-perdre ce que le contexte apportait. Ne pas les charger du tout revient a ignorer ce que le
-depot sait faire. La reponse est une commande, pas un choix a l'aveugle :
+L'installation livre **{len(procedures)} procedures** (`.hermes/skills/`) et **{len(agents)}
+agents** (`.opencode/agents/`). Chez Hermes, `jio start` les INSTALLE la ou l'agent les lit
+(`~/.hermes/skills/`), par lien pour qu'une mise a jour les mette a jour sans recopie. Les
+charger TOUTES coute **{cout_procedures} jetons** dans la fenetre — et un contexte sature fait
+perdre ce que le contexte apportait. Ne pas les charger du tout revient a ignorer une
+bibliotheque qui est la. La reponse est une commande, pas un choix a l'aveugle :
 
 ```sh
 jio skills "<objectif>"     # les 3 procedures qui s'appliquent, avec les termes qui l'ont
                             # decide, leur cout, et « aucune » si l'objectif est hors sujet
-jio skills --banc           # la mesure du classement, temoins compris (39 objectifs de routage)
+jio skills --banc           # la mesure du classement, temoins compris
 jio skills --seuil-balaye   # le seuil d'abstention et ce qu'il coute
-jio sorties                 # les exemples de sortie de CE README sont-ils encore vrais ?
+jio sorties                 # les exemples de sortie des documents sont-ils encore vrais ?
 ```
 
 `jio run` fait ce choix **tout seul** : il injecte les procedures retenues dans le prompt de
@@ -4939,30 +5024,15 @@ mission (3 au plus, budget 1500 jetons), refuse celles que `jio artifacts --audi
 ecrit au journal ce qui a ete charge comme ce qui a ete ecarte. Pour mesurer ce qu'elles
 apportent : `jio run "<objectif>" --sans-competences`.
 
-## Trois regles de ce projet, et ce qui les tient
+{titre_regles}
 
-1. **Aucune affirmation sans preuve executable.** `jio claims <document>` verifie un document
-   et sort en 1 s'il refute quoi que ce soit. Il n'y a pas d'exception pour les documents de
-   ce projet.
-2. **Les artefacts sont generes.** Modifier `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` ou les
-   competences a la main est perdu : editer `jio/artifacts/doctrine.py`, puis `jio sync`.
-3. **Trois etats, pas quatre.** `DELIVERED`, `DELIVERED_UNDER_RESERVATION`, `ABSTAINED`.
-   « Ca devrait marcher » n'est pas un etat.
-4. **Une etape sans preuve n'existe pas.** En mode autonome (`jio auto`), chaque etape du plan
-   porte la commande qui peut echouer ; un echec non resolu ARRETE le plan au lieu de
-   l'enchainer, et ce qui reste est declare NON TENTE.
-5. **Une preuve ne se reprend pas d'un autre monde.** `jio auto --reprendre` saute les etapes
-   deja prouvees SEULEMENT si la revision git n'a pas bouge. Sinon le plan est rejoue entier :
-   re-verifier coute une commande par etape, croire coute une mission batie sur du vide.
+{corps_regles}
 
 ## Ce que "fini" veut dire ici
 
-- la suite de tests passe (`python -m pytest -q`) et `jio scan .` ne signale rien ;
-- `jio claims` sur les documents touches : 0 refutation ;
-- les reserves restantes sont NOMMEES, jamais tues ;
-- `jio mutants` ne regresse pas (une ligne non protegee est une preuve manquante).
+{chr(10).join(f"- {ligne}" for ligne in fini)}
 
-Detail complet : `README.md`, `docs/VISION-ARCHITECTURE.md`, doctrine : `jio/artifacts/doctrine.py`.
+{detail}
 """
 
 

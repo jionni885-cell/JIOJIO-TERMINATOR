@@ -274,3 +274,88 @@ def test_auto_laisse_un_etat_RELISIBLE_avec_la_revision_git(
         "# Projet tiers\n\nUn petit projet sans aucun rapport avec JIO.\n"
         "\n```sh\npython -m pytest\n```\n"
     )
+
+
+# --------------------------------------------------------------------------- #
+# La fiche que l'IA lit EN PREMIER ne doit pas l'envoyer dans le vide
+# --------------------------------------------------------------------------- #
+
+def _chemins_cites(texte: str) -> set[str]:
+    """Les chemins cites par la fiche : entre accents graves, avec une extension connue."""
+    import re
+
+    motif = re.compile(r"[\w./-]+\.(py|md|json|yaml|yml|toml|mdc|sh|txt)\b")
+    return {
+        jeton
+        for jeton in re.findall(r"`([^`\n]+)`", texte)
+        for _ in ([0],)
+        if motif.fullmatch(jeton) and not jeton.startswith(("/", "~"))
+    }
+
+
+def test_la_fiche_d_un_projet_ETRANGER_ne_cite_que_des_chemins_qui_existent(
+    depot_tiers: Path,
+) -> None:
+    """Le defaut, vu a l'ecran dans la fiche ecrite pour un projet qui n'etait pas le notre.
+
+    La fiche est la PREMIERE chose que la machine suivante lit : `jio start` l'ecrit, et la
+    doctrine des agents dit « lis `.jio/ACTIVE.md` avant de toucher au projet ». Elle demandait
+    d'editer `jio/artifacts/doctrine.py` (un fichier de NOTRE depot, inexistant chez
+    l'utilisateur), renvoyait a `docs/VISION-ARCHITECTURE.md` (absent lui aussi), et annoncait
+    « Trois regles » suivies de cinq. Une fiche qui envoie son lecteur vers des fichiers
+    inexistants fait douter de tout ce qu'elle affirme — y compris de ce qui est vrai.
+
+    La regle verifiee ici est donc simple : chaque chemin cite est un chemin DU PROJET, ou un
+    chemin de l'installation de jio (citee explicitement), ou un chemin de la maison de
+    l'utilisateur — mais jamais un fichier de notre depot presente comme s'il etait le sien.
+    """
+    from jio.cli import main
+
+    assert main(["start", "--root", str(depot_tiers), "--sans-hermes"]) == 0
+    fiche = (depot_tiers / ".jio" / "ACTIVE.md").read_text(encoding="utf-8")
+    paquet = Path(__import__("jio").__file__).resolve().parent
+    installation = paquet.parent
+
+    def resout(jeton: str) -> bool:
+        """Ce chemin cite est-il chez le PROJET, dans l'installation, ou dans l'etat de jio ?
+
+        Trois exceptions, chacune justifiee : l'installation de jio (la documentation vit a
+        cote du paquet — c'est la ou `pip install` l'a mise), et `.jio/` — l'etat de jio, qui
+        contient des fichiers qu'une commande CREERA (`.jio/plan.json` n'existe qu'apres un
+        `jio auto`, et la fiche a le droit de dire ou il sera).
+        """
+        if jeton.startswith(".jio/"):
+            return True
+        return any((base / jeton).exists() for base in (depot_tiers, paquet, installation))
+
+    orphelins = sorted(jeton for jeton in _chemins_cites(fiche) if not resout(jeton))
+    assert orphelins == [], (
+        "la fiche cite des chemins qui n'existent NI dans le projet NI dans l'installation "
+        f"de jio : {orphelins}"
+    )
+
+
+def test_la_fiche_compte_ses_propres_regles(depot_tiers: Path) -> None:
+    """« Trois regles » suivi de cinq entrees : le meme defaut qu'un chiffre non mesure.
+
+    Le titre annoncait trois regles et la liste en portait cinq. Ce n'est pas une coquille
+    benigne : la fiche EST le document qui demande « aucune affirmation sans preuve » — elle
+    n'a pas le droit d'etre la premiere a ne pas compter ce qu'elle annonce.
+    """
+    import re
+
+    from jio.cli import main
+
+    assert main(["start", "--root", str(depot_tiers), "--sans-hermes"]) == 0
+    fiche = (depot_tiers / ".jio" / "ACTIVE.md").read_text(encoding="utf-8")
+
+    entete = re.search(r"^## (Une|Deux|Trois|Quatre|Cinq|Six|Sept) regles", fiche, re.M)
+    assert entete, "le titre des regles a change de forme : le test doit suivre"
+    mots = {"Une": 1, "Deux": 2, "Trois": 3, "Quatre": 4, "Cinq": 5, "Six": 6, "Sept": 7}
+    section = fiche[entete.end():]
+    section = section.split("\n## ", 1)[0]
+    items = re.findall(r"^\d+\. ", section, re.M)
+    assert len(items) == mots[entete.group(1)], (
+        f"le titre annonce {entete.group(1)} ({mots[entete.group(1)]}) et la liste en porte "
+        f"{len(items)}"
+    )
