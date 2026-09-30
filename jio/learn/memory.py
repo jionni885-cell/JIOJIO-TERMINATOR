@@ -16,10 +16,20 @@ devient une piece a conviction, pas une narration.
 
 Rappel avant action
 -------------------
-`recall()` classe les souvenirs par recouvrement de mots-cles (Jaccard pondere),
-pas par plongement vectoriel : explicable, hors-ligne, et suffisant a cette
-echelle. Un souvenir est un PRIOR, jamais une preuve : si le code a change, on
-re-mesure.
+`recall()` classe les souvenirs par **BM25** (rarete x saturation x longueur), pas
+par recouvrement de mots et pas par plongement vectoriel : explicable, hors-ligne,
+sans dependance.
+
+Le recouvrement de mots a ete mesure AVANT d'etre remplace, sur un corpus ou un
+seul identifiant technique distingue la cible de distracteurs qui partagent tout le
+reste du vocabulaire : **recall@1 de 5 % contre 100 %** pour BM25 (MRR 0,114 contre
+1,000), et **5 % de bout en bout** en passant par la vraie memoire. Le defaut etait
+invisible au banc d'effet — les taches du banc repetent des objectifs identiques,
+donc l'ancien score tombait juste la ou BM25 est le plus utile. C'est pourquoi la
+mesure du classement existe separement (`tests/test_memory_recall.py`) et reste a
+demeure : elle couvre le regime que le banc d'effet ne peut pas voir.
+
+Un souvenir est un PRIOR, jamais une preuve : si le code a change, on re-mesure.
 """
 
 from __future__ import annotations
@@ -30,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.journal import Journal
+from .recall import normalized_bm25, terms as _termes
 
 __all__ = ["FailureRecord", "FailureMemory", "fingerprint"]
 
@@ -246,23 +257,29 @@ class FailureMemory:
     def recall(self, objective: str, *, limit: int = 3, min_score: float = 0.08) -> list[
         FailureRecord
     ]:
-        """Souvenirs pertinents pour un objectif, du plus proche au plus lointain."""
-        want = _tokens(objective)
-        if not want:
+        """Souvenirs pertinents pour un objectif, du plus proche au plus lointain.
+
+        Le score est un BM25 **normalise dans [0, 1]** (`jio/learn/recall.py`) : il vaut
+        « quelle part de ce que la requete demande ce souvenir couvre-t-il », ce qui garde
+        a `min_score` le meme sens pour toutes les requetes. Un identifiant technique
+        present a lui seul pese alors plus que dix mots generiques repetes — c'est
+        exactement ce qui separe deux echecs d'un meme sous-systeme.
+        """
+        requete = _termes(objective)
+        if not requete:
             return []
-        scored: list[tuple[float, int, FailureRecord]] = []
-        for rec in self._records:
-            have = _tokens(f"{rec.objective} {rec.symptom} {rec.root_cause}")
-            if not have:
-                continue
-            inter = len(want & have)
-            if not inter:
-                continue
-            score = inter / len(want | have)
-            if score >= min_score:
-                scored.append((score, rec.seq, rec))
-        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        return [rec for _, _, rec in scored[:limit]]
+        documents = [
+            _termes(f"{rec.objective} {rec.symptom} {rec.root_cause}")
+            for rec in self._records
+        ]
+        scores = normalized_bm25(requete, documents)
+        classables = [
+            (score, rec.seq, rec)
+            for score, rec in zip(scores, self._records)
+            if score >= min_score
+        ]
+        classables.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [rec for _, _, rec in classables[:limit]]
 
     def prompt_block(self, objective: str, *, limit: int = 3) -> str:
         """Bloc a injecter dans un prompt de generation.
