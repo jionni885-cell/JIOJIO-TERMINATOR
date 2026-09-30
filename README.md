@@ -1605,6 +1605,45 @@ Trois garde-fous, dont deux nés d'incidents réels :
   relâché dans un `finally` : un échec ne doit jamais bloquer l'utilisateur ;
 - **refus de mélanger les régimes** — compétence, tours ou gain différents : `ValueError`.
 
+Et le troisième garde-fou a servi **pour de vrai**, cinq minutes après avoir été écrit. Un
+`kill` de nettoyage a tué une campagne en plein premier cycle ; le pilote a enchaîné les
+deux blocs suivants, qui ont été **refusés** — pas perdus, refusés :
+
+```
+  [PROBLEME] une autre mesure ecrit deja dans preuve3-cumul.jsonl (verrou ...). Deux mesures
+  simultanees rejoueraient les MEMES graines : attendre la fin, ou supprimer le verrou s'il
+  est reste d'un processus tue.
+```
+
+Sans ce verrou, les blocs 2 et 3 auraient repris au bloc de graines `0` — celui du bloc 1
+déjà écrit — et le cumul aurait affiché **quatre réplications indépendantes au lieu de
+deux**, avec des essais comptés deux fois. C'est exactement le faux résultat que le verrou
+existe pour empêcher, et il a fallu un vrai incident pour le montrer.
+
+### Un cumul n'est pas une moyenne : le rapport rend l'effet *par bloc*
+
+Deuxième trouvaille de la même campagne : le cumul affichait **+7** après deux cycles du
+premier bloc, puis **+0** au premier cycle du suivant. Le cumul restait juste — le test de
+McNemar porte sur l'ensemble des paires — mais il **masquait** l'hétérogénéité. Un lecteur
+qui ne voit que « +7 sur trois cycles » lit une moyenne qui n'existe dans **aucun** des deux
+blocs.
+
+`Cycle.bloc` est donc écrit dans le JSONL (et **déduit** de la dernière ligne `replication`
+quand il manque : les fichiers déjà mesurés restent attribuables, sans migration), et le
+rapport sépare les tirages :
+
+```
+  REPLICATIONS INDEPENDANTES (un cumul est une somme de tirages, pas une moyenne) :
+    bloc de graines     0 : +7 reussite(s) (9 contre 0 dissociation(s))
+    bloc de graines  1000 : +0 reussite(s) (0 contre 0 dissociation(s))
+```
+
+Avec un seul bloc, le rapport dit ce qui manque au lieu de laisser croire à une
+démonstration : *« une seule pour l'instant — un effet mesuré sur un seul bloc de graines
+n'est pas encore un effet REPRODUIT »*. Et le contrôle symétrique existe : quand les blocs
+concordent, la phrase le dit aussi (« même sens dans tous les blocs ») — un rapport qui ne
+signalerait que l'hétérogénéité serait biaisé.
+
 ### Le contrôle positif : un instrument doit savoir dire oui
 
 Un instrument qui ne dit **jamais** « ça marche » ne peut pas être cru quand il dit « rien
