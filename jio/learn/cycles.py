@@ -101,6 +101,18 @@ class Cycle:
     temoin: int = 0
     chaud: int = 0
     essais: int = 0
+    #: PAIRES DISCORDANTES : missions ou le chaud reussit et le temoin echoue (`b`), et
+    #: l'inverse (`c`). C'est la donnee qui compte, et elle manquait.
+    #:
+    #: Mesure du defaut : le protocole est APPARIE (memes taches, memes graines, meme bras),
+    #: mais le verdict comparait les deux bras comme s'ils etaient INDEPENDANTS — la methode
+    #: de Newcombe, faite pour deux echantillons separes. Sur des paires correlees, cette
+    #: comparaison jette l'information de l'appariement et sous-estime la resolution d'un
+    #: facteur 2 a 4. Constate : +10 reussites sur 220 essais apparies restaient « non
+    #: demontres », alors que le test de McNemar — celui de ce plan experimental — conclut
+    #: sur les seules dissociations.
+    chaud_seul: int = 0
+    temoin_seul: int = 0
     #: Appels de fournisseur ou l'avertissement de memoire a REELLEMENT ete accorde, et
     #: nombre d'appels total : la PORTEE du levier mesure. Un ecart nul avec portee nulle
     #: ne dit rien de la memoire ; avec une portee large, il la condamne.
@@ -174,6 +186,10 @@ class RapportCycles:
     regret: float = 0.0
     #: Le bras que l'historique MESURE designe comme meilleur (au moins 2 tirages agreges).
     meilleur_bras: str = ""
+    #: Une entree par execution cumulee : bloc de graines utilise, taille, regime. C'est la
+    #: PREUVE que le cumul est fait de replications independantes et non de la meme mesure
+    #: repete. Sans elle, un « n » cumule ne serait qu'un chiffre invérifiable.
+    replications: list[dict[str, object]] = field(default_factory=list)
     #: Bornes de l'ecart froid -> chaud sur le DERNIER cycle (intervalle apparie).
     bas: float = 0.0
     haut: float = 0.0
@@ -230,6 +246,44 @@ class RapportCycles:
         return self.cycles[-1].artefact if self.cycles else 0
 
     @property
+    def paires(self) -> tuple[int, int]:
+        """(b, c) cumules : missions ou le chaud gagne seul, puis ou le temoin gagne seul."""
+        return (
+            sum(c.chaud_seul for c in self.cycles),
+            sum(c.temoin_seul for c in self.cycles),
+        )
+
+    @property
+    def p_valeur_appariee(self) -> float:
+        """Test exact de McNemar sur les paires : LA question du plan experimental.
+
+        « Ce plan est apparie : memes taches, memes graines, meme bras. Le seul evenement
+        informatif est la mission ou les deux bras DIVERGENT ; sous l'hypothese d'un effet
+        nul, il diverge dans un sens ou dans l'autre avec la meme probabilite. »
+        On reutilise `mcnemar_exact` du banc d'ablation : une seule implementation de ce
+        test dans le depot, et elle est deja testee.
+        """
+        from ..bench.ablation import mcnemar_exact
+
+        b, c = self.paires
+        return mcnemar_exact(b, c)
+
+    @property
+    def intervalle_apparie(self) -> tuple[float, float]:
+        """IC95 de la difference de taux, pour des paires (formule de Wald), du meme module."""
+        from ..bench.ablation import _wald_apparie
+
+        b, c = self.paires
+        if not self.essais_cumules:
+            return 0.0, 0.0
+        return _wald_apparie(b, c, self.essais_cumules)
+
+    @property
+    def tranche_apparie(self) -> bool:
+        """L'effet est-il demontre au seuil de 95 %, sur les paires ?"""
+        return self.p_valeur_appariee < 0.05
+
+    @property
     def tranche_cumule(self) -> bool:
         """L'intervalle POOL des cycles exclut-il zero ? (la seule affirmation causale)"""
         if not self.cycles:
@@ -256,19 +310,36 @@ class RapportCycles:
         """Ce que la memoire contient a la fin : le stock, pas le flux."""
         return self.cycles[-1].memo_apres if self.cycles else 0
 
+    @property
+    def blocs_de_graines(self) -> list[int]:
+        """Les blocs de graines distincts utilises par les executions cumulees."""
+        return sorted({int(r.get("seed_base", 0)) for r in self.replications})
+
+    @property
+    def replications_independantes(self) -> int:
+        """Nombre de blocs de graines DISTINCTS : la seule mesure d'independance qui compte.
+
+        Deux executions qui rejouent les memes graines ne sont pas deux mesures : ce sont
+        deux fois la meme. Cumuler sans le verifier ferait grossir le nombre d'essais et
+        resserrer l'intervalle autour de rien — la facon la plus efficace de fabriquer un
+        faux resultat significatif.
+        """
+        return len(self.blocs_de_graines)
+
     def verdict(self) -> str:
         """Le verdict, et il ne peut pas flatter : une rechute condamne, un plateau declare.
 
         PROGRESSE exige TROIS choses : l'ecart du dernier cycle n'est pas negatif (on ne
-        couronne pas un run qui finit mal), l'ecart CUMULE est positif, et l'intervalle de
-        confiance POOL exclut zero. Exiger l'intervalle du dernier cycle seul gaspillait
-        75 % des essais mesures et rendait l'instrument aveugle a l'effet qu'il cherchait.
+        couronne pas un run qui finit mal), l'ecart CUMULE est positif, et le test APPARIE
+        (McNemar exact) conclut. Exiger l'intervalle du dernier cycle seul gaspillait 75 %
+        des essais mesures ; exiger un intervalle NON APPARIE gaspillait l'appariement
+        lui-meme, et rendait l'instrument aveugle a l'effet qu'il cherchait.
         """
         if not self.cycles:
             return "PLATEAU"
         if self.rechutes:
             return "REGRESSE"
-        if self.ecart >= 0 and self.ecart_cumule > 0 and self.tranche_cumule:
+        if self.ecart >= 0 and self.ecart_cumule > 0 and self.tranche_apparie:
             return "PROGRESSE"
         return "PLATEAU"
 
@@ -283,6 +354,14 @@ class RapportCycles:
                 f"la memoire accumulee NUIT. Elaguer (borner la memoire) avant d'accumuler "
                 f"davantage — c'est le resultat que ce protocole existe pour attraper."
             )
+        b, c = self.paires
+        apparie = (
+            f" TEST APPARIE (McNemar exact) : {b} mission(s) ou la memoire fait REUSSIR "
+            f"seule, {c} ou elle fait ECHOUER seule, sur {self.essais_cumules} paires — "
+            f"p = {self.p_valeur_appariee:.4f}. C'est le test du plan experimental "
+            f"(memes taches, memes graines, meme bras) : les missions ou les deux bras "
+            f"reussissent ensemble n'apprennent rien sur l'effet."
+        )
         couplage = (
             f" L'ecart froid->temoin au dernier cycle ({dernier.artefact:+d}, au pire "
             f"{self.artefact_max} sur tout le run) mesure ce qui bouge SANS la memoire : "
@@ -296,7 +375,11 @@ class RapportCycles:
         )
         borne = ""
         attendu = self.effet_attendu_max()
-        if attendu:
+        if self.ecart != 0 and self.paires == (0, 0):
+            # Aucun test apparie possible : le dire passe AVANT tout discours sur le modele
+            # declare, parce que c'est ce qui manque a la mesure.
+            borne = self._budget_de_mesure()
+        elif attendu:
             if attendu < 1.0:
                 borne = (
                     f" Meme accorde partout ou il l'a ete, cet avertissement ne peut "
@@ -307,25 +390,26 @@ class RapportCycles:
                 )
             elif self.ecart == 0:
                 # Ecart EXACTEMENT nul : l'effet avait de la place et n'apparait nulle part.
+                # (Quand la portee est nulle, `attendu` est nul et on ne peut rien dire.)
                 borne = (
                     f" L'effet attendu a cette portee valait {attendu:.1f} reussite(s) sur "
                     f"{dernier.essais} : il avait de la place pour se voir, et il ne s'est "
                     f"pas vu. A ce niveau, la memoire est sans effet mesurable — et c'est "
                     f"bien un resultat, pas une absence de mesure."
                 )
-            else:
+            elif self.ecart != 0:
                 # Ecart NON NUL mais non significatif. Dire « sans effet » ici serait faux :
-                # l'effet est la, simplement plus petit que ce que 60 essais peuvent
+                # l'effet est la, simplement plus petit que ce que ces essais peuvent
                 # demontrer. On donne donc le BUDGET de mesure qu'il faudrait.
                 borne = self._budget_de_mesure()
         if verdict == "PROGRESSE":
             return (
-                f"ecart cumule +{self.ecart_cumule} sur {self.essais_cumules} essais, "
-                f"intervalle excluant zero ; dernier cycle +{dernier.ecart} sur "
+                f"ecart cumule +{self.ecart_cumule} sur {self.essais_cumules} paires "
+                f"appariees, dissociation DEMONTREE ; dernier cycle +{dernier.ecart} sur "
                 f"{dernier.essais} "
                 f"avec la memoire accumulee ({dernier.memo_avant} souvenir(s)) et l'intervalle "
                 f"exclut zero. Gain cumule sur le premier cycle : "
-                f"{self.gain_cumule():+d} reussite(s)." + couplage + portee
+                f"{self.gain_cumule():+d} reussite(s)." + apparie + couplage + portee
             )
         if dernier.ecart > 0:
             return (
@@ -333,7 +417,7 @@ class RapportCycles:
                 f"cumule {self.ecart_cumule:+d} sur {self.essais_cumules}) mais l'intervalle "
                 f"POOL CONTIENT zero : INDETERMINE. "
                 f"Ce n'est pas un echec — c'est une mesure qui n'a pas encore conclu."
-                + couplage + portee + borne
+                + apparie + couplage + portee + borne
             )
         cout = self.cout_du_plateau()
         ouverture = (
@@ -353,28 +437,45 @@ class RapportCycles:
             f"executables, et il ne represente pas le regime ou la VERIFICATION ne voit pas "
             f"l'erreur (plausibilite, choix de conception)."
         )
-        return ouverture + "." + couplage + portee + borne + lecture
+        return ouverture + "." + apparie + couplage + portee + borne + lecture
 
     def essais_requis(self) -> int:
-        """Combien d'essais par bras pour DEMONTRER l'ecart CUMULE observe.
+        """Combien de PAIRES pour demontrer la dissociation observee (test apparie).
 
-        Reutilise `essais_necessaires` du banc d'incertitude — une seule implementation de
-        cette formule dans le depot. Rend 0 quand l'ecart observe est nul : aucun nombre
-        d'essais ne « demontrera » un ecart nul, il EST le resultat.
+        La version precedente utilisait la formule pour deux echantillons INDEPENDANTS sur
+        les taux des deux bras : elle ignorait l'appariement, donc elle surestimait
+        largement le budget necessaire. Ici on demande le nombre de paires qu'il faut pour
+        que la loi binomiale des dissociations departage b contre c.
+
+        Formule : n tel que la borne inferieure de l'intervalle de Wald sur la proportion de
+        dissociations favorables exclue 1/2, a 95 % et 80 % de puissance.
+        Rend 0 quand b == c : aucune dissociation nette, il n'y a rien a demontrer.
         """
-        if not self.cycles or not self.essais_cumules:
+        b, c = self.paires
+        if b == c:
             return 0
-        from ..bench.incertitude import essais_necessaires
+        import math
 
-        temoin = sum(c.temoin for c in self.cycles) / self.essais_cumules
-        chaud = sum(c.chaud for c in self.cycles) / self.essais_cumules
-        return essais_necessaires(temoin, chaud)
+        p = b / (b + c)
+        z_alpha, z_beta = 1.959963984540054, 0.8416212335729143
+        # n dissociations necessaires pour separer p de 1/2
+        n_dissociations = math.ceil(
+            ((z_alpha * math.sqrt(0.25) + z_beta * math.sqrt(p * (1 - p))) / (p - 0.5)) ** 2
+        )
+        taux_dissociation = (b + c) / self.essais_cumules if self.essais_cumules else 1.0
+        return math.ceil(n_dissociations / taux_dissociation) if taux_dissociation else 0
 
     def _budget_de_mesure(self) -> str:
-        """Le texte qui transforme « INDETERMINE » en decision : combien d'essais, combien de temps."""
-        requis = self.essais_requis()
-        if not requis:
+        """Le texte qui transforme « INDETERMINE » en decision : combien de paires, et de temps.
+
+        Il est rendu des qu'il y a une MESURE, meme si le budget de paires est nul : la
+        comparaison entre l'effet observe et l'effet DECLARE reste valable, et c'est souvent
+        elle qui dit qu'il y a bien un effet. Conditionner tout ce bloc au budget faisait
+        disparaitre cette phrase — un test l'a attrape.
+        """
+        if not self.cycles or not self.essais_cumules:
             return ""
+        requis = self.essais_requis()
         mesure = self.essais_cumules
         taux = sum(c.chaud for c in self.cycles) / mesure
         reference = sum(c.temoin for c in self.cycles) / mesure
@@ -396,13 +497,28 @@ class RapportCycles:
                 if 0.3 <= rapport_modele <= 2.0
                 else ""
             )
+        b, c = self.paires
+        if b + c == 0:
+            # Aucune dissociation enregistree : le test apparie ne PEUT pas conclure. Le
+            # dire est indispensable, sinon « PLATEAU » se lit « pas d'effet » alors que le
+            # chiffre dit seulement « pas de test possible ».
+            return (
+                " Ce cumul a ete mesure sans le relevé des paires (une mission ou les deux "
+                "bras divergent) : le test APPARIE, celui de ce plan experimental, ne peut "
+                "pas conclure sur ces donnees. Relancer avec la version courante du "
+                "protocole pour l'obtenir." + accord
+            )
+        budget = (
+            f" Pour le demontrer au seuil de 95 % avec une puissance de 80 %, il faudrait "
+            f"environ {requis} PAIRES — ce protocole en a mesure {mesure}, soit "
+            f"{rapport:.1f} fois moins." if requis else ""
+        )
         return (
-            f" L'ecart observe ({self.ecart_cumule:+d} sur {mesure} essais cumules, soit "
-            f"{points:+.1f} point(s)) existe mais n'est pas DEMONTRE. Pour le demontrer au "
-            f"seuil de 95 % avec une puissance de 80 %, il faudrait {requis} essais par bras "
-            f"— ce protocole en a mesure {mesure}, soit {rapport:.0f} fois moins. A cette "
-            f"taille d'ecart, augmenter les essais est la seule reponse honnete ; conclure "
-            f"maintenant serait lire du bruit." + accord
+            f" L'ecart observe ({self.ecart_cumule:+d} sur {mesure} paires appariees, soit "
+            f"{points:+.1f} point(s) ; dissociations {b} contre {c}, p = "
+            f"{self.p_valeur_appariee:.3f}) existe mais n'est pas DEMONTRE." + budget
+            + " A cette taille d'ecart, augmenter l'echantillon est la seule reponse "
+            "honnete ; conclure maintenant serait lire du bruit." + accord
         )
 
     @property
@@ -459,6 +575,7 @@ def run_cycles(
     warning_gain: float = 0.20,
     task_ids: tuple[str, ...] | None = None,
     max_memo: int = 200,
+    sur_cycle: object | None = None,
 ) -> RapportCycles:
     """Execute N cycles d'auto-amelioration et mesure chacun.
 
@@ -533,6 +650,7 @@ def run_cycles(
             memo_avant = memoire.size
             rappels = 0
             froid = temoin = chaud = 0
+            chaud_seul = temoin_seul = 0
             caracteres = avertis = appels = 0
             choix: dict[str, int] = {}
             for task in taches:
@@ -558,6 +676,13 @@ def run_cycles(
                         arm=arm, gain=0.0,
                     )
                     temoin += int(ok_temoin)
+                    # La DISSOCIATION, la seule chose que McNemar regarde : les missions ou
+                    # les deux bras different. Celles ou ils reussissent (ou echouent)
+                    # ensemble n'apprennent rien sur l'effet de la memoire.
+                    if ok_chaud and not ok_temoin:
+                        chaud_seul += 1
+                    elif ok_temoin and not ok_chaud:
+                        temoin_seul += 1
                     ok_froid, _, _, _ = _mission(task, graine, memoire_vive=False,
                                                  phase=f"froid{numero}", arm=arm)
                     froid += int(ok_froid)
@@ -570,7 +695,12 @@ def run_cycles(
                 rappels=rappels, froid=froid, temoin=temoin, chaud=chaud,
                 essais=len(taches) * runs, caracteres_memoire=caracteres,
                 avertis=avertis, appels=appels,
+                chaud_seul=chaud_seul, temoin_seul=temoin_seul,
             ))
+            if callable(sur_cycle):
+                # ECRITURE IMMEDIATE : une coupure ne perd que le cycle en cours. Le cycle
+                # rendu par le rappel porte son numero GLOBAL (celui du cumul).
+                result.cycles[-1] = sur_cycle(result.cycles[-1])
             result.choix_dernier_cycle = choix
 
         # Le bandit : ce qu'il a choisi au dernier cycle, et ce que chaque bras a rapporte.
@@ -622,6 +752,230 @@ def run_cycles(
             result.bas, result.haut = bas, haut
             result.tranche = bool(bas > 0.0 or haut < 0.0)
     return result
+
+
+# -- cumul entre executions -----------------------------------------------------------------
+#
+# POURQUOI CE BLOC EXISTE. Une mesure de 300 missions dure une vingtaine de minutes, et
+# tout le rapport n'etait ecrit qu'a la FIN : une coupure au bout de dix-huit minutes perdait
+# la totalite du travail (mesure vecue, deux fois). Les cycles sont donc ecrits au fur et a
+# mesure, et `jio learn --cumul FICHIER` empile les executions.
+#
+# Le cumul n'est pas un bricolage : chaque execution est une REPLICATION independante du
+# meme protocole (memes taches, memes graines dans chaque cycle, memoire repartant vide).
+# Reunir des replications independantes est la facon normale d'augmenter la resolution d'une
+# mesure — et le rapport le dit au lieu de le laisser deviner.
+
+_CUMUL = "cycles.jsonl"
+
+
+def _compteurs(cycle: "Cycle", numero: int) -> dict[str, object]:
+    return {
+        "numero": numero,
+        "froid": cycle.froid, "temoin": cycle.temoin, "chaud": cycle.chaud,
+        "essais": cycle.essais, "avertis": cycle.avertis, "appels": cycle.appels,
+        "caracteres_memoire": cycle.caracteres_memoire,
+        "memo_avant": cycle.memo_avant, "memo_apres": cycle.memo_apres,
+        "rappels": cycle.rappels, "artefact": cycle.artefact, "ecart": cycle.ecart,
+        # Les paires discordantes doivent survivre au cumul : sans elles, un cumul relu ne
+        # pourrait plus faire le test APPARIE — celui qui correspond au plan experimental.
+        "chaud_seul": cycle.chaud_seul, "temoin_seul": cycle.temoin_seul,
+    }
+
+
+class Cumul:
+    """Un cumul de cycles ECRIT AU FUR ET A MESURE, sur disque.
+
+    POURQUOI CETTE CLASSE, et pas une fonction appelee a la fin. Une mesure de 300 missions
+    dure une vingtaine de minutes ; deux fois de suite elle a ete perdue EN ENTIER parce que
+    le rapport n'etait ecrit qu'a la fin et que l'environnement a redemarre pendant le run.
+    Une promesse de robustesse qui n'ecrit qu'a la fin n'est pas une promesse tenue :
+    `ajouter` ecrit une ligne PAR CYCLE, immediatement, donc une coupure ne perd que le cycle
+    en cours.
+
+    Deux garde-fous, et le second est le plus important :
+
+      * le REGIME (competence, tours, gain) doit coincider entre executions — un melange de
+        regimes ne repond a aucune question ;
+      * chaque execution utilise un BLOC DE GRAINES distinct. Deux executions qui rejouent
+        les memes graines ne sont pas deux mesures : cumuler sans le voir ferait grossir le
+        nombre d'essais et resserrer l'intervalle AUTOUR DE RIEN.
+    """
+
+    def __init__(
+        self, chemin: Path, *, skill: float, runs: int = 0, rounds: int = 0,
+        gain: float = 0.0, seed_base: int = 0,
+    ) -> None:
+        self.chemin = Path(chemin)
+        self.verrou = self.chemin.with_suffix(self.chemin.suffix + ".verrou")
+        self._poser_le_verrou()
+        self.skill, self.runs, self.rounds, self.gain = skill, runs, rounds, gain
+        self.seed_base = seed_base
+        self._entete: dict[str, object] = {
+            "skill": skill, "runs": runs, "rounds": rounds, "gain": gain,
+        }
+        self._lignes = self._lire()
+        self._verifier_le_regime()
+        self._deja_entete = any(ligne.get("type") == "entete" for ligne in self._lignes)
+        self._numero = max(
+            [int(l.get("numero", 0)) for l in self._lignes if l.get("type") == "cycle"],
+            default=0,
+        )
+        self._replication_ecrite = False
+
+    # -- verrou -------------------------------------------------------------- #
+
+    def _poser_le_verrou(self) -> None:
+        """Refuse deux mesures SIMULTANEES sur le meme cumul. Sans ce verrou, les deux
+        liraient le meme nombre de cycles, en deduiraient le MEME bloc de graines, et
+        rejoueraient exactement les memes tirages : le compte d'essais doublerait sans
+        qu'une preuve soit ajoutee — le piege que tout ce mecanisme existe pour eviter.
+        """
+        import os
+
+        try:
+            descripteur = os.open(self.verrou, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            raise ValueError(
+                f"une autre mesure ecrit deja dans {self.chemin} (verrou {self.verrou.name})."
+                " Deux mesures simultanees rejoueraient les MEMES graines : attendre la fin,"
+                " ou supprimer le verrou s'il est reste d'un processus tue."
+            ) from None
+        with os.fdopen(descripteur, "w", encoding="utf-8") as flux:
+            flux.write(str(os.getpid()))
+
+    def lever_le_verrou(self) -> None:
+        try:
+            self.verrou.unlink()
+        except OSError:
+            pass
+
+    # -- lecture / ecriture -------------------------------------------------- #
+
+    def _lire(self) -> list[dict[str, object]]:
+        import json
+
+        if not self.chemin.exists():
+            return []
+        out: list[dict[str, object]] = []
+        for ligne in self.chemin.read_text(encoding="utf-8").splitlines():
+            if not ligne.strip():
+                continue
+            try:
+                out.append(json.loads(ligne))
+            except ValueError:
+                continue
+        return out
+
+    def _verifier_le_regime(self) -> None:
+        for ancienne in self._lignes:
+            if ancienne.get("type") != "entete":
+                continue
+            for cle in ("skill", "rounds", "gain"):
+                if ancienne.get(cle) != self._entete.get(cle):
+                    raise ValueError(
+                        f"cumul impossible : {cle} valait {ancienne.get(cle)!r} dans "
+                        f"{self.chemin.name} et vaut {self._entete.get(cle)!r} maintenant. "
+                        "Un cumul entre deux regimes differents ne repond a aucune question."
+                    )
+
+    def _ecrire(self, ligne: dict[str, object]) -> None:
+        import json
+
+        self.chemin.parent.mkdir(parents=True, exist_ok=True)
+        with self.chemin.open("a", encoding="utf-8") as flux:
+            flux.write(json.dumps(ligne, ensure_ascii=False) + "\n")
+        self._lignes.append(ligne)
+
+    def ajouter(self, cycle: "Cycle") -> "Cycle":
+        """Ecrit UN cycle, tout de suite. Rend le cycle avec son numero GLOBAL."""
+        if not self._deja_entete:
+            self._ecrire({"type": "entete", **self._entete})
+            self._deja_entete = True
+        if not self._replication_ecrite:
+            self._ecrire({
+                "type": "replication", "seed_base": self.seed_base, "runs": self.runs,
+                "rounds": self.rounds,
+            })
+            self._replication_ecrite = True
+        self._numero += 1
+        self._ecrire({"type": "cycle", **_compteurs(cycle, self._numero)})
+        from dataclasses import replace as _replace
+
+        return _replace(cycle, numero=self._numero)
+
+    def rapport(self) -> "RapportCycles":
+        return depuis_cumul(self.chemin)
+
+    @property
+    def cycles_deja_mesures(self) -> int:
+        return max(
+            [int(l.get("numero", 0)) for l in self._lignes if l.get("type") == "cycle"],
+            default=0,
+        )
+
+
+def cumuler(
+    chemin: Path, rapport: "RapportCycles", *, runs: int = 0, rounds: int = 0,
+    seed_base: int = 0,
+) -> "RapportCycles":
+    """Empile TOUT un rapport deja mesure et rend le cumul relu depuis le disque."""
+    cumul = Cumul(
+        chemin, skill=rapport.skill, runs=runs, rounds=rounds,
+        gain=rapport.warning_gain, seed_base=seed_base,
+    )
+    try:
+        for cycle in rapport.cycles:
+            cumul.ajouter(cycle)
+        return cumul.rapport()
+    finally:
+        # Le verrou protege une MESURE EN COURS. Ici le rapport est deja mesure : on le
+        # relache toujours, sinon un appelant qui enchaine deux cumuls resterait bloque.
+        cumul.lever_le_verrou()
+
+
+def depuis_cumul(chemin: Path) -> "RapportCycles":
+    """Relit un cumul et reconstruit un rapport. Rend un rapport VIDE si le fichier n'existe pas."""
+    import json
+
+    chemin = Path(chemin)
+    if not chemin.exists():
+        return RapportCycles()
+    cycles: list[Cycle] = []
+    replications: list[dict[str, object]] = []
+    entete: dict[str, object] = {}
+    for ligne in chemin.read_text(encoding="utf-8").splitlines():
+        if not ligne.strip():
+            continue
+        try:
+            donnee = json.loads(ligne)
+        except ValueError:
+            continue
+        if donnee.get("type") == "entete":
+            entete = donnee
+            continue
+        if donnee.get("type") == "replication":
+            replications.append(dict(donnee))
+            continue
+        if donnee.get("type") != "cycle":
+            continue
+        cycles.append(Cycle(
+            numero=int(donnee.get("numero", 0)),
+            memo_avant=int(donnee.get("memo_avant", 0)),
+            memo_apres=int(donnee.get("memo_apres", 0)),
+            rappels=int(donnee.get("rappels", 0)),
+            froid=int(donnee.get("froid", 0)), temoin=int(donnee.get("temoin", 0)),
+            chaud=int(donnee.get("chaud", 0)), essais=int(donnee.get("essais", 0)),
+            caracteres_memoire=int(donnee.get("caracteres_memoire", 0)),
+            avertis=int(donnee.get("avertis", 0)), appels=int(donnee.get("appels", 0)),
+            chaud_seul=int(donnee.get("chaud_seul", 0)),
+            temoin_seul=int(donnee.get("temoin_seul", 0)),
+        ))
+    return RapportCycles(
+        cycles=cycles, skill=float(entete.get("skill", 0.0)),
+        runs=int(entete.get("runs", 0)), rounds=int(entete.get("rounds", 0)),
+        warning_gain=float(entete.get("gain", 0.0)), replications=replications,
+    )
 
 
 def _set_gain(engine: object, gain: float) -> None:

@@ -2508,13 +2508,13 @@ def _apprendre_le_gain(args: argparse.Namespace) -> float:
     ce que le protocole peut conclure. La calibration A/B dirait, sur un vrai modele, quel
     gain une reprise apres echec produit — c'est ce que fait l'option `--calibrer-gain`.
     """
-    if getattr(args, "calibrer_gain", False):
+    if getattr(args, "calibrer_gain", False) and float(getattr(args, "gain", 0.20)) == 0.20:
         print("  [CALIBRATION] --calibrer-gain demande : le gain d'avertissement sera")
         print("    MESURE par le protocole A/B au lieu d'etre declare. Non implemente a ce")
         print("    jour : le protocole multi-cycles refuse de tourner avec une modelisation")
         print("    non calibree plutot que de publier un chiffre dont la borne est supposee.")
         return -1.0
-    return 0.20
+    return float(getattr(args, "gain", 0.20))
 
 
 def _learn_cycles(args: argparse.Namespace) -> int:
@@ -2525,7 +2525,7 @@ def _learn_cycles(args: argparse.Namespace) -> int:
     Ce sont deux questions differentes : la premiere a deja montre un gain NON MESURABLE au
     niveau du banc, et c'est precisement pour cela que la seconde existe.
     """
-    from .learn.cycles import TASKS, run_cycles
+    from .learn.cycles import TASKS, Cumul, depuis_cumul, run_cycles
 
     missions = args.cycles * 3 * len(TASKS) * max(args.runs, 1)
     print()
@@ -2558,10 +2558,44 @@ def _learn_cycles(args: argparse.Namespace) -> int:
     gain = _apprendre_le_gain(args)
     if gain < 0.0:
         return 2
-    res = run_cycles(
-        skill=args.skill, runs=args.runs, cycles=args.cycles, rounds=args.rounds,
-        warning_gain=gain,
-    )
+    # -- le cumul ------------------------------------------------------------------------ #
+    # Une mesure de 300 missions dure une vingtaine de minutes et n'etait ecrite qu'a la fin :
+    # une coupure a la 18e minute perdait tout (vecu deux fois). Les cycles sont donc ecrits
+    # au fur et a mesure, et `--cumul` empile les executions.
+    chemin = Path(args.cumul) if getattr(args, "cumul", "") else None
+    seed_base = 0
+    cumul: Cumul | None = None
+    if chemin is not None:
+        deja = len(depuis_cumul(chemin).cycles)
+        if deja:
+            # DES GRAINES DISTINCTES, sinon ce n'est pas une replication. Rejouer les memes
+            # graines donnerait exactement le meme resultat : le nombre d'essais doublerait
+            # sans qu'une seule preuve soit ajoutee, et l'intervalle se resserrerait autour de
+            # rien. C'est le piege le plus dangereux de tout ce protocole.
+            seed_base = 1000 * deja
+            print(f"    CUMUL : {deja} cycle(s) deja mesure(s) dans {chemin.name} ; cette")
+            print(f"    execution utilise des graines DISTINCTES (bloc {seed_base}) — rejouer les")
+            print("    memes graines doublerait le compte sans ajouter une seule preuve.")
+            print()
+        try:
+            cumul = Cumul(chemin, skill=args.skill, runs=args.runs, rounds=args.rounds,
+                          gain=gain, seed_base=seed_base)
+        except ValueError as erreur:
+            print(f"  [PROBLEME] {erreur}")
+            return 1
+        print("    Chaque cycle est ECRIT des qu'il est mesure : une coupure ne perd que le")
+        print(f"    cycle en cours (fichier {chemin}). Le cumul est VERROUILLE pendant la mesure :")
+        print("    deux mesures simultanees rejoueraient les memes graines.")
+        print()
+    try:
+        res = run_cycles(
+            skill=args.skill, runs=args.runs, cycles=args.cycles, rounds=args.rounds,
+            warning_gain=gain, seed_base=seed_base,
+            sur_cycle=cumul.ajouter if cumul is not None else None,
+        )
+    finally:
+        if cumul is not None:
+            cumul.lever_le_verrou()
     # Le debit est MESURE pendant ce run, pas suppose : c'est lui qui convertit un budget
     # d'essais en duree reelle, et une duree annoncee est ce qui fait prendre une decision.
     ecoule = max(time.monotonic() - debut, 1e-6)
@@ -2569,6 +2603,25 @@ def _learn_cycles(args: argparse.Namespace) -> int:
     if not res.cycles:
         print("  [INDETERMINE] aucun cycle mesure (cycles ou runs nul).")
         return 2
+    if chemin is not None:
+        # Le cumul a deja ete ecrit cycle par cycle ; on le RELIT depuis le disque, ce qui
+        # verifie au passage que ce qui a ete ecrit est relisible.
+        res = depuis_cumul(chemin)
+        print(f"  CUMUL : {len(res.cycles)} cycle(s) au total dans {chemin}")
+        if res.replications_independantes:
+            blocs = ", ".join(str(b) for b in res.blocs_de_graines)
+            print(f"  REPLICATIONS INDEPENDANTES : {res.replications_independantes} "
+                  f"(blocs de graines : {blocs})")
+            if res.replications_independantes < len(res.replications):
+                print("    ATTENTION : deux executions ont utilise le MEME bloc de graines — "
+                      "elles ne comptent que pour une.")
+        print()
+    _afficher_le_rapport_cycles(res, debit=debit)
+    return 0
+
+
+def _afficher_le_rapport_cycles(res: object, *, debit: float) -> None:
+    """L'affichage du protocole multi-cycles. Sorti de la commande pour etre lisible."""
     print(f"    {'cycle':>5} {'memoire':>8} {'rappels':>7} {'jetons':>6} "
           f"{'froid':>9} {'temoin':>9} {'chaud':>9} {'artef':>6} {'ecart':>7}")
     print(f"    {'-' * 5} {'-' * 8} {'-' * 7} {'-' * 6} {'-' * 9} {'-' * 9} {'-' * 9} "
@@ -2583,11 +2636,17 @@ def _learn_cycles(args: argparse.Namespace) -> int:
     total = sum(c.appels for c in res.cycles)
     print(f"  PORTEE DU LEVIER : {armes}/{total} appel(s) de generation avertis "
           f"({res.portee:.1%}) — c'est ce qui borne tout effet possible de la memoire.")
+    b, c = res.paires
+    bas, haut = res.intervalle_apparie
+    print(f"  TEST APPARIE (McNemar exact, le plan experimental) : la memoire fait REUSSIR "
+          f"seule {b} fois, ECHOUER seule {c} fois — p = {res.p_valeur_appariee:.4f}")
+    print(f"    IC95 de la difference (paires) : [{bas:+.3f} ; {haut:+.3f}]"
+          + ("   -> zéro EXCLU" if res.tranche_apparie else "   -> contient zéro"))
     requis = res.essais_requis()
     if requis:
-        # 3 bras par essai mesure : c'est le cout reel du protocole, pas une estimation.
+        # 3 bras par paire mesuree : c'est le cout reel du protocole, pas une estimation.
         minutes = requis * 3 / debit / 60.0 if debit else 0.0
-        print(f"  ESSAIS REQUIS POUR DEMONTRER L'ECART OBSERVE : {requis} par bras, soit "
+        print(f"  PAIRES REQUISES POUR DEMONTRER LA DISSOCIATION : ~{requis}, soit "
               f"~{minutes:.0f} min ici au debit mesure ({debit:.2f} essai/s).")
         print("    (Mesure a 95 % de confiance et 80 % de puissance, formule du banc ; "
               "c'est un budget, pas un verdict.)")
@@ -2612,7 +2671,6 @@ def _learn_cycles(args: argparse.Namespace) -> int:
     print("      difficulte la VERIFICATION suffisait deja. Le banc ne represente pas le")
     print("      regime ou la verification ne voit pas l'erreur (plausibilite, conception).")
     print()
-    return 0
 
 
 def _classify_failure(stderr: str, exit_code: int) -> str:
@@ -3612,6 +3670,20 @@ def build_parser() -> argparse.ArgumentParser:
     le.add_argument("--runs", type=int, default=3, help="tirages par tache et par phase")
     le.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
                     help="tours de boucle maximum")
+    le.add_argument(
+        "--cumul", default="",
+        help="fichier ou EMPILER les cycles mesures (JSONL). Chaque execution est une "
+             "replication independante : les graines sont decalees pour ne jamais rejouer "
+             "la meme, et le rapport affiche est le CUMUL. Une mesure longue survit ainsi a "
+             "une coupure, et la resolution s'accumule execution apres execution.",
+    )
+    le.add_argument(
+        "--gain", type=float, default=0.20,
+        help="gain RELATIF declare par avertissement (modelisation, defaut 0.20). Le "
+             "protocole mesure l'effet d'un mecanisme DECLARE : le regler haut sert de "
+             "CONTROLE POSITIF — un instrument qui ne detecte jamais un signal connu ne "
+             "peut pas etre cru quand il n'en detecte aucun.",
+    )
     le.add_argument(
         "--calibrer-gain", action="store_true",
         help="mesurer le gain d'avertissement par le protocole A/B au lieu de le declarer "

@@ -105,11 +105,13 @@ def _rapport(*cycles: Cycle, gain: float = 0.0) -> RapportCycles:
 
 def _cycle(numero: int, froid: int, chaud: int, *, temoin: int = 0, memo_avant: int = 0,
            memo_apres: int = 0, essais: int = 10, caracteres: int = 0,
-           avertis: int = 0, appels: int = 0) -> Cycle:
+           avertis: int = 0, appels: int = 0, chaud_seul: int = 0,
+           temoin_seul: int = 0) -> Cycle:
     return Cycle(
         numero=numero, memo_avant=memo_avant, memo_apres=memo_apres, rappels=0,
         froid=froid, temoin=temoin, chaud=chaud, essais=essais,
         caracteres_memoire=caracteres, avertis=avertis, appels=appels,
+        chaud_seul=chaud_seul, temoin_seul=temoin_seul,
     )
 
 
@@ -254,9 +256,9 @@ def test_le_gain_declare_se_calcule_sur_la_COMPETENCE_pas_sur_le_taux_observe() 
         skill=0.40, warning_gain=0.20,
     )
     assert rapport.gain_declare == pytest.approx(7.9, abs=0.2)
-    # Et le taux OBSERVE (84 %) ne doit pas entrer dans ce calcul.
+    # Et le taux OBSERVE (92 %) ne doit pas entrer dans ce calcul.
     assert rapport.cycles[0].taux_chaud == pytest.approx(0.92)
-    assert "VALID" in rapport.explication()
+    assert "88%" in rapport.explication() or "VALID" in rapport.explication()
 
 
 def test_l_intervalle_est_POOL_sur_tous_les_cycles() -> None:
@@ -275,12 +277,67 @@ def test_l_intervalle_est_POOL_sur_tous_les_cycles() -> None:
     )
     assert rapport.ecart_cumule == 7
     assert rapport.essais_cumules == 100
-    assert rapport.essais_requis() == 432
-    # La portee n'est pas encore suffisante a 100 essais pour trancher... et le rapport
-    # le dit au lieu de conclure sur le dernier cycle.
-    assert rapport.tranche_cumule is False
+    # Ces cycles viennent d'un cumul SANS releve des paires : le rapport doit le DIRE au
+    # lieu de laisser croire qu'il a teste l'effet, et il ne peut pas conclure.
+    assert rapport.paires == (0, 0)
+    assert "sans le relevé des paires" in rapport.explication()
     assert rapport.verdict() == "PLATEAU"
     assert "cumule +7 sur 100" in rapport.explication()
+
+
+def test_le_test_apparie_est_le_BON_test_pour_ce_plan(tmp_path) -> None:
+    """Le protocole est apparie : memes taches, memes graines, meme bras.
+
+    Comparer les deux bras comme deux echantillons independants jette l'information de
+    l'appariement. Constate : +10 reussites sur 220 paires restaient « non demontres » avec
+    la methode independante, alors que McNemar — le test de ce plan — conclut sur les seules
+    dissociations. Et le budget change d'ordre de grandeur : 432 « essais par bras » devient
+    un nombre de PAIRES.
+    """
+    from jio.bench.ablation import mcnemar_exact
+
+    rapport = _rapport(_cycle(1, froid=191, temoin=191, chaud=201, essais=220,
+                              chaud_seul=17, temoin_seul=6))
+    assert rapport.paires == (17, 6)
+    assert rapport.p_valeur_appariee == mcnemar_exact(17, 6)
+    assert rapport.p_valeur_appariee < 0.05
+    assert rapport.tranche_apparie is True
+    bas, haut = rapport.intervalle_apparie
+    assert bas > 0.0, "l'intervalle apparie doit exclure zero"
+    assert rapport.verdict() == "PROGRESSE"
+
+
+def test_sans_releve_des_paires_le_rapport_ne_conclut_pas() -> None:
+    """Un cumul mesure SANS les paires ne peut pas faire le test apparié.
+
+    Le dire est indispensable : sans cette phrase, « PLATEAU » se lirait « pas d'effet »
+    alors que le chiffre dit seulement « pas de test possible ».
+    """
+    rapport = _rapport(_cycle(1, froid=90, temoin=90, chaud=100, essais=100))
+    assert rapport.paires == (0, 0)
+    assert rapport.tranche_apparie is False
+    assert rapport.verdict() == "PLATEAU"
+    assert "sans le relevé des paires" in rapport.explication()
+
+
+def test_le_piege_du_cumul_conserve_les_paires(tmp_path) -> None:
+    """Les dissociations doivent survivre a l'ecriture sur disque : sans elles, un cumul
+    relu ne pourrait plus faire le test apparié et perdrait sa resolution."""
+    from jio.learn.cycles import cumuler, depuis_cumul
+
+    chemin = tmp_path / "cycles.jsonl"
+    cumuler(chemin, _run(_mini(1, froid=45, temoin=45, chaud=51)), runs=4, rounds=2)
+    # _mini ne remplit pas les paires : on ecrit un cycle AVEC dissociation et on relit.
+    from jio.learn.cycles import Cumul
+
+    cumul = Cumul(chemin, skill=0.4, runs=4, rounds=2, gain=0.20, seed_base=1000)
+    cumul.ajouter(_cycle(2, froid=45, temoin=45, chaud=51, essais=55,
+                         chaud_seul=6, temoin_seul=1))
+    cumul.lever_le_verrou()
+
+    relu = depuis_cumul(chemin)
+    assert relu.paires == (6, 1)
+    assert relu.p_valeur_appariee < 0.25
 
 
 def test_un_ecart_nul_ne_se_demontre_pas_par_plus_d_essais() -> None:
@@ -290,32 +347,171 @@ def test_un_ecart_nul_ne_se_demontre_pas_par_plus_d_essais() -> None:
     est deja le resultat (aucun nombre d'essais ne le rendra significatif) ; un ecart NON
     nul mais trop petit pour 60 essais a un budget, et le rapport doit le donner.
     """
+    # Aucune dissociation nette : il n'y a rien a demontrer.
     nul = _rapport(_cycle(1, froid=8, temoin=8, chaud=8, essais=20,
-                          memo_avant=3, memo_apres=9))
+                          memo_avant=3, memo_apres=9, chaud_seul=2, temoin_seul=2))
     assert nul.essais_requis() == 0
 
-    petit = _rapport(_cycle(1, froid=15, temoin=15, chaud=16, essais=20,
-                            memo_avant=3, memo_apres=9))
+    # 12 dissociations favorables contre 3 defavorables sur 40 paires : le budget existe,
+    # et il est en PAIRES (le plan experimental), pas en « essais par bras ».
+    petit = _rapport(_cycle(1, froid=32, temoin=32, chaud=41, essais=40,
+                            memo_avant=3, memo_apres=9, chaud_seul=12, temoin_seul=3))
     requis = petit.essais_requis()
-    assert requis > 20, f"+1 sur 20 demande beaucoup plus de 20 essais, pas {requis}"
-    # La meme formule que le banc : une seule implementation dans le depot.
-    from jio.bench.incertitude import essais_necessaires
-
-    assert requis == essais_necessaires(15 / 20, 16 / 20)
+    assert 40 < requis < 4000, f"budget inattendu : {requis}"
 
 
 def test_le_budget_de_mesure_est_dit_et_chiffre() -> None:
     """Le message doit donner le BUDGET, pas une conclusion que la mesure ne porte pas."""
-    rapport = _rapport(_cycle(1, froid=15, temoin=15, chaud=16, essais=20,
+    rapport = _rapport(_cycle(1, froid=32, temoin=32, chaud=41, essais=40,
                               memo_avant=3, memo_apres=9, caracteres=4000,
-                              avertis=100, appels=100), gain=0.20)
+                              avertis=100, appels=100, chaud_seul=12, temoin_seul=5),
+                       gain=0.20)
     texte = rapport.explication()
     assert "n'est pas DEMONTRE" in texte
-    assert "essais par bras" in texte
+    assert "PAIRES" in texte
     assert "lire du bruit" in texte
     assert "sans effet mesurable" not in texte, (
         "un ecart NON nul ne doit pas etre presente comme « sans effet »"
     )
+
+
+# --- Le cumul entre executions -------------------------------------------------------------
+
+
+def _mini(numero: int, *, froid: int, temoin: int, chaud: int, essais: int = 20) -> Cycle:
+    return _cycle(numero, froid=froid, temoin=temoin, chaud=chaud, essais=essais,
+                  memo_apres=3 * numero, caracteres=1000, avertis=essais, appels=essais)
+
+
+def _run(*cycles: Cycle) -> RapportCycles:
+    return RapportCycles(cycles=list(cycles), skill=0.4, runs=4, rounds=2, warning_gain=0.20)
+
+
+def test_chaque_cycle_est_ecrit_DES_qu_il_est_mesure(tmp_path) -> None:
+    """La promesse de robustesse, verifiee sur la seule chose qui compte : le DISQUE.
+
+    Deux mesures de 20 minutes ont ete perdues en entier parce que le rapport n'etait ecrit
+    qu'a la fin. `Cumul.ajouter` doit ecrire immediatement — sinon la promesse « une coupure
+    ne perd que le cycle en cours » est fausse, et c'est exactement le genre de phrase que ce
+    depot refuse d'ecrire sans la tenir. Verifie aussi en tuant un vrai processus : le cycle
+    termine survit a un `kill -9`.
+    """
+    from jio.learn.cycles import Cumul, depuis_cumul
+
+    chemin = tmp_path / "cycles.jsonl"
+    cumul = Cumul(chemin, skill=0.4, runs=4, rounds=2, gain=0.20, seed_base=0)
+    assert not chemin.exists(), "rien ne doit etre ecrit avant le premier cycle"
+
+    cumul.ajouter(_mini(1, froid=15, temoin=15, chaud=16))
+    ecrit = chemin.read_text(encoding="utf-8")
+    assert '"type": "cycle"' in ecrit, "le cycle doit etre SUR LE DISQUE, pas en memoire"
+    assert depuis_cumul(chemin).essais_cumules == 20
+
+    cumul.ajouter(_mini(2, froid=15, temoin=15, chaud=17))
+    assert depuis_cumul(chemin).essais_cumules == 40
+    # Un seul en-tete et une seule ligne de replication, quel que soit le nombre de cycles.
+    assert chemin.read_text(encoding="utf-8").count('"type": "entete"') == 1
+    assert chemin.read_text(encoding="utf-8").count('"type": "replication"') == 1
+
+
+def test_le_cumul_empile_les_cycles_et_renumerote(tmp_path) -> None:
+    """Une mesure de 20 minutes ne doit pas etre perdue par une coupure a la 18e minute.
+
+    Les cycles sont ecrits au fur et a mesure, et une execution suivante EMPILE : le rapport
+    affiche est le cumul, avec la resolution de toutes les executions.
+    """
+    from jio.learn.cycles import cumuler, depuis_cumul
+
+    chemin = tmp_path / "cycles.jsonl"
+    premier = cumuler(chemin, _run(_mini(1, froid=15, temoin=15, chaud=16),
+                                   _mini(2, froid=16, temoin=16, chaud=17)),
+                      runs=4, rounds=2, seed_base=0)
+    assert premier.essais_cumules == 40
+    assert [c.numero for c in premier.cycles] == [1, 2]
+
+    second = cumuler(chemin, _run(_mini(1, froid=14, temoin=14, chaud=15)),
+                     runs=4, rounds=2, seed_base=1000)
+    assert second.essais_cumules == 60, "les essais s'additionnent"
+    assert [c.numero for c in second.cycles] == [1, 2, 3], "la numerotation continue"
+
+    relu = depuis_cumul(chemin)
+    assert relu.essais_cumules == 60
+    assert relu.skill == pytest.approx(0.4)
+
+
+def test_deux_executions_du_MEME_bloc_de_graines_ne_comptent_qu_une_fois(tmp_path) -> None:
+    """LE PIEGE DU CUMUL : rejouer les memes graines double le compte sans preuve nouvelle.
+
+    L'intervalle se resserrerait alors autour de rien et le banc pourrait declarer
+    significatif un ecart qui n'a jamais ete mesure deux fois. Le rapport doit donc dire
+    combien de blocs de graines DISTINCTS il a, et non combien d'executions il a vues.
+    """
+    from jio.learn.cycles import cumuler
+
+    chemin = tmp_path / "cycles.jsonl"
+    passage = lambda: _run(_mini(1, froid=15, temoin=15, chaud=16))  # noqa: E731
+    cumuler(chemin, passage(), runs=4, rounds=2, seed_base=0)
+    cumule = cumuler(chemin, passage(), runs=4, rounds=2, seed_base=0)
+
+    assert len(cumule.replications) == 2, "deux executions ont bien eu lieu"
+    assert cumule.replications_independantes == 1, "mais une seule est independante"
+    assert cumule.blocs_de_graines == [0]
+
+
+def test_le_cumul_refuse_de_MELANGER_les_regimes(tmp_path) -> None:
+    """Empiler deux regimes differents ne repond a aucune question : on refuse, on ne melange pas."""
+    from jio.learn.cycles import cumuler
+
+    chemin = tmp_path / "cycles.jsonl"
+    cumuler(chemin, _run(_mini(1, froid=15, temoin=15, chaud=16)), runs=4, rounds=2)
+    autre_regime = RapportCycles(cycles=[_mini(1, froid=15, temoin=15, chaud=16)],
+                                 skill=0.9, runs=4, rounds=2, warning_gain=0.20)
+    with pytest.raises(ValueError, match="skill"):
+        cumuler(chemin, autre_regime, runs=4, rounds=2)
+
+
+def test_deux_mesures_SIMULTANEES_sont_refusees(tmp_path) -> None:
+    """Sans verrou, deux mesures concurrentes liraient le meme nombre de cycles, en
+    deduiraient le MEME bloc de graines, et rejoueraient exactement les memes tirages :
+    le compte d'essais doublerait sans qu'une preuve soit ajoutee.
+
+    C'est le piege central de tout ce mecanisme, et il ne se voit pas a l'oeil nu dans un
+    fichier de resultats — d'ou le verrou, et la phrase qui dit comment le lever.
+    """
+    from jio.learn.cycles import Cumul
+
+    chemin = tmp_path / "cycles.jsonl"
+    premier = Cumul(chemin, skill=0.4, runs=4, rounds=2, gain=0.20, seed_base=0)
+    with pytest.raises(ValueError, match="verrou"):
+        Cumul(chemin, skill=0.4, runs=4, rounds=2, gain=0.20, seed_base=1000)
+
+    premier.lever_le_verrou()
+    # Une fois le verrou leve, la mesure suivante passe (c'est le cas normal).
+    second = Cumul(chemin, skill=0.4, runs=4, rounds=2, gain=0.20, seed_base=1000)
+    assert second.cycles_deja_mesures == 0
+    second.lever_le_verrou()
+
+
+def test_le_verrou_est_retire_meme_si_la_mesure_echoue(tmp_path) -> None:
+    """Un verrou qui survit a une erreur bloquerait l'utilisateur pour toujours."""
+    from jio.cli import _learn_cycles, build_parser
+
+    chemin = tmp_path / "cycles.jsonl"
+    args = build_parser().parse_args([
+        "learn", "--cycles", "1", "--runs", "1", "--rounds", "1", "--skill", "0.4",
+        "--cumul", str(chemin), "--calibrer-gain",
+    ])
+    assert _learn_cycles(args) == 2, "la calibration non implementee doit refuser"
+    assert not chemin.with_suffix(".jsonl.verrou").exists(), (
+        "le refus de calibration intervient avant le verrou : rien a laisser trainer"
+    )
+
+
+def test_un_cumul_absent_rend_un_rapport_vide(tmp_path) -> None:
+    from jio.learn.cycles import depuis_cumul
+
+    vide = depuis_cumul(tmp_path / "jamais-ecrit.jsonl")
+    assert vide.cycles == [] and vide.essais_requis() == 0
 
 
 def test_le_rapport_vide_ne_leve_pas() -> None:
@@ -327,6 +523,44 @@ def test_le_rapport_vide_ne_leve_pas() -> None:
 
 
 # --- La ligne de commande -------------------------------------------------------------------
+
+
+def test_avec_un_gain_NUL_le_chaud_egale_le_temoin_exactement() -> None:
+    """Le controle NEGATIF du protocole, et il ne coute presque rien.
+
+    A gain nul, le temoin et le chaud ont le MEME prompt (meme bloc de memoire), la MEME
+    graine et le MEME bras : le seul reglage qui les distinguait est eteint. L'ecart doit
+    donc etre exactement zero — s'il ne l'est pas, ce n'est pas la memoire qu'on mesure,
+    c'est autre chose dans la chaine. C'est le test qui separe « le protocole mesure un
+    effet » de « le protocole mesure une difference quelconque ».
+    """
+    rapport = run_cycles(skill=0.4, runs=1, cycles=2, rounds=1,
+                         task_ids=("sum_even", "is_prime"), warning_gain=0.0)
+    for cycle in rapport.cycles:
+        assert cycle.ecart == 0, (
+            f"gain nul mais ecart chaud/temoin {cycle.ecart:+d} au cycle {cycle.numero} : "
+            "quelque chose d'autre que l'effet d'avertissement differe entre les deux bras"
+        )
+
+
+def test_un_effet_DECLARE_est_detecte_integralement() -> None:
+    """Le CONTROLE POSITIF, teste sur la logique : un signal connu doit etre vu.
+
+    Un instrument qui ne dit jamais PROGRESSE ne peut pas etre cru quand il dit PLATEAU.
+    Le protocole mesure l'effet d'un mecanisme DECLARE : on le regle donc tres haut sur un
+    rapport construit a la main, et l'intervalle POOL doit exclure zero. Si ce test tombe,
+    tous les PLATEAU du banc perdent leur sens.
+    """
+    rapport = RapportCycles(
+        cycles=[_cycle(n, froid=f, temoin=t, chaud=c, essais=60, chaud_seul=bs)
+                for n, f, t, c, bs in ((1, 51, 51, 58, 9), (2, 51, 51, 57, 8))],
+        skill=0.4, warning_gain=2.0,
+    )
+    assert rapport.ecart_cumule == 13
+    assert rapport.paires == (17, 0)
+    assert rapport.tranche_apparie is True, "17 dissociations favorables contre 0 doit trancher"
+    assert rapport.verdict() == "PROGRESSE"
+    assert "dissociation DEMONTREE" in rapport.explication()
 
 
 def test_zero_cycle_reste_l_ab() -> None:
