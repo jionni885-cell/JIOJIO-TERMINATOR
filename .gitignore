@@ -12,3 +12,7 @@ dist/
 # n'ont pas leur place dans l'historique.
 *.avant-jio
 *.jio
+
+# Un verrou est un etat d'execution, pas une preuve : il change a chaque campaigne et ne
+# doit pas entrer dans l'histoire du depot (il a ete committe une fois, par `git add -A`).
+*.verrou

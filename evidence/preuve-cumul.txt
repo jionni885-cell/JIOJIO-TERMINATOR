@@ -1,0 +1,94 @@
+=== BLOC 1 ===
+
+  AUTO-AMELIORATION MULTI-CYCLES  ·  trois bras apparies par cycle
+    competence simulee 0.4  ·  2 cycles  ·  8 tirage(s) par tache  ·  2 tours  ·  5 taches
+    cout annonce : 240 mission(s) x 2.3 s/mission mesure = ~9 min sur 2 cœurs
+    Par mission : CHAUD (memoire, avertissement actif) -> TEMOIN (memoire
+    presente, avertissement desactive) -> FROID (aucune memoire). Memes taches,
+    memes graines, MEME bras : le temoin separe l'effet de la memoire du bruit.
+
+    Chaque cycle est ECRIT des qu'il est mesure : une coupure ne perd que le
+    cycle en cours (fichier evidence/preuve-cumul.jsonl). Le cumul est VERROUILLE pendant la mesure :
+    deux mesures simultanees rejoueraient les memes graines.
+
+  CUMUL : 2 cycle(s) au total dans evidence/preuve-cumul.jsonl
+  REPLICATIONS INDEPENDANTES : 1 (blocs de graines : 0)
+
+    cycle  memoire rappels jetons     froid    temoin     chaud  artef   ecart
+    ----- -------- ------- ------ --------- --------- --------- ------ -------
+     1         0    31    9609   33/40    33/40    36/40     +0     +3
+     2        11    40   14997   36/40    36/40    38/40     +0     +2
+
+  MEMOIRE ACCUMULEE : 17 souvenir(s) apres 2 cycle(s)
+  BRUIT DE FOND (froid -> temoin, sans effet de memoire) : 0 reussite(s) au pire cycle
+  PORTEE DU LEVIER : 209/229 appel(s) de generation avertis (91.3%) — c'est ce qui borne tout effet possible de la memoire.
+  TEST APPARIE (McNemar exact, le plan experimental) : la memoire fait REUSSIR seule 5 fois, ECHOUER seule 0 fois — p = 0.0625
+    IC95 de la difference (paires) : [+0.009 ; +0.116]   -> contient zéro
+  PAIRES REQUISES POUR DEMONTRER LA DISSOCIATION : ~64, soit ~9 min ici au debit mesure (0.37 essai/s).
+    (Mesure a 95 % de confiance et 80 % de puissance, formule du banc ; c'est un budget, pas un verdict.)
+  DEBIT MESURE : 0.37 essai(s)/s sur cette machine.
+
+  VERDICT : PLATEAU
+
+    ecart positif (dernier cycle +2 sur 40 ; cumule +5 sur 80) mais l'intervalle POOL CONTIENT zero : INDETERMINE. Ce n'est pas un echec — c'est une mesure qui n'a pas encore conclu. TEST APPARIE (McNemar exact) : 5 mission(s) ou la memoire fait REUSSIR seule, 0 ou elle fait ECHOUER seule, sur 80 paires — p = 0.0625. C'est le test du plan experimental (memes taches, memes graines, meme bras) : les missions ou les deux bras reussissent ensemble n'apprennent rien sur l'effet. L'ecart froid->temoin au dernier cycle (+0, au pire 0 sur tout le run) mesure ce qui bouge SANS la memoire : c'est le plancher de bruit de ce protocole, et il est declare plutot que suppose. Portee du levier : 91.3% des appels de generation ont ete avertis (209 appel(s)). L'ecart observe (+5 sur 80 paires appariees, soit +6.2 point(s) ; dissociations 5 contre 0, p = 0.062) existe mais n'est pas DEMONTRE. Pour le demontrer au seuil de 95 % avec une puissance de 80 %, il faudrait environ 64 PAIRES — ce protocole en a mesure 80, soit 0.8 fois moins. A cette taille d'ecart, augmenter l'echantillon est la seule reponse honnete ; conclure maintenant serait lire du bruit. L'ecart observe (+6.2 points) est a 86% de l'effet que la modelisation declare (+7.3 points a cette portee) : l'ordre de grandeur est celui attendu, ce qui VALIDE la modelisation — et laisse penser qu'il y a bien un effet, simplement plus petit que ce que 80 essais peuvent demontrer. REPLICATIONS : une seule pour l'instant (bloc de graines 0 : +5 reussite(s) (5 contre 0 dissociation(s))). Un effet mesure sur un seul bloc de graines n'est pas encore un effet REPRODUIT : relancer `--cumul` demarre un nouveau bloc.
+
+  CE QUE CE PROTOCOLE NE DIT PAS
+    - le modele est SIMULE : ce n'est pas une mesure de modele reel.
+    - l'effet d'un souvenir injecte est une MODELISATION declaree (gain relatif).
+    - un plateau ici ne condamne pas la memoire : il dit qu'a ce niveau de
+      difficulte la VERIFICATION suffisait deja. Le banc ne represente pas le
+      regime ou la verification ne voit pas l'erreur (plausibilite, conception).
+
+=== FIN BLOC 1 (code 0) ===
+=== BLOC 2 ===
+
+  AUTO-AMELIORATION MULTI-CYCLES  ·  trois bras apparies par cycle
+    competence simulee 0.4  ·  2 cycles  ·  8 tirage(s) par tache  ·  2 tours  ·  5 taches
+    cout annonce : 240 mission(s) x 2.3 s/mission mesure = ~9 min sur 2 cœurs
+    Par mission : CHAUD (memoire, avertissement actif) -> TEMOIN (memoire
+    presente, avertissement desactive) -> FROID (aucune memoire). Memes taches,
+    memes graines, MEME bras : le temoin separe l'effet de la memoire du bruit.
+
+    CUMUL : 2 cycle(s) deja mesure(s) dans preuve-cumul.jsonl ; cette
+    execution utilise des graines DISTINCTES (bloc 2000) — rejouer les
+    memes graines doublerait le compte sans ajouter une seule preuve.
+
+    Chaque cycle est ECRIT des qu'il est mesure : une coupure ne perd que le
+    cycle en cours (fichier evidence/preuve-cumul.jsonl). Le cumul est VERROUILLE pendant la mesure :
+    deux mesures simultanees rejoueraient les memes graines.
+
+  CUMUL : 4 cycle(s) au total dans evidence/preuve-cumul.jsonl
+  REPLICATIONS INDEPENDANTES : 2 (blocs de graines : 0, 2000)
+
+    cycle  memoire rappels jetons     froid    temoin     chaud  artef   ecart
+    ----- -------- ------- ------ --------- --------- --------- ------ -------
+     1         0    31    9609   33/40    33/40    36/40     +0     +3
+     2        11    40   14997   36/40    36/40    38/40     +0     +2
+     3         0    17    5036   35/40    35/40    35/40     +0     +0
+     4        10    30    9679   35/40    35/40    37/40     +0     +2
+
+  MEMOIRE ACCUMULEE : 18 souvenir(s) apres 4 cycle(s)
+  BRUIT DE FOND (froid -> temoin, sans effet de memoire) : 0 reussite(s) au pire cycle
+  PORTEE DU LEVIER : 351/455 appel(s) de generation avertis (77.1%) — c'est ce qui borne tout effet possible de la memoire.
+  TEST APPARIE (McNemar exact, le plan experimental) : la memoire fait REUSSIR seule 7 fois, ECHOUER seule 0 fois — p = 0.0156
+    IC95 de la difference (paires) : [+0.012 ; +0.075]   -> zéro EXCLU
+  REPLICATIONS INDEPENDANTES (un cumul est une somme de tirages, pas une moyenne) :
+    bloc de graines     0 : +5 reussite(s) (5 contre 0 dissociation(s))
+    bloc de graines  2000 : +2 reussite(s) (2 contre 0 dissociation(s))
+  PAIRES REQUISES POUR DEMONTRER LA DISSOCIATION : ~92, soit ~11 min ici au debit mesure (0.41 essai/s).
+    (Mesure a 95 % de confiance et 80 % de puissance, formule du banc ; c'est un budget, pas un verdict.)
+  DEBIT MESURE : 0.41 essai(s)/s sur cette machine.
+
+  VERDICT : PROGRESSE
+
+    ecart cumule +7 sur 160 paires appariees, dissociation DEMONTREE ; dernier cycle +2 sur 40 avec la memoire accumulee (10 souvenir(s)) et l'intervalle exclut zero. Gain cumule sur le premier cycle : -1 reussite(s). TEST APPARIE (McNemar exact) : 7 mission(s) ou la memoire fait REUSSIR seule, 0 ou elle fait ECHOUER seule, sur 160 paires — p = 0.0156. C'est le test du plan experimental (memes taches, memes graines, meme bras) : les missions ou les deux bras reussissent ensemble n'apprennent rien sur l'effet. L'ecart froid->temoin au dernier cycle (+0, au pire 0 sur tout le run) mesure ce qui bouge SANS la memoire : c'est le plancher de bruit de ce protocole, et il est declare plutot que suppose. Portee du levier : 77.1% des appels de generation ont ete avertis (351 appel(s)). REPLICATIONS (2) : bloc de graines 0 : +5 reussite(s) (5 contre 0 dissociation(s)) ; bloc de graines 2000 : +2 reussite(s) (2 contre 0 dissociation(s)) — meme sens dans tous les blocs.
+
+  CE QUE CE PROTOCOLE NE DIT PAS
+    - le modele est SIMULE : ce n'est pas une mesure de modele reel.
+    - l'effet d'un souvenir injecte est une MODELISATION declaree (gain relatif).
+    - un plateau ici ne condamne pas la memoire : il dit qu'a ce niveau de
+      difficulte la VERIFICATION suffisait deja. Le banc ne represente pas le
+      regime ou la verification ne voit pas l'erreur (plausibilite, conception).
+
+=== FIN BLOC 2 (code 0) ===
+=== BLOC 3 ===
