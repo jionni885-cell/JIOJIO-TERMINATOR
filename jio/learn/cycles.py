@@ -123,6 +123,10 @@ class Cycle:
     #: se lit comme « la memoire coute X et n'apporte rien » — deux phrases differentes, et
     #: la seconde est celle qui declenche une decision (elaguer, borner, ou retirer).
     caracteres_memoire: int = 0
+    #: Bloc de graines dont ce cycle est issu. Deux blocs = deux tirages INDEPENDANTS : le
+    #: cumul doit pouvoir le dire cycle par cycle, sinon une heterogeneite (effet present
+    #: dans un bloc, absent dans l'autre) se lit comme une moyenne qui n'existe nulle part.
+    bloc: int = 0
 
     @property
     def artefact(self) -> int:
@@ -315,6 +319,50 @@ class RapportCycles:
         """Les blocs de graines distincts utilises par les executions cumulees."""
         return sorted({int(r.get("seed_base", 0)) for r in self.replications})
 
+    def effet_par_bloc(self) -> list[tuple[int, int, int, int]]:
+        """L'effet de CHAQUE bloc de graines : (bloc, ecart, chaud_seul, temoin_seul).
+
+        Un cumul n'est pas une moyenne : c'est une somme de tirages independants. Les rendre
+        separement est la seule facon de voir qu'un effet vient d'un bloc plutot que du
+        protocole — et, s'il est present partout, de le dire aussi. Constate en campagne :
+        +7 sur le premier bloc, +0 sur le premier cycle du suivant. Le cumul reste juste ;
+        c'est le fait de n'afficher que lui qui trompait.
+        """
+        blocs: dict[int, list[int]] = {}
+        for cycle in self.cycles:
+            cumul = blocs.setdefault(cycle.bloc, [0, 0, 0])
+            cumul[0] += cycle.ecart
+            cumul[1] += cycle.chaud_seul
+            cumul[2] += cycle.temoin_seul
+        return [(bloc, *valeurs) for bloc, valeurs in sorted(blocs.items())]
+
+    def ligne_des_blocs(self) -> str:
+        """La phrase qui declare l'heterogeneite — ou l'homogeneite — d'un cumul."""
+        blocs = self.effet_par_bloc()
+        morceaux = [
+            f"bloc de graines {bloc} : {ecart:+d} reussite(s) "
+            f"({b} contre {c} dissociation(s))"
+            for bloc, ecart, b, c in blocs
+        ]
+        if not blocs:
+            return ""
+        if len(blocs) < 2:
+            return (
+                " REPLICATIONS : une seule pour l'instant (" + morceaux[0] + "). Un effet "
+                "mesure sur un seul bloc de graines n'est pas encore un effet REPRODUIT : "
+                "relancer `--cumul` demarre un nouveau bloc."
+            )
+        signes = {1 if ecart > 0 else (-1 if ecart < 0 else 0) for _, ecart, _, _ in blocs}
+        lecture = (
+            "meme sens dans tous les blocs"
+            if len(signes) == 1
+            else "les blocs NE disent PAS la meme chose : le cumul reste valide, mais "
+                 "l'effet n'est pas homogene et doit se lire bloc par bloc"
+        )
+        return (
+            f" REPLICATIONS ({len(blocs)}) : " + " ; ".join(morceaux) + f" — {lecture}."
+        )
+
     @property
     def replications_independantes(self) -> int:
         """Nombre de blocs de graines DISTINCTS : la seule mesure d'independance qui compte.
@@ -410,6 +458,7 @@ class RapportCycles:
                 f"avec la memoire accumulee ({dernier.memo_avant} souvenir(s)) et l'intervalle "
                 f"exclut zero. Gain cumule sur le premier cycle : "
                 f"{self.gain_cumule():+d} reussite(s)." + apparie + couplage + portee
+                + self.ligne_des_blocs()
             )
         if dernier.ecart > 0:
             return (
@@ -417,7 +466,7 @@ class RapportCycles:
                 f"cumule {self.ecart_cumule:+d} sur {self.essais_cumules}) mais l'intervalle "
                 f"POOL CONTIENT zero : INDETERMINE. "
                 f"Ce n'est pas un echec — c'est une mesure qui n'a pas encore conclu."
-                + apparie + couplage + portee + borne
+                + apparie + couplage + portee + borne + self.ligne_des_blocs()
             )
         cout = self.cout_du_plateau()
         ouverture = (
@@ -437,7 +486,8 @@ class RapportCycles:
             f"executables, et il ne represente pas le regime ou la VERIFICATION ne voit pas "
             f"l'erreur (plausibilite, choix de conception)."
         )
-        return ouverture + "." + apparie + couplage + portee + borne + lecture
+        return (ouverture + "." + apparie + couplage + portee + borne + lecture
+                + self.ligne_des_blocs())
 
     def essais_requis(self) -> int:
         """Combien de PAIRES pour demontrer la dissociation observee (test apparie).
@@ -693,7 +743,7 @@ def run_cycles(
             result.cycles.append(Cycle(
                 numero=numero, memo_avant=memo_avant, memo_apres=memoire.size,
                 rappels=rappels, froid=froid, temoin=temoin, chaud=chaud,
-                essais=len(taches) * runs, caracteres_memoire=caracteres,
+                essais=len(taches) * runs, bloc=seed_base, caracteres_memoire=caracteres,
                 avertis=avertis, appels=appels,
                 chaud_seul=chaud_seul, temoin_seul=temoin_seul,
             ))
@@ -780,6 +830,7 @@ def _compteurs(cycle: "Cycle", numero: int) -> dict[str, object]:
         # Les paires discordantes doivent survivre au cumul : sans elles, un cumul relu ne
         # pourrait plus faire le test APPARIE — celui qui correspond au plan experimental.
         "chaud_seul": cycle.chaud_seul, "temoin_seul": cycle.temoin_seul,
+        "bloc": cycle.bloc,
     }
 
 
@@ -944,6 +995,9 @@ def depuis_cumul(chemin: Path) -> "RapportCycles":
     cycles: list[Cycle] = []
     replications: list[dict[str, object]] = []
     entete: dict[str, object] = {}
+    # Le bloc d'un cycle est celui de la DERNIERE replication declaree : les fichiers ecrits
+    # avant ce champ restent donc attribuables, sans migration ni reinterpretation.
+    bloc_courant = 0
     for ligne in chemin.read_text(encoding="utf-8").splitlines():
         if not ligne.strip():
             continue
@@ -956,6 +1010,7 @@ def depuis_cumul(chemin: Path) -> "RapportCycles":
             continue
         if donnee.get("type") == "replication":
             replications.append(dict(donnee))
+            bloc_courant = int(donnee.get("seed_base", 0))
             continue
         if donnee.get("type") != "cycle":
             continue
@@ -970,6 +1025,7 @@ def depuis_cumul(chemin: Path) -> "RapportCycles":
             avertis=int(donnee.get("avertis", 0)), appels=int(donnee.get("appels", 0)),
             chaud_seul=int(donnee.get("chaud_seul", 0)),
             temoin_seul=int(donnee.get("temoin_seul", 0)),
+            bloc=int(donnee.get("bloc", bloc_courant)),
         ))
     return RapportCycles(
         cycles=cycles, skill=float(entete.get("skill", 0.0)),

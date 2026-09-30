@@ -106,12 +106,12 @@ def _rapport(*cycles: Cycle, gain: float = 0.0) -> RapportCycles:
 def _cycle(numero: int, froid: int, chaud: int, *, temoin: int = 0, memo_avant: int = 0,
            memo_apres: int = 0, essais: int = 10, caracteres: int = 0,
            avertis: int = 0, appels: int = 0, chaud_seul: int = 0,
-           temoin_seul: int = 0) -> Cycle:
+           temoin_seul: int = 0, bloc: int = 0) -> Cycle:
     return Cycle(
         numero=numero, memo_avant=memo_avant, memo_apres=memo_apres, rappels=0,
         froid=froid, temoin=temoin, chaud=chaud, essais=essais,
         caracteres_memoire=caracteres, avertis=avertis, appels=appels,
-        chaud_seul=chaud_seul, temoin_seul=temoin_seul,
+        chaud_seul=chaud_seul, temoin_seul=temoin_seul, bloc=bloc,
     )
 
 
@@ -338,6 +338,84 @@ def test_le_piege_du_cumul_conserve_les_paires(tmp_path) -> None:
     relu = depuis_cumul(chemin)
     assert relu.paires == (6, 1)
     assert relu.p_valeur_appariee < 0.25
+
+
+def test_le_rapport_separe_les_REPLICATIONS_et_ne_cache_pas_l_heterogeneite() -> None:
+    """Un cumul est une SOMME de tirages independants, pas une moyenne.
+
+    Constate en campagne : +7 sur le premier bloc de graines, puis +0 au premier cycle
+    du suivant. Le cumul restait juste, mais n'afficher que lui laissait lire « +7 sur
+    trois cycles » — c'est-a-dire une moyenne qui n'existe dans aucun des deux blocs.
+    """
+    rapport = RapportCycles(
+        cycles=[
+            _cycle(1, froid=45, temoin=45, chaud=51, essais=55, chaud_seul=6, bloc=0),
+            _cycle(2, froid=45, temoin=45, chaud=51, essais=55, chaud_seul=3, bloc=0),
+            _cycle(3, froid=51, temoin=51, chaud=51, essais=55, chaud_seul=1, bloc=1000),
+        ],
+        skill=0.4, warning_gain=0.20,
+        replications=[{"seed_base": 0}, {"seed_base": 1000}],
+    )
+    # Ecarts : +6, +6, puis +0. Le cumul (+12) est juste, mais il n'existe dans AUCUN des
+    # deux blocs : c'est exactement ce que le rapport doit rendre visible.
+    assert rapport.ecart_cumule == 12
+    assert rapport.effet_par_bloc() == [(0, 12, 9, 0), (1000, 0, 1, 0)]
+
+    ligne = rapport.ligne_des_blocs()
+    assert "bloc de graines 0 : +12" in ligne
+    assert "bloc de graines 1000 : +0" in ligne
+    assert "NE disent PAS la meme chose" in ligne
+    assert ligne in rapport.explication(), "la phrase doit etre DANS le rapport, pas a cote"
+
+
+def test_un_seul_bloc_n_est_pas_encore_un_effet_REPRODUIT() -> None:
+    """Dire ce qui manque : un effet dans un seul bloc de graines peut etre un tirage."""
+    rapport = _rapport(_cycle(1, froid=45, temoin=45, chaud=51, essais=55,
+                              chaud_seul=6, bloc=0))
+    ligne = rapport.ligne_des_blocs()
+    assert "une seule pour l'instant" in ligne
+    assert "pas encore un effet REPRODUIT" in ligne
+
+
+def test_des_blocs_qui_vont_DANS_LE_MEME_SENS_le_disent_aussi() -> None:
+    """Le controle symetrique : un rapport qui ne signale que l'heterogeneite est biaise."""
+    rapport = RapportCycles(
+        cycles=[_cycle(1, froid=45, temoin=45, chaud=51, essais=55, chaud_seul=6, bloc=0),
+                _cycle(2, froid=45, temoin=45, chaud=50, essais=55, chaud_seul=5, bloc=1000)],
+        skill=0.4, warning_gain=0.20,
+    )
+    ligne = rapport.ligne_des_blocs()
+    assert "meme sens dans tous les blocs" in ligne
+    assert "NE disent PAS" not in ligne
+
+
+def test_les_cycles_sans_champ_bloc_sont_attribues_a_leur_replication(tmp_path) -> None:
+    """Les fichiers ecrits AVANT ce champ restent attribuables, sans migration.
+
+    Le bloc d'un cycle est celui de la derniere ligne `replication` qui le precede : un
+    cumul deja mesure se relit donc correctement, sans reecriture ni reinterpretation.
+    """
+    import json
+
+    from jio.learn.cycles import depuis_cumul
+
+    chemin = tmp_path / "vieux.jsonl"
+    lignes = [
+        {"type": "entete", "skill": 0.4, "runs": 4, "rounds": 2, "gain": 0.2},
+        {"type": "replication", "seed_base": 0, "runs": 4, "rounds": 2},
+        {"type": "cycle", "numero": 1, "froid": 40, "temoin": 40, "chaud": 45,
+         "essais": 45, "chaud_seul": 5, "temoin_seul": 0},
+        {"type": "replication", "seed_base": 1000, "runs": 4, "rounds": 2},
+        # Ce cycle n'a JAMAIS eu de champ `bloc` : c'est le format d'avant.
+        {"type": "cycle", "numero": 2, "froid": 41, "temoin": 41, "chaud": 41,
+         "essais": 45, "chaud_seul": 0, "temoin_seul": 0},
+    ]
+    chemin.write_text("\n".join(json.dumps(l) for l in lignes) + "\n", encoding="utf-8")
+
+    rapport = depuis_cumul(chemin)
+    assert [c.bloc for c in rapport.cycles] == [0, 1000]
+    assert rapport.effet_par_bloc() == [(0, 5, 5, 0), (1000, 0, 0, 0)]
+    assert "NE disent PAS la meme chose" in rapport.ligne_des_blocs()
 
 
 def test_un_ecart_nul_ne_se_demontre_pas_par_plus_d_essais() -> None:

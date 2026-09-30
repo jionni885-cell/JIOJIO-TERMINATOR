@@ -2642,6 +2642,13 @@ def _afficher_le_rapport_cycles(res: object, *, debit: float) -> None:
           f"seule {b} fois, ECHOUER seule {c} fois — p = {res.p_valeur_appariee:.4f}")
     print(f"    IC95 de la difference (paires) : [{bas:+.3f} ; {haut:+.3f}]"
           + ("   -> zéro EXCLU" if res.tranche_apparie else "   -> contient zéro"))
+    blocs = res.effet_par_bloc()
+    if len(blocs) > 1:
+        print("  REPLICATIONS INDEPENDANTES (un cumul est une somme de tirages, pas une "
+              "moyenne) :")
+        for bloc, ecart, b, c in blocs:
+            print(f"    bloc de graines {bloc:>5} : {ecart:+d} reussite(s) "
+                  f"({b} contre {c} dissociation(s))")
     requis = res.essais_requis()
     if requis:
         # 3 bras par paire mesuree : c'est le cout reel du protocole, pas une estimation.
