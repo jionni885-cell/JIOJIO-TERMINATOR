@@ -3842,6 +3842,14 @@ def build_parser() -> argparse.ArgumentParser:
     ab.add_argument("--sans-oracle", dest="sans_oracle", action="store_true",
                     help="retire les oracles de la mission : les regles doivent alors etre "
                          "TRADUITES en temoins (c'est la que le levier « temoins » compte)")
+    ab.add_argument(
+        "--fidelite", type=float, default=1.0,
+        help="fidelite de la TRADUCTION des regles en temoins (defaut 1.0 : parfaite). "
+             "En dessous de 1, le modele simule contrefait une part des temoins — c'est le "
+             "regime REEL d'une mission sans oracle, ou les tests sont ecrits par le modele "
+             "et pas donnes. Plusieurs leviers (mutation, red-team, consensus, porte) ne "
+             "peuvent payer que la : avec des temoins parfaits, il n'y a rien a rattraper.",
+    )
     ab.add_argument("--json", action="store_true", help="rapport lisible par une machine")
     ab.set_defaults(func=cmd_ablation)
 
@@ -4035,6 +4043,9 @@ def cmd_ablation(args: argparse.Namespace) -> int:
     missions = max(1, args.missions)
     taches = min(len(TASKS), missions)
     graines = max(1, math.ceil(missions / taches))
+    # Bornee ICI, pas seulement validee : une valeur hors de [0, 1] ferait dire au rapport
+    # autre chose que ce qui a ete mesure.
+    fidelite = min(1.0, max(0.0, args.fidelite))
 
     def executer(indice: int, graine: int, ablations: tuple[str, ...]) -> Issue:
         tache: Task = TASKS[indice % len(TASKS)]
@@ -4047,7 +4058,7 @@ def cmd_ablation(args: argparse.Namespace) -> int:
             # tests absents : sans elle, le moteur ne peut que s'abstenir et on mesurerait
             # l'absence d'oracle au lieu de l'apport du levier.
             traducteur=(
-                TraducteurSimule(taches=TASKS, fidelite=1.0) if args.sans_oracle else None
+                TraducteurSimule(taches=TASKS, fidelite=fidelite) if args.sans_oracle else None
             ),
         )
         appliquer(moteur, ablations)
@@ -4085,6 +4096,12 @@ def cmd_ablation(args: argparse.Namespace) -> int:
     print(f"  Ablation du harness  ·  competence simulee {args.skill:.2f}  ·  "
           f"{taches * graines} mission(s) par bras  ·  {len(noms) if noms else len(LEVIERS)} levier(s)"
           + ("  ·  SANS ORACLE" if args.sans_oracle else ""))
+    if args.sans_oracle and fidelite < 1.0:
+        # Un chiffre de mesure sans son REGIME est un chiffre qu'on ne peut pas comparer :
+        # « 3 leviers prouves » ne veut rien dire si l'on ignore avec QUELS temoins.
+        print(f"  Temoins traduits par le modele simule, fidelite {fidelite:.0%} : une part "
+              f"des tests est CONTREFaite, comme dans une mission reelle ou personne ne "
+              f"fournit les tests.")
     print("  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.")
     print()
     rapport = mesurer(

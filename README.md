@@ -2959,6 +2959,32 @@ jio ablation --sans-oracle --fidelite 0.6 --levers mutation,red-team,consensus,p
 
 Un chiffre sans son régime ne se compare pas.
 
+### Ce que ce régime a montré, et qui n'était pas prévu
+
+Mesure faite à **témoins 60 %** (8 leviers, 15 missions par bras, `--sans-oracle`) :
+
+```
+moteur complet : 9/15 justes  ·  0 livrée  ·  15 ABSTENTIONS  ·  0 erreur silencieuse
+aucun levier ne se distingue, sauf `preuve` (5 missions perdues, 3 gagnées : non concluant)
+```
+
+Le résultat tient en une phrase : **quand l'instrument est mauvais, le harness ne ment pas —
+il s'abstient. Sur les quinze missions.** Il ne livre rien, pas même les neuf où le code était
+juste, parce que ses témoins étaient faux. C'est le comportement « fail-closed » qui a été
+demandé, et il est ici **mesuré plutôt que supposé**.
+
+Mais c'est aussi la limite du dispositif, énoncée sans détour : **aucun levier du harness ne
+répare un témoin faux**. Le moteur re-demande des *candidats* quand la preuve échoue ; il ne
+re-demande jamais l'*instrument*. Un système qui s'abstient toujours est sûr et inutile — les
+deux moitiés de la phrase comptent.
+
+C'est donc un axe ouvert, avec sa piste : un témoin qui **ne tue aucun mutant** du candidat
+n'est pas un témoin (c'est le principe de la sélection de tests par mutation). Le distinguer
+d'un témoin qui *contredit* le code est faisable, et la porte de mutation a déjà les données en
+main ; ce qui manque est la décision — écarter un témoin non informatif, en le déclarant, plutôt
+que de tout bloquer. La règle reste : jamais de livraison propre sur cette base, seulement une
+réserve nommée.
+
 ## Toutes les commandes répondent, et c'est testé
 
 Un utilisateur n'utilise pas « le projet » : il utilise **une** commande, un jour, dans un

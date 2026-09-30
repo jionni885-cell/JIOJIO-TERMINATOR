@@ -1,0 +1,71 @@
+
+     ██╗██╗ ██████╗      ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ████████╗ ██████╗ ██████╗
+     ██║██║██╔═══██╗     ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗
+     ██║██║██║   ██║        ██║   █████╗  ██████╔╝██╔████╔██║██║██╔██╗ ██║███████║   ██║   ██║   ██║██████╔╝
+██   ██║██║██║   ██║        ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║   ██║   ██║   ██║██╔══██╗
+╚█████╔╝██║╚██████╔╝        ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║   ██║   ╚██████╔╝██║  ██║
+ ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
+
+  Ablation du harness  ·  competence simulee 0.70  ·  30 mission(s) par bras  ·  1 levier(s)
+  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.
+
+  [  1/60] ablation · complet 1/60  ·  2s ecoulees  ·  reste ~1m58s
+  [  2/60] ablation · complet 2/60  ·  3s ecoulees  ·  reste ~1m55s
+  [  3/60] ablation · complet 3/60  ·  6s ecoulees  ·  reste ~1m54s
+  [  4/60] ablation · complet 4/60  ·  8s ecoulees  ·  reste ~1m52s
+  [  5/60] ablation · complet 5/60  ·  10s ecoulees  ·  reste ~1m51s
+  [  6/60] ablation · complet 6/60  ·  12s ecoulees  ·  reste ~1m49s
+  [  7/60] ablation · complet 7/60  ·  15s ecoulees  ·  reste ~1m59s
+  [  8/60] ablation · complet 8/60  ·  19s ecoulees  ·  reste ~2m07s
+  [  9/60] ablation · complet 9/60  ·  23s ecoulees  ·  reste ~2m11s
+  [ 10/60] ablation · complet 10/60  ·  26s ecoulees  ·  reste ~2m14s
+  [ 11/60] ablation · complet 11/60  ·  30s ecoulees  ·  reste ~2m16s
+  [ 12/60] ablation · complet 12/60  ·  35s ecoulees  ·  reste ~2m21s
+  [ 13/60] ablation · complet 13/60  ·  37s ecoulees  ·  reste ~2m16s
+  [ 14/60] ablation · complet 14/60  ·  40s ecoulees  ·  reste ~2m11s
+  [ 15/60] ablation · complet 15/60  ·  42s ecoulees  ·  reste ~2m07s
+  [ 16/60] ablation · complet 16/60  ·  44s ecoulees  ·  reste ~2m03s
+  [ 17/60] ablation · complet 17/60  ·  47s ecoulees  ·  reste ~1m59s
+  [ 18/60] ablation · complet 18/60  ·  49s ecoulees  ·  reste ~1m55s
+  [ 19/60] ablation · complet 19/60  ·  52s ecoulees  ·  reste ~1m52s
+  [ 20/60] ablation · complet 20/60  ·  54s ecoulees  ·  reste ~1m49s
+  [ 21/60] ablation · complet 21/60  ·  57s ecoulees  ·  reste ~1m46s
+  [ 22/60] ablation · complet 22/60  ·  59s ecoulees  ·  reste ~1m43s
+  [ 23/60] ablation · complet 23/60  ·  1m02s ecoulees  ·  reste ~1m40s
+  [ 24/60] ablation · complet 24/60  ·  1m05s ecoulees  ·  reste ~1m37s
+  [ 25/60] ablation · complet 25/60  ·  1m08s ecoulees  ·  reste ~1m35s
+  [ 26/60] ablation · complet 26/60  ·  1m11s ecoulees  ·  reste ~1m33s
+  [ 27/60] ablation · complet 27/60  ·  1m14s ecoulees  ·  reste ~1m31s
+  [ 28/60] ablation · complet 28/60  ·  1m17s ecoulees  ·  reste ~1m28s
+  [ 29/60] ablation · complet 29/60  ·  1m20s ecoulees  ·  reste ~1m26s
+  [ 30/60] ablation · complet 30/60  ·  1m23s ecoulees  ·  reste ~1m23s
+  [ 31/60] ablation · sans mutation 31/60  ·  1m25s ecoulees  ·  reste ~1m19s
+  [ 32/60] ablation · sans mutation 32/60  ·  1m26s ecoulees  ·  reste ~1m15s
+  [ 33/60] ablation · sans mutation 33/60  ·  1m28s ecoulees  ·  reste ~1m12s
+  [ 34/60] ablation · sans mutation 34/60  ·  1m29s ecoulees  ·  reste ~1m08s
+  [ 35/60] ablation · sans mutation 35/60  ·  1m31s ecoulees  ·  reste ~1m05s
+  [ 36/60] ablation · sans mutation 36/60  ·  1m32s ecoulees  ·  reste ~1m01s
+  [ 37/60] ablation · sans mutation 37/60  ·  1m35s ecoulees  ·  reste ~59s
+  [ 38/60] ablation · sans mutation 38/60  ·  1m37s ecoulees  ·  reste ~56s
+  [ 39/60] ablation · sans mutation 39/60  ·  1m40s ecoulees  ·  reste ~54s
+  [ 40/60] ablation · sans mutation 40/60  ·  1m43s ecoulees  ·  reste ~51s
+  [ 41/60] ablation · sans mutation 41/60  ·  1m46s ecoulees  ·  reste ~49s
+  [ 42/60] ablation · sans mutation 42/60  ·  1m49s ecoulees  ·  reste ~46s
+  [ 43/60] ablation · sans mutation 43/60  ·  1m51s ecoulees  ·  reste ~44s
+  [ 44/60] ablation · sans mutation 44/60  ·  1m53s ecoulees  ·  reste ~41s
+  [ 45/60] ablation · sans mutation 45/60  ·  1m55s ecoulees  ·  reste ~38s
+  [ 46/60] ablation · sans mutation 46/60  ·  1m57s ecoulees  ·  reste ~35s
+  [ 47/60] ablation · sans mutation 47/60  ·  1m59s ecoulees  ·  reste ~32s
+  [ 48/60] ablation · sans mutation 48/60  ·  2m01s ecoulees  ·  reste ~30s
+  [ 49/60] ablation · sans mutation 49/60  ·  2m02s ecoulees  ·  reste ~27s
+  [ 50/60] ablation · sans mutation 50/60  ·  2m04s ecoulees  ·  reste ~24s
+  [ 51/60] ablation · sans mutation 51/60  ·  2m06s ecoulees  ·  reste ~22s
+  [ 52/60] ablation · sans mutation 52/60  ·  2m08s ecoulees  ·  reste ~19s
+  [ 53/60] ablation · sans mutation 53/60  ·  2m10s ecoulees  ·  reste ~17s
+  [ 54/60] ablation · sans mutation 54/60  ·  2m12s ecoulees  ·  reste ~14s
+  [ 55/60] ablation · sans mutation 55/60  ·  2m14s ecoulees  ·  reste ~12s
+  [ 56/60] ablation · sans mutation 56/60  ·  2m16s ecoulees  ·  reste ~9s
+  [ 57/60] ablation · sans mutation 57/60  ·  2m18s ecoulees  ·  reste ~7s
+  [ 58/60] ablation · sans mutation 58/60  ·  2m21s ecoulees  ·  reste ~4s
+  [ 59/60] ablation · sans mutation 59/60  ·  2m23s ecoulees  ·  reste ~2s
+  [ 60/60] ablation · sans mutation 60/60  ·  2m25s ecoulees
