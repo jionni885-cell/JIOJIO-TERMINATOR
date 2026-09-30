@@ -286,3 +286,113 @@ Après recherche, aucun projet open-source n'assemble :
 6. **Un `OscillationGuard` explicite** fondé sur le seuil de stabilité de la vérification retardée.
 
 Ce sont nos axes d'innovation. Le reste est de l'assemblage — et l'assemblage est déjà énorme.
+
+---
+
+## Partie 6 — Dépôts GitHub vérifiés pendant les chantiers de mesure
+
+Chaque dépôt ci-dessous a été **vérifié par l'API GitHub** (nom complet, étoiles, date de
+dernière poussée) au moment de l'écrire, et il répond à un blocage **nommé**, pas à une
+intuition. Conformément à la consigne : on cite les dépôts utilisés, on n'en crée pas.
+
+| Dépôt | Étoiles | Ce qu'il débloque, précisément | Statut ici |
+|---|---|---|---|
+| `huggingface/sentence-transformers` | 19 137 | Le rappel de la mémoire des échecs est **lexical** (recouvrement de tokens). Sur des objectifs libres — le vrai usage — deux formulations différentes du même problème ne se retrouvent pas. Des embeddings **locaux, sans clé** donneraient un rappel sémantique. | Non installé : dépendance lourde (torch), contraire à la doctrine « zéro dépendance » du dépôt. Documenté comme option. |
+| `mem0ai/mem0` | 66 320 | Couche mémoire de production : **extraction, consolidation, décroissance**. Notre mémoire ne fait ni consolidation ni oubli gradué (elle tronque par le haut). | Référence de conception. |
+| `statsmodels/statsmodels` | 11 665 | `NormalIndPower` donnerait un calcul d'**analyse de puissance** complet là où nous avons une formule fermée à deux proportions. Le budget d'essais est aujourd'hui vérifié empiriquement (56 calculés, 60 mesurés). | Non installé : la formule du dépôt suffit et reste sans dépendance. |
+| `harbor-framework/terminal-bench-1` | 2 597 | Comparabilité avec un **banc public** (l'ancien `laude-institute/terminal-bench`). Ses tâches sont conteneurisées (Dockerfile, docker-compose, run-tests.sh, solution.sh). | Bloqué : **aucun Docker dans cet environnement**. C'est le seul chemin pour mesurer `Astra` face à des chiffres publiés. |
+| `pyupio/safety`, `ossf/scorecard` | — | Surface de vulnérabilités des dépendances (voir Partie 4). | Déjà dans la liste. |
+
+### Ce que la mémoire a appris, chiffres en main
+
+| Mesure | Valeur | Où c'est prouvé |
+|---|---|---|
+| Portée du levier mémoire (part des appels de génération avertis) | **0 % → 99,3 %** | `tests/test_trust_memory.py::test_l_armement_survit_a_la_troncature_du_bloc` |
+| Effet mesuré de la mémoire, régime `skill=0.4` | **+7,0 points** (85 % → 92 %) | README, protocole multi-cycles |
+| Effet déclaré par la modélisation, même régime | **+7,9 points** (`portée × gain × compétence`) | `RapportCycles.gain_declare` |
+| Budget pour démontrer un tel écart | **en PAIRES** (McNemar, puissance 80 %) — l'ancienne formule « essais par bras » ignorait l'appariement | `RapportCycles.essais_requis` |
+| Contrôle positif (gain déclaré énorme) | **PROGRESSE**, +11 sur 60 essais | README, « un instrument doit savoir dire oui » |
+| Contrôle négatif (gain nul) | écart **exactement 0** | `tests/test_cycles.py::test_avec_un_gain_NUL_le_chaud_egale_le_temoin_exactement` |
+
+**La règle de lecture est écrite dans le rapport lui-même** : un écart nul avec une portée
+faible ne dit rien de la mémoire (le levier n'était pas armé) ; un écart nul avec une portée
+forte la condamne à ce niveau ; un écart non nul mais non démontré donne un **budget**, pas
+une conclusion. Un banc ne tranche pas toujours, mais il doit dire ce qu'il peut trancher.
+
+## Partie 7 — Le rappel de la mémoire : mesure, et ce qu'elle a corrigé
+
+### Le constat
+
+`FailureMemory.recall()` classait par **recouvrement de mots** (`|inter| / |union|`, Jaccard).
+Mesuré sur un corpus de 61 souvenirs et 21 requêtes où **un seul identifiant technique**
+(`F541`, `mcnemar_exact`, `O_EXCL`) distingue la bonne cible des distracteurs qui partagent
+tout le reste du vocabulaire :
+
+| Classement | recall@1 | recall@3 | MRR |
+|---|---|---|---|
+| recouvrement de mots (Jaccard) — témoin | **5 %** | 5 % | 0,114 |
+| **BM25 normalisé** (rareté × saturation × longueur) | **100 %** | 100 % | **1,000** |
+
+Et la conséquence, mesurée **de bout en bout** (les 61 textes passent par la vraie
+`FailureMemory`, journal chaîné compris, puis `recall()` doit ramener le bon souvenir au
+premier rang) : **5 %** de réussite avant câblage — la mémoire injectait le mauvais garde
+tout en ayant l'air de fonctionner.
+
+Contrôle **anti-triche** (le banc ne doit pas être fabriqué pour faire perdre le témoin) :
+sur un corpus « jumeau » où chaque cible a un sosie qui **ne diffère que par l'identifiant**,
+Jaccard réussit 100 % — l'échec du premier corpus ne vient donc pas du banc mais du régime
+réel : plusieurs souvenirs partagent le vocabulaire d'un même sous-système, et seul
+l'identifiant rare les sépare. C'est le régime où la mémoire devient utile *parce qu'elle
+grandit*, celui qu'un score sans IDF ne peut pas atteindre.
+
+### Pourquoi BM25, et pas des plongements vectoriels
+
+- **Les identifiants techniques sont le signal.** BM25 place le bon document au rang 1 dans
+  **40 requêtes sur 40** de type identifiant, là où un plongement dense y parvient 14 fois et
+  en perd 8 complètement ([sesen.ai, BM25 vs Embeddings](https://sesen.ai/blog/bm25-vs-embeddings-hybrid-retrieval)).
+- **La précision lexicale gagne sur la terminologie.** Sur des documents à terminologie
+  précise, BM25 dépasse `text-embedding-3-large` sur toutes les métriques sauf `recall@20` ;
+  la fusion hybride (RRF) est la meilleure ([From BM25 to Corrective RAG, arXiv 2604.01733](https://arxiv.org/pdf/2604.01733)).
+- **La bascule à l'échelle se fait en faveur de BM25** : sur 28 paliers imbriqués (≈450×),
+  BM25 dépasse la recherche agentique vers **10 M de jetons de corpus** et mène ensuite de
+  près de 20 points ([aiweekly.co](https://aiweekly.co/alerts/bm25-beats-dense-retrieval-and-agents-by-20-points-at-scale)).
+- **Zéro dépendance, zéro GPU, zéro clé.** Ici, aucune des deux n'est disponible : un
+  plongement dense exigerait `sentence-transformers` + `torch`, soit ~2 Go absents de cette
+  machine. BM25 tient en 80 lignes de Python pur, hors-ligne, et reste explicable dans un
+  rapport (`idf × tf saturé`) — une exigence du dépôt depuis le premier jour.
+- **Le score est normalisé dans [0, 1]** (part du meilleur score atteignable par la requête)
+  pour que le seuil `min_score` garde le même sens d'une requête à l'autre ; un score brut de
+  BM25 dépend du nombre de termes et de leurs IDF, et un seuil dessus se déplace en silence.
+
+### Piste écartée par la mesure : la fusion hybride (RRF)
+
+La littérature est claire : la **fusion RRF** de deux classements bat chacun isolément
+(BM25 0,661 / dense 0,645 / **fusion 0,694** nDCG@10 ; BM25 parfait sur les identifiants,
+le dense meilleur sur les paraphrases). Elle a donc été essayée ici, avec un « dense » sans
+modèle : **cosinus de trigrammes de caractères**, qui ne demande ni `torch` ni clé API.
+
+| Régime (recall@1) | BM25 seul | trigrammes de caractères | **fusion RRF** |
+|---|---|---|---|
+| (a) requêtes-identifiant | **100 %** | 5 % | 5 % |
+| (b) requêtes-paraphrase | **60 %** | 60 % | 60 % |
+| (c) mélange | **87 %** | 23 % | 23 % |
+
+**Écartée.** La fusion ne gagne que si les deux classements se valent ; ici le second est
+si faible qu'il *dilue* un classement déjà parfait (100 % → 5 % au régime qui compte). La
+bonne conclusion n'est pas « RRF ne marche pas » mais « RRF a besoin d'un second retriever
+comparable » — donc d'un vrai plongement dense, qui exige `sentence-transformers` + `torch`
+(≈2 Go, absents de cette machine). Le résultat est conservé ici pour ne pas refaire
+l'essai : c'est exactement le genre de brique qui a l'air d'aider et qui coûte.
+
+**Limite résiduelle déclarée** : BM25 ne retrouve que **60 %** des paraphrases (aucun mot
+rare partagé). C'est le seul régime où un plongement dense apporterait quelque chose — et
+il est inatteignable ici, pas contournable par une astuce.
+
+### Ce que la recherche a apporté d'autre (nouveaux dépôts à étudier)
+
+| Dépôt | Ce qu'il apporte | Décision |
+|---|---|---|
+| [`ai-boost/awesome-harness-engineering`](https://github.com/ai-boost/awesome-harness-engineering) | Recensement daté des primitives de harnais : compaction progressive en 5 étapes, isolation des sous-agents, *Evidence-Preserving Reducer* (une citation n'est gardée que si elle correspond littéralement à la source archivée), `ObservationPack` (les gros résultats deviennent des poignées paginées) | Piste suivante : le réducteur de preuve recoupe `jio trace` et la chaîne de hachage du journal. |
+| [`HKUDS/OpenHarness`](https://github.com/HKUDS/OpenHarness) | Harnais open-source complet : compactage automatique, MEMORY.md, reprise de session, règles de permission par chemin, hooks `PreToolUse`/`PostToolUse` | Comparaison de conception ; nos garde-fous sont déjà sur disque et vérifiables. |
+| [`affaan-m/ECC`](https://github.com/affaan-m/ECC) | Boucle `plan → test → implement → review → verify → remember → improve`, revue en **contexte neuf** (« le même contexte écrit et relit son propre code ») | Confirme le choix du vérificateur séparé ; la revue à contexte neuf est déjà celle de l'ablation `S1b`. |
+| [`bradagi/awesome-cli-coding-agents`](https://github.com/bradagi/awesome-cli-coding-agents) | Inventaire des harnais CLI (dont compression de contexte « Headroom », mémoire en anneaux, oplog à recherche hybride) | Veille : c'est la liste à relire quand un axe de compaction sera ouvert. |

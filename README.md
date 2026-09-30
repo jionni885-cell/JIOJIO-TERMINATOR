@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1137 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1159 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1287,7 +1287,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1137 tests verts -> 1137 tests verts
+         - README.md ligne 15 : 1159 tests verts -> 1159 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -1506,6 +1506,23 @@ Deux corrections de méthode sont sorties de ce run :
   Le taux observé (85 %) est déjà le produit de la largeur de tirage et de la vérification :
   s'en servir comme base gonflait l'attendu d'un facteur deux et aurait déclaré
   « incohérent » un écart parfaitement cohérent.
+- **Le test est désormais APPARIÉ — celui du plan expérimental.** Les trois bras jouent
+  les *mêmes* missions avec les *mêmes* graines : la statistique correcte est le test exact
+  de McNemar sur les seules missions où les deux bras divergent, pas la comparaison de deux
+  échantillons indépendants. Constat chiffré qui a motivé le changement : **+10 réussites sur
+  220 paires** laissaient l'intervalle non apparié contenant zéro (« indémontré »), alors que
+  les **17 dissociations favorables contre 6 défavorables** donnent **p = 0,0347** et un
+  IC95 apparié de **(0,008 ; 0,092)** : l'effet est **démontré**. La même implémentation
+  (`mcnemar_exact` / `_wald_apparie` de `jio/bench/ablation.py`) sert ici et à l'ablation —
+  une seule formule de McNemar dans le dépôt. Le budget de mesure suit : `essais_requis()`
+  ne réutilise plus la formule pour deux échantillons *indépendants* (qui surestimait le
+  besoin) mais calcule, à partir du taux de dissociation observé, le nombre de **paires**
+  qu'il faut pour départager `b` de `c` à 95 % / 80 % de puissance.
+- **Un cumul mesuré SANS les paires ne peut pas conclure, et le dit.** Les cycles écrits
+  avant cette version n'ont pas les compteurs de dissociation : leur rapport l'annonce
+  explicitement (« ce cumul a été mesuré sans le relevé des paires ») au lieu de laisser
+  lire « PLATEAU » comme « pas d'effet ». Les compteurs sont désormais **écrits dans le
+  JSONL** et relus : un cumul interrompu puis repris ne perd pas sa résolution statistique.
 
 Le verdict reste **PLATEAU** — et c'est précisément ce que le rapport doit dire :
 
@@ -1525,6 +1542,100 @@ l'estime à +7 points, il en attribue l'ordre de grandeur au mécanisme déclar�
 de le déclarer prouvé à 100 essais — en donnant le budget exact (432 essais/bras) pour le
 prouver. C'est la différence entre « la mémoire ne sert à rien » (ce qui était écrit avant,
 et qui était faux) et « la mémoire vaut +7 points, voici ce qu'il faut pour le démontrer ».
+
+### La mémoire qui apprend vraiment : l'échec ouvre, le succès ferme
+
+Une mémoire d'échecs qui ne retient que la plainte ne sert à rien. C'est pourtant ce qui
+était écrit : à chaque échec, le moteur enregistrait
+`correct_fix="atteint dans une mission ulterieure"` — un texte **vide de sens**, injecté
+ensuite dans **tous** les prompts sous l'étiquette `RIGHT FIX`. Ni un modèle ni un relecteur
+ne peut en tirer quoi que ce soit.
+
+Trois corrections, et la troisième est celle qui change la valeur de la mémoire :
+
+| Avant | Après |
+|---|---|
+| `RIGHT FIX: atteint dans une mission ulterieure` | `RIGHT FIX: inconnu (aucun remede observe pour l'instant)` — **déclaré** |
+| le remède n'arrivait jamais | quand une mission **réussit** sur le même objectif, le remède observé **remplit** l'échec ouvert : `regle(s) satisfaite(s) depuis la mission succes-1 : R-001,R-002 ; forme livree : def sum_even(nums): ...` |
+| écriture d'un remède creux, définitif | événement `resolution` **append-only** : la chaîne de hachages reste vérifiable (une mémoire réinscriptible est une mémoire empoisonnable) |
+
+Et un **assainissement** que ce chantier a rendu nécessaire : la mémoire repart dans les
+prompts, donc son contenu est une source **HOSTILE**. Un artefact qui échoue écrit son
+message d'erreur *dans la mémoire* — il pouvait donc y glisser les marqueurs réservés de JIO
+(`PAST FAILURES ON SIMILAR TASKS`, `PREVIOUS ATTEMPT FAILED`) et **fabriquer un faux
+souvenir**, relu à chaque mission. Ces marqueurs sont neutralisés à l'écriture, les tournures
+d'instruction retirées, les sauts de ligne supprimés, la longueur bornée. La dette est
+visible : `jio memory` affiche désormais `N échec(s) (M avec un remede OBSERVE, K en
+attente)` — un souvenir sans remède dit ce qui a échoué, pas ce qui répare.
+
+### Une mesure longue doit survivre à une coupure
+
+Deux fois de suite, une mesure de 20 minutes a été **perdue en entier** : le rapport
+n'était écrit qu'à la fin. `jio learn --cycles N --cumul FICHIER` corrige les deux moitiés
+du problème :
+
+- les cycles sont **écrits au fur et à mesure**, donc une coupure ne perd que le cycle en
+  cours ;
+- `--cumul` **empile** les exécutions, et le rapport affiché est le cumul.
+
+Avec un piège que ce chantier a mis au jour, et qui aurait fabriqué un faux résultat :
+**deux exécutions qui rejouent les mêmes graines ne sont pas deux mesures**. Cumuler sans
+le voir ferait grossir le nombre d'essais et resserrer l'intervalle *autour de rien* — la
+façon la plus efficace de rendre un écart significatif qui n'a jamais été mesuré deux fois.
+Le cumul décale donc le **bloc de graines** à chaque exécution (`0`, `1000`, `2000`, …) et le
+rapport l'affiche :
+
+```
+  CUMUL : 2 cycle(s) au total dans cycles.jsonl
+  REPLICATIONS INDEPENDANTES : 2 (blocs de graines : 0, 1000)
+```
+
+Le cumul **refuse** de mélanger deux régimes différents (compétence, tours, gain) : un
+mélange ne répond à aucune question. Le refus est un `ValueError`, testé.
+
+Trois garde-fous, dont deux nés d'incidents réels :
+
+- **écriture par cycle** — vérifié en cassant exprès : un `kill -9` en plein deuxième cycle
+  laisse le premier cycle sur le disque et relisible. La première version n'écrivait qu'à la
+  fin *en prétendant le contraire* : une promesse de robustesse non tenue est pire qu'une
+  absence de promesse, parce qu'elle fait croire à une protection inexistante ;
+- **verrou exclusif** (`<fichier>.verrou`) — deux mesures simultanées sur le même cumul
+  liraient le même nombre de cycles, en déduiraient le **même bloc de graines** et
+  rejoueraient exactement les mêmes tirages. Le verrou refuse le second lancement, et il est
+  relâché dans un `finally` : un échec ne doit jamais bloquer l'utilisateur ;
+- **refus de mélanger les régimes** — compétence, tours ou gain différents : `ValueError`.
+
+### Le contrôle positif : un instrument doit savoir dire oui
+
+Un instrument qui ne dit **jamais** « ça marche » ne peut pas être cru quand il dit « rien
+ne se passe ». Avant de lire un seul `PLATEAU`, il fallait donc vérifier que la mesure sait
+détecter un effet connu. Le protocole mesure l'effet d'un mécanisme **déclaré** : il suffit
+de régler ce mécanisme très haut.
+
+```
+python -m jio learn --cycles 4 --runs 3 --rounds 2 --skill 0.4 --gain 2.0
+```
+
+| cycle | froid | témoin | chaud | artefact | écart |
+|---|---|---|---|---|---|
+| 1 | 12/15 | 12/15 | 14/15 | +0 | +2 |
+| 2 | 12/15 | 12/15 | 15/15 | +0 | +3 |
+| 3 | 11/15 | 11/15 | 15/15 | +0 | +4 |
+| 4 | 13/15 | 13/15 | 15/15 | +0 | +2 |
+| **cumulé** | 48/60 | 48/60 | **59/60** | **+0** | **+11** |
+
+**Verdict : `PROGRESSE`**, intervalle pool excluant zéro. L'instrument voit un signal
+connu, et il voit en plus ce qu'un instrument doit voir : un **témoin parfait** (`artefact
+= 0` aux quatre cycles, mémoire présente et effet éteint). Le contrôle négatif est
+verrouillé par un test, et il ne coûte presque rien : **à gain nul, `chaud` et `témoin`
+doivent être égaux exactement** — même prompt, même graine, même bras, seul le réglage de
+l'effet les distinguait.
+
+Ces deux contrôles changent le statut du résultat principal. Sans eux, « écart de +7 points
+non démontré à 100 essais » serait un chiffre parmi d'autres ; avec eux, c'est une **mesure
+dont l'instrument a été étalonné** : il sait dire oui (+11 sur 60 essais), il sait dire
+« indiscernable » (gain nul), et il dit « +7, non démontré, il faudrait 432 essais » entre
+les deux.
 
 Trois verdicts, et un seul condamne :
 
