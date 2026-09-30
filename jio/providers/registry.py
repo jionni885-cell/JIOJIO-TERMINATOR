@@ -111,7 +111,11 @@ def make_providers(specs: Sequence[str]) -> list[Provider]:
         try:
             out.append(reg.get(spec))
         except KeyError as exc:  # pragma: no cover
-            raise SystemExit(str(exc)) from exc
+            # Meme famille que le defaut ci-dessus : un message sans code sort en 0. Un nom de
+            # fournisseur inconnu est un usage impossible — la commande n'a pas pu travailler.
+            from ..core.codes import INDETERMINE, sortir
+
+            sortir(str(exc), INDETERMINE)
     return out
 
 

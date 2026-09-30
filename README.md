@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1185 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1190 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -139,6 +139,36 @@ hôte de l'installation de JIO, cite chaque chemin avec sa maison, **compte** se
 (le titre est dérivé de la liste) et **mesure** le coût de la bibliothèque de procédures
 (6 424 jetons) au lieu de le recopier. Deux tests l'interdisent désormais : « aucun chemin cité
 n'est orphelin » et « le titre compte ce que la liste contient ».
+
+### Et la commande qui ne peut pas travailler le disait en sortant **0**
+
+`jio run "<objectif>"` sans aucun fournisseur affichait :
+
+```
+Aucun fournisseur detecte.
+Installe un CLI (opencode, hermes, claude, codex, gemini) ou definis
+une variable d'environnement d'API (OPENROUTER_API_KEY, OPENAI_API_KEY...).
+```
+
+…et sortait en **0**. Ce n'est pas un oubli : c'est une propriété de Python — `raise
+SystemExit("message")`, avec une **chaîne**, écrit le message et termine *normalement*. Or 0 est
+exactement ce qu'un agent qui enchaîne lit comme « c'est fait, et prouvé » : il n'ira jamais
+chercher la clé manquante, et rien ne le lui aura dit.
+
+La doctrine des codes range ce cas en **2** (`INDETERMINE`) : « il manque de quoi conclure : un
+fournisseur, une preuve, une entrée », action associée « fournir ce qui manque, puis relancer ».
+`jio/core/codes.py::sortir` est désormais le seul chemin qui écrit un message **et** sort avec un
+code — et le code y est un paramètre **obligatoire**, sans valeur par défaut : un appelant doit
+décider ce qu'il vient de dire à la machine qui le lit. Le message nomme aussi les deux chemins
+qui marchent **sans aucune clé** (`jio bench`, `jio run … --simulate --task sum_even
+--no-oracle`) : une erreur qui n'indique pas d'issue oblige l'utilisateur à deviner.
+
+Deux verrous, parce qu'un seul ne suffirait pas : un **verrou mécanique** (l'arbre syntaxique de
+tout le paquet est lu, et la forme interdite — `SystemExit` d'un message — est refusée partout,
+pas seulement là où on l'a vue) et un **verrou comportemental** (la commande réelle, sans
+fournisseur, rend bien 2). `main()`, l'entrée du programme, traduit enfin les `SystemExit`
+échappés en codes, avec une règle stricte : **une chaîne n'est jamais un succès** — si un code
+arrive sous forme de texte, il est écrit et le code rendu est **1**.
 
 ---
 
@@ -1393,7 +1423,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1185 tests verts -> 1185 tests verts
+         - README.md ligne 15 : 1190 tests verts -> 1190 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

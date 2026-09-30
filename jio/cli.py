@@ -288,6 +288,7 @@ def _real_engine(
     personne ne peut dire ce qu'il vaut. Nommer son modele, c'est mesurer LE SIEN.
     """
     from .audit.panel import DEFAULT_PERSONAS, AuditPanel
+    from .core.codes import INDETERMINE
     from .providers.registry import from_env
 
     nommes = [getattr(f, "provider", None) for f in (fournisseurs or [])]
@@ -301,12 +302,21 @@ def _real_engine(
             nommes = [unique] * instances
     providers = nommes or list(from_env())
     if not providers:
-        raise SystemExit(
-            "Aucun fournisseur detecte.\n"
-            "Installe un CLI (opencode, hermes, claude, codex, gemini) ou definis\n"
-            "une variable d'environnement d'API (OPENROUTER_API_KEY, OPENAI_API_KEY...).\n"
-            "Sans cle, utilises : jio bench"
-        )
+        # INDETERMINE, PAS 0. Ce chemin s'annoncait « Aucun fournisseur detecte » et sortait en
+        # 0 (voir `codes.sortir`) : un agent qui enchaine lit un 0 comme « c'est fait, et
+        # prouve ». Or rien n'a ete fait, et ce qui manque a un nom — un fournisseur.
+        for message in (
+            "Aucun fournisseur detecte.",
+            "Installez un CLI (opencode, hermes, claude, codex, gemini, aider) ou definissez",
+            "une variable d'environnement d'API (OPENROUTER_API_KEY, OPENAI_API_KEY...).",
+            "",
+            "Sans cle, deux chemins existent DEJA, et ils ne demandent rien :",
+            "  jio bench                                  mesure du harness sur son banc",
+            "  jio run \"<objectif>\" --simulate --task sum_even --no-oracle",
+            "                                             mission reelle du banc, sans modele",
+        ):
+            print(f"  {message}" if message else "", file=sys.stderr)
+        raise SystemExit(INDETERMINE)
     gens = providers[:3]
     if famille == "prose":
         from .verify.prose_prover import ProseProver
@@ -5254,7 +5264,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(BANNER)
         parser.print_help()
         return 0
-    return int(args.func(args) or 0)
+    try:
+        return int(args.func(args) or 0)
+    except SystemExit as sortie:
+        # LE GARDE-FOU DE DERNIER RECOURS. `main()` est l'ENTREE du programme (et ce que les
+        # tests appellent) : elle doit rendre un CODE, pas laisser echapper une exception. Un
+        # appelant qui enchaine sur `main(...) == 0` lisait donc une exception la ou il attendait
+        # un nombre — et l'interpreteur, lui, sortait en 0 quand le message etait une chaine.
+        #
+        # La traduction est deliberement STRICTE : une chaine n'est JAMAIS un succes. Si un code
+        # arrive sous forme de texte, c'est un message que personne n'a encore ecrit : on
+        # l'ecrit, et on rend 1 (PROBLEME) — jamais 0. La doctrine des codes est dans
+        # `jio/core/codes.py`, et « un message d'erreur qui sort en 0 » y est le defaut fondateur.
+        code = sortie.code
+        if code is None:
+            return 0
+        if isinstance(code, int):
+            return code
+        print(code, file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":  # pragma: no cover

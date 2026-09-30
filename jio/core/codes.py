@@ -56,9 +56,12 @@ Le critere est donc la QUESTION de la commande : « que contient cet etat ? » (
 
 from __future__ import annotations
 
+from typing import NoReturn
+
 from ..core.types import MissionStatus
 
-__all__ = ["OK", "PROBLEME", "INDETERMINE", "EN_ATTENTE", "CODES", "code_de_mission", "TABLE"]
+__all__ = ["OK", "PROBLEME", "INDETERMINE", "EN_ATTENTE", "CODES", "ACTION",
+           "code_de_mission", "sortir", "TABLE"]
 
 OK = 0
 PROBLEME = 1
@@ -86,6 +89,34 @@ ACTION: dict[int, str] = {
     INDETERMINE: "fournir ce qui manque (preuve, fournisseur, entree) puis relancer.",
     EN_ATTENTE: "repondre aux questions essentielles, puis relancer.",
 }
+
+
+def sortir(message: str, code: int) -> NoReturn:
+    """Ecrire un message d'erreur sur la sortie d'erreur, puis sortir avec SON code.
+
+    POURQUOI CETTE FONCTION EXISTE, et le defaut qu'elle rend impossible : `raise
+    SystemExit("message")` — avec une CHAINE — sort en **0**. C'est une propriete du langage,
+    pas un choix : quand l'argument est une chaine, Python l'ecrit sur la sortie d'erreur et
+    termine normalement. Le message ressemble donc a une erreur, et le code dit « tout va
+    bien ».
+
+    Mesure a l'origine : `jio run "corrige le total du panier"` sans aucun fournisseur
+    affichait « Aucun fournisseur detecte. Installe un CLI ou definis une variable
+    d'environnement » et sortait en **0**. Un agent qui enchaine lit un 0 comme « c'est fait,
+    et prouve » : il ne fournira jamais la cle manquante, et rien ne l'aura dit. La doctrine de
+    ce module range exactement ce cas en `INDETERMINE` (2) : « il manque de quoi conclure : un
+    fournisseur, une preuve, une entree » et l'action associee est « fournir ce qui manque,
+    puis relancer ».
+
+    Le code est un parametre OBLIGATOIRE, sans valeur par defaut : un appelant doit decider de
+    ce qu'il vient de dire a la machine qui le lit. C'est la seule facon d'empecher le retour
+    du `SystemExit("...")` silencieusement vert — et `tests/test_codes_de_sortie.py` refuse
+    desormais la forme qui l'a produit.
+    """
+    import sys
+
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
 
 
 def code_de_mission(statut: MissionStatus) -> int:
