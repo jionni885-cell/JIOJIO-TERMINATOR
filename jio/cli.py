@@ -2495,6 +2495,28 @@ def cmd_learn(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Cout d'une mission du protocole multi-cycles, MESURE sur cette machine (2 cœurs) :
+#: 3 bras par mission mesuree, ~2,3 s chacun. Sert a annoncer une duree, pas a decider.
+_SECONDES_PAR_MISSION = 2.3
+
+
+def _apprendre_le_gain(args: argparse.Namespace) -> float:
+    """Calibre la MODELISATION du gain d'avertissement — elle ne peut pas etre inventee.
+
+    Cette constante (0,20 par defaut) est la seule chose que le banc ne mesure pas : elle
+    modelise l'effet d'un retour d'echec structure sur un modele reel. Elle borne donc TOUT
+    ce que le protocole peut conclure. La calibration A/B dirait, sur un vrai modele, quel
+    gain une reprise apres echec produit — c'est ce que fait l'option `--calibrer-gain`.
+    """
+    if getattr(args, "calibrer_gain", False):
+        print("  [CALIBRATION] --calibrer-gain demande : le gain d'avertissement sera")
+        print("    MESURE par le protocole A/B au lieu d'etre declare. Non implemente a ce")
+        print("    jour : le protocole multi-cycles refuse de tourner avec une modelisation")
+        print("    non calibree plutot que de publier un chiffre dont la borne est supposee.")
+        return -1.0
+    return 0.20
+
+
 def _learn_cycles(args: argparse.Namespace) -> int:
     """Le protocole MULTI-CYCLES. Mesure separee de l'A/B, jamais melangee.
 
@@ -2510,24 +2532,40 @@ def _learn_cycles(args: argparse.Namespace) -> int:
     print("  AUTO-AMELIORATION MULTI-CYCLES  ·  trois bras apparies par cycle")
     print(f"    competence simulee {args.skill}  ·  {args.cycles} cycles  ·  {args.runs} "
           f"tirage(s) par tache  ·  {args.rounds} tours  ·  {len(TASKS)} taches")
-    print(f"    cout annonce : {missions} missions (mesure a ~1,1 s/mission sur 2 cœurs)")
-    if missions > 200:
+    # Le cout par mission est un DEBIT MESURE (2,3 s/mission, 3 bras, 2 cœurs), pas une
+    # estimation d'intention : la version precedente annoncait 1,1 s et sous-estimait la
+    # duree reelle d'un facteur deux — une duree annoncee sert a decider, elle doit etre vraie.
+    secondes = missions * _SECONDES_PAR_MISSION
+    print(f"    cout annonce : {missions} mission(s) x {_SECONDES_PAR_MISSION} s/mission "
+          f"mesure = ~{secondes / 60:.0f} min sur 2 cœurs")
+    if missions > args.plafond_missions:
         print()
-        print(f"  [INDETERMINE] {missions} missions depassent le plafond de 200 : ce n'est pas")
-        print("    une mesure impossible, c'est une mesure qui prendrait "
-              f"~{missions * 1.1 / 60:.0f} min sur cette machine.")
-        print("    Reduire --cycles ou --runs. Le protocole ne se degrade PAS en silence :")
-        print("    il refuse plutot que de rendre un chiffre qu'il n'a pas les moyens de")
-        print("    rendre. (Un tour du bras chaud est REJOUE par le bras froid apparie :")
-        print("    la comparaison coute exactement le double de ce qu'elle mesure.)")
+        print(f"  [INDETERMINE] {missions} missions depassent le plafond de "
+              f"{args.plafond_missions} : ce n'est pas une mesure impossible, c'est une")
+        print(f"    mesure qui prendrait ~{secondes / 60:.0f} min sur cette machine.")
+        print(f"    Reduire --cycles ou --runs, ou assumer le cout avec "
+              f"`--plafond-missions {missions}`.")
+        print("    Le protocole ne se degrade PAS en silence : il refuse plutot que de")
+        print("    rendre un chiffre qu'il n'a pas les moyens de rendre.")
         return 2
+    import time
+
+    debut = time.monotonic()
     print("    Par mission : CHAUD (memoire, avertissement actif) -> TEMOIN (memoire")
     print("    presente, avertissement desactive) -> FROID (aucune memoire). Memes taches,")
     print("    memes graines, MEME bras : le temoin separe l'effet de la memoire du bruit.")
     print()
+    gain = _apprendre_le_gain(args)
+    if gain < 0.0:
+        return 2
     res = run_cycles(
         skill=args.skill, runs=args.runs, cycles=args.cycles, rounds=args.rounds,
+        warning_gain=gain,
     )
+    # Le debit est MESURE pendant ce run, pas suppose : c'est lui qui convertit un budget
+    # d'essais en duree reelle, et une duree annoncee est ce qui fait prendre une decision.
+    ecoule = max(time.monotonic() - debut, 1e-6)
+    debit = missions / ecoule
     if not res.cycles:
         print("  [INDETERMINE] aucun cycle mesure (cycles ou runs nul).")
         return 2
@@ -2545,6 +2583,15 @@ def _learn_cycles(args: argparse.Namespace) -> int:
     total = sum(c.appels for c in res.cycles)
     print(f"  PORTEE DU LEVIER : {armes}/{total} appel(s) de generation avertis "
           f"({res.portee:.1%}) — c'est ce qui borne tout effet possible de la memoire.")
+    requis = res.essais_requis()
+    if requis:
+        # 3 bras par essai mesure : c'est le cout reel du protocole, pas une estimation.
+        minutes = requis * 3 / debit / 60.0 if debit else 0.0
+        print(f"  ESSAIS REQUIS POUR DEMONTRER L'ECART OBSERVE : {requis} par bras, soit "
+              f"~{minutes:.0f} min ici au debit mesure ({debit:.2f} essai/s).")
+        print("    (Mesure a 95 % de confiance et 80 % de puissance, formule du banc ; "
+              "c'est un budget, pas un verdict.)")
+    print(f"  DEBIT MESURE : {debit:.2f} essai(s)/s sur cette machine.")
     if res.bras:
         print("  ROUTAGE (le bandit, mesure sur tout l'historique) :")
         for nom, tirages, recompense in res.bras:
@@ -3565,6 +3612,18 @@ def build_parser() -> argparse.ArgumentParser:
     le.add_argument("--runs", type=int, default=3, help="tirages par tache et par phase")
     le.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
                     help="tours de boucle maximum")
+    le.add_argument(
+        "--calibrer-gain", action="store_true",
+        help="mesurer le gain d'avertissement par le protocole A/B au lieu de le declarer "
+             "(refuse de tourner tant que ce n'est pas implemente : une modelisation non "
+             "calibree borne toutes les conclusions du protocole)",
+    )
+    le.add_argument(
+        "--plafond-missions", type=int, default=200,
+        help="nombre de missions au-dela duquel le protocole multi-cycles REFUSE de "
+             "mesurer (defaut 200). Ce n'est pas une limite technique : c'est un garde-fou "
+             "de duree. Le relever est un choix, et il s'assume explicitement.",
+    )
     le.add_argument(
         "--cycles", type=int, default=0,
         help="0 = comparaison A/B (defaut). N > 0 = protocole MULTI-CYCLES : la memoire "

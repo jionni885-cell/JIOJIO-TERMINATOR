@@ -115,6 +115,65 @@ def test_le_bloc_NOMME_la_tache_dont_il_parle():
     assert _warns_about(prompt, "parse_duration") is False
 
 
+def test_l_armement_survit_a_la_troncature_du_bloc():
+    """DEFAUT MESURE, verrouille ici : l'armement comparait la CLE ENTIERE au bloc TRONQUE.
+
+    La banque du banc indexe chaque tache par son objectif complet (161 caracteres pour
+    `sum_even`) ; le bloc de memoire borne ce qu'il cite. La condition « la cle est une
+    sous-chaine du bloc » ne pouvait donc etre satisfaite que par accident : mesure sur un
+    run reel, 31 blocs presents dans le prompt et **0 avertissement accorde**.
+
+    Comparer les IDENTIFIANTS techniques est robuste a la troncature, et c'est le bon
+    critere sur le fond : un nom technique distingue les taches, la prose ne les distingue
+    pas (deux enonces differents partagent « renvoie », « nombres », « liste »).
+    """
+    from jio.bench.tasks import build_bank
+    from jio.providers.simulated import _identifiants, _warns_about
+
+    banque = build_bank()
+    objectif = "Ecrire une fonction `sum_even(nums)` qui renvoie la somme des nombres pairs"
+    cle = next(k for k in banque if k.startswith("Ecrire une fonction `sum_even"))
+    autre = next(k for k in banque if k.startswith("Ecrire `is_prime"))
+
+    # Le bloc tel qu'il est REELLEMENT injecte : tronque.
+    bloc = (f"PAST FAILURES ON SIMILAR TASKS (priors, not proofs):\n"
+            f"- ON TASK: {objectif[:160]}\n  SYMPTOM: R-1 non satisfaite\n  GUARD: R-1")
+    prompt = f"OBJECTIVE:\n{cle}\n{bloc}"
+
+    assert len(cle) > 160, "la cle doit etre plus longue que la troncature, sinon rien n'est teste"
+    assert _identifiants(cle) & _identifiants(bloc), "l'identifiant doit survivre"
+    assert _warns_about(prompt, cle) is True, "le souvenir de CETTE tache doit armer"
+    assert _warns_about(prompt, autre) is False, "celui d'une AUTRE tache ne doit pas armer"
+
+
+def test_un_bloc_de_memoire_ne_peut_pas_redesigner_la_tache():
+    """DEFaut le plus grave trouve par ce chantier : le bloc injecte changeait LA QUESTION.
+
+    `_key` choisit la plus longue cle du banc presente dans le prompt. Le bloc de memoire
+    citant l'objectif d'une autre tache, un modele simule aurait alors repondu a CETTE
+    autre tache tout en croyant repondre a la sienne — une memoire qui detourne la mission.
+    `_demande` arrete la lecture de la tache au premier bloc injecte.
+    """
+    from jio.providers.simulated import Persona, SimulatedProvider, _demande
+
+    courte = "Ecrire `is_prime(n)` qui renvoie True si n est premier."
+    longue = "Ecrire une fonction `sum_even(nums)` qui renvoie la somme des nombres pairs."
+    banc = {courte: ("reponse is_prime", []), longue: ("reponse sum_even", [])}
+    fournisseur = SimulatedProvider(name="t", persona=Persona(name="p", skill=0.5), bank=banc)
+
+    souvenir = ("PAST FAILURES ON SIMILAR TASKS (priors, not proofs):\n"
+                f"- ON TASK: {longue}\n  SYMPTOM: R-1\n  GUARD: R-1")
+    prompt = f"OBJECTIVE:\n{courte}\n{souvenir}"
+
+    assert longest_cle(fournisseur, prompt) == longue, "sans la garde, la memoire detourne"
+    assert fournisseur._key(_demande(prompt)) == courte, "avec la garde, la tache reste la bonne"
+
+
+def longest_cle(fournisseur, prompt: str) -> str:
+    """La cle que `_key` rendrait sur le prompt ENTIER (donc avec le bloc de memoire)."""
+    return fournisseur._key(prompt)
+
+
 def test_chaine_detecte_une_reecriture(tmp_path: Path):
     """Une memoire editable est la chose la plus facile a reecrire discretement.
 

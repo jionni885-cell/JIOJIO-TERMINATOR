@@ -184,6 +184,14 @@ def essais_necessaires(
     Si les deux proportions sont egales, aucun nombre d'essais ne conclura : on rend 0,
     ce qui se lit « effet nul, il n'y a rien a mesurer ».
     """
+    # Une proportion hors de [0 ; 1] n'existe pas. Sans cette garde, le calcul ne leve
+    # rien : il rend un budget NEGATIF (mesure : -1796 essais pour des taux de 1,5),
+    # c'est-a-dire un chiffre plausible en apparence et faux en entier. Un appelant qui
+    # divise par un total nul ou decale se fait prendre ici, pas dans un rapport.
+    if not (0.0 <= p_gauche <= 1.0 and 0.0 <= p_droite <= 1.0):
+        raise ValueError(
+            f"des proportions doivent etre entre 0 et 1 : {p_gauche} et {p_droite}"
+        )
     difference = p_droite - p_gauche
     if abs(difference) < 1e-12:
         return 0

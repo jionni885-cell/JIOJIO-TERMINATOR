@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import re
 from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
@@ -26,6 +27,59 @@ from .base import Completion, Message
 
 _WARNING_MARKER = "PAST FAILURES ON SIMILAR TASKS"
 _FEEDBACK_MARKER = "PREVIOUS ATTEMPT FAILED"
+
+#: Les blocs que JIO INJECTE dans le prompt (memoire, retour d'echec). Ils sont ajoutes
+#: APRES la demande, et `_demande` s'arrete au premier d'entre eux.
+_MARQUEURS_INJECTES = (_WARNING_MARKER, _FEEDBACK_MARKER)
+
+#: Un identifiant technique : nom entre accents graves (`sum_even(nums)`) ou jeton
+#: snake_case. C'est le token le plus DISCRIMINANT d'une demande — l'equivalent d'un IDF
+#: eleve dans BM25 — donc celui sur lequel on decide si un souvenir concerne la tache.
+_IDENT = re.compile(r"`([^`]+)`|\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b", re.IGNORECASE)
+_MOT = re.compile(r"[a-zA-ZÀ-ÿ]{5,}")
+
+
+def _demande(prompt: str) -> str:
+    """La partie du prompt qui EST la demande, avant tout bloc injecte.
+
+    Sans cette restriction, un souvenir rappele peut RE-DESIGNER la tache : `_key` cherche
+    la plus longue cle du banc presente dans le texte, et le bloc de memoire contient
+    l'objectif d'une autre tache. Mesure du risque : la banque indexe chaque tache par son
+    objectif ENTIER (161 caracteres pour `sum_even`) ; un souvenir portant un objectif plus
+    long que celui de la tache courante ferait repondre le modele a la mauvaise question.
+    """
+    fin = len(prompt)
+    for marque in _MARQUEURS_INJECTES:
+        at = prompt.find(marque)
+        if at >= 0:
+            fin = min(fin, at)
+    return prompt[:fin]
+
+
+def _identifiants(texte: str) -> set[str]:
+    """Noms techniques cites : `sum_even(nums)` -> {sum_even, nums} ; snake_case aussi."""
+    trouves: set[str] = set()
+    for entre_graves, snake in _IDENT.findall(texte):
+        morceau = entre_graves or snake
+        if entre_graves:
+            # `sum_even(nums)` : on garde le nom ET ses arguments — les deux sont cites.
+            trouves.update(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", morceau))
+        else:
+            trouves.add(morceau)
+    return {t.lower() for t in trouves if len(t) > 2}
+
+
+def _mots(texte: str) -> set[str]:
+    """Mots de prose assez longs pour porter du sens (repli sans identifiant technique)."""
+    return {m.lower() for m in _MOT.findall(texte)}
+
+
+def _recouvrement(bloc: str, cle: str) -> float:
+    """Part des identifiants de la cle presents dans le bloc (1.0 si la cle n'en a aucun)."""
+    ids_cle = _identifiants(cle)
+    if not ids_cle:
+        return 1.0
+    return len(ids_cle & _identifiants(bloc)) / len(ids_cle)
 
 
 def _has_structured_feedback(prompt: str) -> bool:
@@ -47,18 +101,33 @@ def _warns_about(prompt: str, task_key: str) -> bool:
     Deux exigences, et la seconde est celle qui compte :
 
       1. un bloc de memoire est present dans le prompt ;
-      2. il nomme la tache courante DANS LE BLOC LUI-MEME.
+      2. il parle de CETTE tache — mesure sur les IDENTIFIANTS techniques.
 
-    La premiere version cherchait le mot-cle n'importe ou dans le prompt. Or
-    l'objectif contient toujours le nom de la tache : la condition etait donc
-    toujours vraie, et l'avertissement se declenchait meme quand le souvenir
-    parlait d'une autre tache. Le « gain » mesure aurait alors ete du bruit
-    presente comme un resultat — exactement ce que ce projet doit refuser.
+    La premiere version cherchait le mot-cle n'importe ou dans le prompt. Or l'objectif
+    contient toujours le nom de la tache : la condition etait donc toujours vraie, et
+    l'avertissement se declenchait meme quand le souvenir parlait d'une autre tache.
+
+    La deuxieme version exigeait que la cle de tache soit une SOUS-CHAINE du bloc. Elle
+    etait fausse pour une raison invisible : la banque indexe chaque tache par son objectif
+    ENTIER (jusqu'a 161 caracteres) alors que le bloc de memoire borne ce qu'il cite. La
+    condition ne pouvait donc etre satisfaite que par accident — mesure : 0 avertissement
+    accorde sur 48 appels, avec le bloc PRESENT dans 31 d'entre eux.
+
+    Comparer les identifiants est robuste a cette troncature, et c'est aussi le bon critere
+    sur le fond : un nom technique (`sum_even`) distingue les taches, la prose ne les
+    distingue pas. Quand la demande n'a aucun identifiant (une tache de prose), on retombe
+    sur un recouvrement de mots STRICT, pour ne pas armer sur deux mots generiques.
     """
     marker_at = prompt.find(_WARNING_MARKER)
     if marker_at < 0 or not task_key:
         return False
-    return task_key.lower() in prompt[marker_at:].lower()
+    bloc = prompt[marker_at:]
+    ids = _identifiants(task_key)
+    if ids:
+        return bool(ids & _identifiants(bloc))
+    mots = _mots(task_key)
+    communs = mots & _mots(bloc)
+    return len(communs) >= max(3, len(mots) // 2)
 
 
 @dataclass
@@ -156,7 +225,9 @@ class SimulatedProvider:
     ) -> Completion:
         self.calls += 1
         prompt = "\n".join(m.content for m in messages)
-        key = self._key(prompt)
+        # La tache est identifiee sur la DEMANDE seule : un bloc de memoire injecte ne doit
+        # jamais pouvoir re-designera la question a laquelle le modele repond (voir _demande).
+        key = self._key(_demande(prompt))
 
         if key is None:
             return Completion(

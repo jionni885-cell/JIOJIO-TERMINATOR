@@ -95,8 +95,12 @@ def test_un_cycle_respecte_le_nombre_d_essais_annonce(rapport_petit: RapportCycl
 # --- Le verdict ---------------------------------------------------------------------------
 
 
-def _rapport(*cycles: Cycle) -> RapportCycles:
-    return RapportCycles(cycles=list(cycles), skill=0.5, runs=1, rounds=2)
+def _rapport(*cycles: Cycle, gain: float = 0.0) -> RapportCycles:
+    """Un rapport construit a la main. `gain` est le warning_gain DECLARE : sans lui, le
+    rapport ne peut pas calculer l'effet attendu et ne doit donc rien dire de la portee."""
+    return RapportCycles(
+        cycles=list(cycles), skill=0.5, runs=1, rounds=2, warning_gain=gain
+    )
 
 
 def _cycle(numero: int, froid: int, chaud: int, *, temoin: int = 0, memo_avant: int = 0,
@@ -146,7 +150,7 @@ def test_la_portee_borne_l_interpretation() -> None:
     rapport = RapportCycles(
         cycles=[_cycle(1, froid=8, temoin=8, chaud=8, memo_avant=5, memo_apres=9,
                        caracteres=4000, avertis=1, appels=100)],
-        warning_gain=0.20,
+        skill=0.5, warning_gain=0.20,
     )
     assert rapport.portee == pytest.approx(0.01)
     assert rapport.effet_attendu_max() < 1.0
@@ -161,7 +165,7 @@ def test_une_portee_large_autorise_a_conclure() -> None:
     rapport = RapportCycles(
         cycles=[_cycle(1, froid=8, temoin=8, chaud=8, memo_avant=5, memo_apres=9,
                        caracteres=4000, avertis=100, appels=100)],
-        warning_gain=0.20,
+        skill=0.5, warning_gain=0.20,
     )
     assert rapport.effet_attendu_max() >= 1.0
     assert "il ne s'est pas vu" in rapport.explication()
@@ -235,6 +239,85 @@ def test_la_troncature_garde_les_souvenirs_les_plus_recents(tmp_path) -> None:
     assert "echec 9" in restants and "echec 0" not in restants
 
 
+def test_le_gain_declare_se_calcule_sur_la_COMPETENCE_pas_sur_le_taux_observe() -> None:
+    """Le gain est RELATIF et s'applique a la competence du modele, pas au taux observe.
+
+    Le taux de reussite observe (85 % ici) est deja le produit de la largeur de tirage et
+    de la verification : s'en servir comme base gonflerait l'effet attendu d'un facteur
+    deux, et le rapport aurait declare « incoherent » un ecart parfaitement coherent avec
+    sa modelisation. Mesure sur un vrai run : +7,9 points attendus (base = competence 0,40)
+    pour +7,0 observes.
+    """
+    rapport = RapportCycles(
+        cycles=[_cycle(1, froid=21, temoin=21, chaud=23, essais=25, memo_apres=8,
+                       caracteres=7000, avertis=25, appels=25)],
+        skill=0.40, warning_gain=0.20,
+    )
+    assert rapport.gain_declare == pytest.approx(7.9, abs=0.2)
+    # Et le taux OBSERVE (84 %) ne doit pas entrer dans ce calcul.
+    assert rapport.cycles[0].taux_chaud == pytest.approx(0.92)
+    assert "VALID" in rapport.explication()
+
+
+def test_l_intervalle_est_POOL_sur_tous_les_cycles() -> None:
+    """Un ecart de +7 sur 100 essais ne doit pas etre juge sur les 25 du dernier cycle.
+
+    Le protocole mesurait 100 essais et n'en regardait que 25 : il jetait 75 % de sa
+    propre preuve. La comparaison reste appariee cycle par cycle, donc empiler les cycles
+    n'ajoute aucun biais — cela ajoute de la resolution (budget requis : 1177 -> 432
+    essais par bras, mesure).
+    """
+    rapport = RapportCycles(
+        cycles=[_cycle(n, froid=f, temoin=t, chaud=c, essais=25, memo_apres=5 * n)
+                for n, f, t, c in ((1, 20, 20, 22), (2, 24, 24, 24),
+                                   (3, 19, 19, 23), (4, 22, 22, 23))],
+        skill=0.4, warning_gain=0.20,
+    )
+    assert rapport.ecart_cumule == 7
+    assert rapport.essais_cumules == 100
+    assert rapport.essais_requis() == 432
+    # La portee n'est pas encore suffisante a 100 essais pour trancher... et le rapport
+    # le dit au lieu de conclure sur le dernier cycle.
+    assert rapport.tranche_cumule is False
+    assert rapport.verdict() == "PLATEAU"
+    assert "cumule +7 sur 100" in rapport.explication()
+
+
+def test_un_ecart_nul_ne_se_demontre_pas_par_plus_d_essais() -> None:
+    """« INDETERMINE » n'est utile que s'il dit COMBIEN d'essais il faudrait.
+
+    Et il doit dire la verite dans les deux sens : un ecart NUL ne se « demontre » pas, il
+    est deja le resultat (aucun nombre d'essais ne le rendra significatif) ; un ecart NON
+    nul mais trop petit pour 60 essais a un budget, et le rapport doit le donner.
+    """
+    nul = _rapport(_cycle(1, froid=8, temoin=8, chaud=8, essais=20,
+                          memo_avant=3, memo_apres=9))
+    assert nul.essais_requis() == 0
+
+    petit = _rapport(_cycle(1, froid=15, temoin=15, chaud=16, essais=20,
+                            memo_avant=3, memo_apres=9))
+    requis = petit.essais_requis()
+    assert requis > 20, f"+1 sur 20 demande beaucoup plus de 20 essais, pas {requis}"
+    # La meme formule que le banc : une seule implementation dans le depot.
+    from jio.bench.incertitude import essais_necessaires
+
+    assert requis == essais_necessaires(15 / 20, 16 / 20)
+
+
+def test_le_budget_de_mesure_est_dit_et_chiffre() -> None:
+    """Le message doit donner le BUDGET, pas une conclusion que la mesure ne porte pas."""
+    rapport = _rapport(_cycle(1, froid=15, temoin=15, chaud=16, essais=20,
+                              memo_avant=3, memo_apres=9, caracteres=4000,
+                              avertis=100, appels=100), gain=0.20)
+    texte = rapport.explication()
+    assert "n'est pas DEMONTRE" in texte
+    assert "essais par bras" in texte
+    assert "lire du bruit" in texte
+    assert "sans effet mesurable" not in texte, (
+        "un ecart NON nul ne doit pas etre presente comme « sans effet »"
+    )
+
+
 def test_le_rapport_vide_ne_leve_pas() -> None:
     """Un rapport sans cycle s'affiche quand meme : un echec doit etre lisible."""
     rapport = RapportCycles()
@@ -255,6 +338,23 @@ def test_zero_cycle_reste_l_ab() -> None:
     assert args.cycles == 0
 
 
+def test_le_gain_non_calibre_refuse_de_tourner(capsys) -> None:
+    """La constante `warning_gain` est la SEULE chose que le protocole ne mesure pas : elle
+    modelise l'effet d'un retour d'echec structure, et elle borne TOUT ce qu'il conclut.
+
+    Tant que ce n'est pas calibre sur un vrai modele, demander la calibration doit
+    s'entendre dire « non » explicitement (code 2) plutot que de tourner avec un chiffre
+    invente et de publier une portee qui en depend.
+    """
+    from jio.cli import _learn_cycles, build_parser
+
+    args = build_parser().parse_args(["learn", "--cycles", "1", "--calibrer-gain"])
+    assert _learn_cycles(args) == 2
+    sortie = capsys.readouterr().out
+    assert "CALIBRATION" in sortie
+    assert "refuse de tourner" in sortie
+
+
 def test_le_plafond_de_cout_refuse_au_lieu_de_mesurer(capsys) -> None:
     """MESURER SANS MOYEN = code 2 (doctrine), pas un chiffre approximatif.
 
@@ -272,3 +372,7 @@ def test_le_plafond_de_cout_refuse_au_lieu_de_mesurer(capsys) -> None:
     assert code == 2, "un refus de mesure doit sortir en INDETERMINE"
     assert "INDETERMINE" in sortie
     assert "missions" in sortie
+    # Le refus doit DONNER LE MOYEN DE PASSER OUTRE : un garde-fou de duree n'est pas une
+    # interdiction, c'est un choix a assumer.
+    # 99 cycles x 3 bras x 5 taches x 3 tirages (defauts de la commande)
+    assert "--plafond-missions 4455" in sortie

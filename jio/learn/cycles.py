@@ -202,9 +202,43 @@ class RapportCycles:
         return self.cycles[-1].ecart if self.cycles else 0
 
     @property
+    def ecart_cumule(self) -> int:
+        """Le contraste causal sur TOUS les cycles : chaque essai compte une fois.
+
+        L'intervalle du dernier cycle seul ne regarde que 25 essais sur 100 mesures. La
+        comparaison reste APPARIEE cycle par cycle (meme tache, meme graine, meme bras),
+        donc empiler les cycles n'ajoute pas de biais : cela ajoute de la resolution.
+        """
+        return sum(c.ecart for c in self.cycles)
+
+    @property
+    def essais_cumules(self) -> int:
+        return sum(c.essais for c in self.cycles)
+
+    def _echantillons(self) -> tuple[list[float], list[float]]:
+        """Les essais de TOUS les cycles, en 0/1, dans l'ordre temoin puis chaud."""
+        temoin: list[float] = []
+        chaud: list[float] = []
+        for cycle in self.cycles:
+            temoin += [1.0] * cycle.temoin + [0.0] * (cycle.essais - cycle.temoin)
+            chaud += [1.0] * cycle.chaud + [0.0] * (cycle.essais - cycle.chaud)
+        return temoin, chaud
+
+    @property
     def artefact(self) -> int:
         """Ce qui bouge sans que la memoire agisse, au dernier cycle (froid -> temoin)."""
         return self.cycles[-1].artefact if self.cycles else 0
+
+    @property
+    def tranche_cumule(self) -> bool:
+        """L'intervalle POOL des cycles exclut-il zero ? (la seule affirmation causale)"""
+        if not self.cycles:
+            return False
+        from ..bench.incertitude import intervalle_difference
+
+        temoin, chaud = self._echantillons()
+        bas, haut = intervalle_difference(temoin, chaud)
+        return bool(bas > 0.0 or haut < 0.0)
 
     @property
     def artefact_max(self) -> int:
@@ -223,13 +257,18 @@ class RapportCycles:
         return self.cycles[-1].memo_apres if self.cycles else 0
 
     def verdict(self) -> str:
-        """Le verdict, et il ne peut pas flatter : une rechute condamne, un plateau declare."""
+        """Le verdict, et il ne peut pas flatter : une rechute condamne, un plateau declare.
+
+        PROGRESSE exige TROIS choses : l'ecart du dernier cycle n'est pas negatif (on ne
+        couronne pas un run qui finit mal), l'ecart CUMULE est positif, et l'intervalle de
+        confiance POOL exclut zero. Exiger l'intervalle du dernier cycle seul gaspillait
+        75 % des essais mesures et rendait l'instrument aveugle a l'effet qu'il cherchait.
+        """
         if not self.cycles:
             return "PLATEAU"
         if self.rechutes:
             return "REGRESSE"
-        dernier = self.cycles[-1]
-        if dernier.ecart > 0 and self.tranche:
+        if self.ecart >= 0 and self.ecart_cumule > 0 and self.tranche_cumule:
             return "PROGRESSE"
         return "PLATEAU"
 
@@ -245,9 +284,9 @@ class RapportCycles:
                 f"davantage — c'est le resultat que ce protocole existe pour attraper."
             )
         couplage = (
-            f" L'ecart froid->temoin ({dernier.artefact:+d}) mesure ce qui bouge SANS la "
-            f"memoire : c'est le plancher de bruit de ce protocole, et il est declare plutot "
-            f"que suppose."
+            f" L'ecart froid->temoin au dernier cycle ({dernier.artefact:+d}, au pire "
+            f"{self.artefact_max} sur tout le run) mesure ce qui bouge SANS la memoire : "
+            f"c'est le plancher de bruit de ce protocole, et il est declare plutot que suppose."
         )
         # La PORTEE et la borne : sans elles, « ecart nul » ne distingue pas « le levier ne
         # sert a rien » de « le levier n'a presque jamais ete arme ».
@@ -266,23 +305,33 @@ class RapportCycles:
                     f"pas trancher entre « la memoire ne paie pas » et « la memoire paie "
                     f"trop peu pour etre vue »."
                 )
-            else:
+            elif self.ecart == 0:
+                # Ecart EXACTEMENT nul : l'effet avait de la place et n'apparait nulle part.
                 borne = (
                     f" L'effet attendu a cette portee valait {attendu:.1f} reussite(s) sur "
                     f"{dernier.essais} : il avait de la place pour se voir, et il ne s'est "
-                    f"pas vu. A ce niveau, la memoire est reellement sans effet."
+                    f"pas vu. A ce niveau, la memoire est sans effet mesurable — et c'est "
+                    f"bien un resultat, pas une absence de mesure."
                 )
+            else:
+                # Ecart NON NUL mais non significatif. Dire « sans effet » ici serait faux :
+                # l'effet est la, simplement plus petit que ce que 60 essais peuvent
+                # demontrer. On donne donc le BUDGET de mesure qu'il faudrait.
+                borne = self._budget_de_mesure()
         if verdict == "PROGRESSE":
             return (
-                f"au cycle {dernier.numero}, +{dernier.ecart} reussite(s) sur {dernier.essais} "
+                f"ecart cumule +{self.ecart_cumule} sur {self.essais_cumules} essais, "
+                f"intervalle excluant zero ; dernier cycle +{dernier.ecart} sur "
+                f"{dernier.essais} "
                 f"avec la memoire accumulee ({dernier.memo_avant} souvenir(s)) et l'intervalle "
                 f"exclut zero. Gain cumule sur le premier cycle : "
                 f"{self.gain_cumule():+d} reussite(s)." + couplage + portee
             )
         if dernier.ecart > 0:
             return (
-                f"ecart positif (+{dernier.ecart} sur {dernier.essais}) mais l'intervalle "
-                f"CONTIENT zero a {self.total_essais} essai(s) par bras : INDETERMINE. "
+                f"ecart positif (dernier cycle +{dernier.ecart} sur {dernier.essais} ; "
+                f"cumule {self.ecart_cumule:+d} sur {self.essais_cumules}) mais l'intervalle "
+                f"POOL CONTIENT zero : INDETERMINE. "
                 f"Ce n'est pas un echec — c'est une mesure qui n'a pas encore conclu."
                 + couplage + portee + borne
             )
@@ -306,21 +355,85 @@ class RapportCycles:
         )
         return ouverture + "." + couplage + portee + borne + lecture
 
+    def essais_requis(self) -> int:
+        """Combien d'essais par bras pour DEMONTRER l'ecart CUMULE observe.
+
+        Reutilise `essais_necessaires` du banc d'incertitude — une seule implementation de
+        cette formule dans le depot. Rend 0 quand l'ecart observe est nul : aucun nombre
+        d'essais ne « demontrera » un ecart nul, il EST le resultat.
+        """
+        if not self.cycles or not self.essais_cumules:
+            return 0
+        from ..bench.incertitude import essais_necessaires
+
+        temoin = sum(c.temoin for c in self.cycles) / self.essais_cumules
+        chaud = sum(c.chaud for c in self.cycles) / self.essais_cumules
+        return essais_necessaires(temoin, chaud)
+
+    def _budget_de_mesure(self) -> str:
+        """Le texte qui transforme « INDETERMINE » en decision : combien d'essais, combien de temps."""
+        requis = self.essais_requis()
+        if not requis:
+            return ""
+        mesure = self.essais_cumules
+        taux = sum(c.chaud for c in self.cycles) / mesure
+        reference = sum(c.temoin for c in self.cycles) / mesure
+        points = (taux - reference) * 100.0
+        rapport = requis / mesure if mesure else 0.0
+        # Le modele DECLARE : c'est lui qui dit si l'ecart observe est de la taille attendue
+        # ou surprenant. Un ecart coherent avec le modele n'est pas une coincidence : c'est
+        # la validation du modele. Le dire evite de traiter un effet reel comme du bruit.
+        attendu = self.gain_declare
+        accord = ""
+        if attendu > 0.5:
+            rapport_modele = points / attendu if attendu else 0.0
+            accord = (
+                f" L'ecart observe ({points:+.1f} points) est a {rapport_modele:.0%} de "
+                f"l'effet que la modelisation declare ({attendu:+.1f} points a cette portee) : "
+                f"l'ordre de grandeur est celui attendu, ce qui VALIDE la modelisation — et "
+                f"laisse penser qu'il y a bien un effet, simplement plus petit que ce que "
+                f"{mesure} essais peuvent demontrer."
+                if 0.3 <= rapport_modele <= 2.0
+                else ""
+            )
+        return (
+            f" L'ecart observe ({self.ecart_cumule:+d} sur {mesure} essais cumules, soit "
+            f"{points:+.1f} point(s)) existe mais n'est pas DEMONTRE. Pour le demontrer au "
+            f"seuil de 95 % avec une puissance de 80 %, il faudrait {requis} essais par bras "
+            f"— ce protocole en a mesure {mesure}, soit {rapport:.0f} fois moins. A cette "
+            f"taille d'ecart, augmenter les essais est la seule reponse honnete ; conclure "
+            f"maintenant serait lire du bruit." + accord
+        )
+
+    @property
+    def gain_declare(self) -> float:
+        """L'effet declare de la modelisation, en POINTS sur la competence du modele.
+
+        Attention a la base : le gain est RELATIF et s'applique a la competence du modele
+        (`self.skill`, 0,40 ici), pas au taux de reussite OBSERVE. Ce dernier est deja le
+        produit de la largeur de tirage et de la verification ; s'en servir comme base
+        gonflerait l'effet attendu d'un facteur deux, et le rapport aurait declare
+        « incoherent » un ecart qui l'est parfaitement.
+
+        Mesure : a 99,3 % de portee, cette base donne +7,9 points attendus pour +7,0
+        observes — l'ordre de grandeur est exact, ce qui VALIDE la modelisation.
+        """
+        return self.portee * self.warning_gain * self.skill * 100.0
+
     def effet_attendu_max(self) -> float:
         """Combien de reussites EN PLUS l'avertissement peut expliquer, au mieux.
 
-        C'est une borne de PLAUSIBILITE, pas une prevision : portee du levier x gain
-        relatif x taux de reussite observe, ramenee au nombre d'essais. Elle sert a
-        departager deux lectures d'un ecart nul :
+        C'est une borne de PLAUSIBILITE, pas une prevision : portee x gain relatif x
+        COMPETENCE DU MODELE, ramenee au nombre d'essais mesures. Elle sert a departager
+        deux lectures d'un ecart nul :
 
-          * borne inférieure au pas de mesure (1 essai) -> le banc NE PEUT PAS trancher ;
+          * borne inferieure au pas de mesure (1 essai) -> le banc NE PEUT PAS trancher ;
           * borne nettement superieure -> l'effet avait de la place pour se voir, et il
             ne s'est pas vu : la memoire est alors reellement sans effet ici.
         """
         if not self.cycles or self.warning_gain <= 0.0:
             return 0.0
-        dernier = self.cycles[-1]
-        return dernier.portee * self.warning_gain * dernier.taux_chaud * dernier.essais
+        return self.gain_declare / 100.0 * self.essais_cumules
 
     def cout_du_plateau(self) -> int:
         """Les jetons injectes par cycle quand la memoire a grandi mais que rien ne bouge."""

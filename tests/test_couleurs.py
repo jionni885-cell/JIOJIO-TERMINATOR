@@ -15,8 +15,6 @@ from __future__ import annotations
 
 import io
 
-import pytest
-
 from jio.cli import COLORS, couleur_activee, render_report
 
 
@@ -75,7 +73,7 @@ def _rapport_reel():
     couleur. Ici, la sortie est exactement celle que l'utilisateur voit.
     """
     from jio.bench.tasks import TASKS
-    from jio.cli import _engine_config, _simulated_engine
+    from jio.cli import _simulated_engine
     from jio.core.types import Mission
     from jio.loop.engine import WorkItem
 

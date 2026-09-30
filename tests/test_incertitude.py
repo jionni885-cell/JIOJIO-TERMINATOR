@@ -244,3 +244,22 @@ def test_deux_textes_SANS_nombre_ne_sont_pas_declares_numeriquement_egaux() -> N
     assert _numeric_equal("aucun nombre ici", "rien du tout") is False
     assert _numeric_equal("le total est 12.0", "le total est 12") is True
     assert _numeric_equal("le total est 12", "le total est 13") is False
+
+
+def test_une_proportion_impossible_leve_au_lieu_de_rendre_un_chiffre():
+    """DEFAUT MESURE : des taux de 1,5 (une division par un total faux) rendaient un budget
+    de **-1796 essais** — un chiffre negatif, faux en entier, et silencieux.
+
+    Trouve en ecrivant un test du protocole multi-cycles : la garde manquait. Un banc qui
+    rend un nombre pour une entree qui n'existe pas fabrique de la confiance a tort, ce qui
+    est exactement ce que ce depot refuse.
+    """
+    from jio.bench.incertitude import essais_necessaires
+
+    with pytest.raises(ValueError):
+        essais_necessaires(1.5, 1.6)
+    with pytest.raises(ValueError):
+        essais_necessaires(-0.1, 0.5)
+    # Les bornes legitimes, elles, passent : 0 et 1 sont des proportions valides.
+    assert essais_necessaires(0.0, 0.5) > 0
+    assert essais_necessaires(1.0, 1.0) == 0
