@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import ast
 import random
+import re
 from dataclasses import dataclass
 
 __all__ = [
@@ -78,6 +79,33 @@ _ROUND_TRIP_PAIRS: tuple[tuple[str, str], ...] = (
 #: `rank` peut legitimement rendre des RANGS (`rank([3,1,2]) -> [2,0,1]`), qui ne sont
 #: pas tries — l'inclure serait un faux positif programme.
 _SORT_CLAIMS = ("sort", "sorted", "order")
+
+#: Les MOTS d'un nom, separes sur `_`, les changements de casse et les chiffres. C'est l'unite
+#: de comparaison des promesses de nom, et elle remplace la sous-chaine.
+#:
+#: POURQUOI, mesure faite sur CE depot : `jio scan .` accusait `jio/core/codes.py` d'enfreindre
+#: la propriete « tri fidele » (P-004) sur la fonction `sortir` — dont le nom francais veut dire
+#: « quitter le programme ». La sous-chaine « sort » y est, la promesse de tri n'y est pas. Un
+#: outil qui accuse a tort est desactive au bout de deux jours ; la meme regle vaut pour nos
+#: propres regles, et c'est le seul endroit ou l'erreur coute plus cher que l'omission.
+_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z]*|[a-z]+|\d+")
+
+
+def _mots(nom: str) -> set[str]:
+    """Les segments d'un identifiant : `sort_values` -> {sort, values} ; `sortir` -> {sortir}."""
+    return {mot.lower() for mot in _WORDS.findall(nom)}
+
+
+def _annonce(nom: str, promesses: tuple[str, ...]) -> bool:
+    """Le nom promet-il l'une de ces choses — en MOT, jamais en bout de mot francais ?
+
+    `sort` est une promesse quand c'est un mot du nom (`sort_values`, `sorted`, `sort_by_key`,
+    `order_lines`) ; ce n'est pas une promesse quand le mot est `sortir`, `sortie`, `sorte` ou
+    `triomphe`. Le prefixe `sort_` reste reconnu : c'est la convention de nommage des langages
+    de programmation, et `_` est justement ce sur quoi `_mots` separe.
+    """
+    mots = _mots(nom)
+    return any(promesse in mots or promesse in nom.lower().split("_") for promesse in promesses)
 
 #: Noms qui degradent la fidelite (dedoublonnage volontaire) : le multiensemble n'est
 #: alors PAS cense etre preserve. `sort_unique(x)` a le droit de rendre moins
@@ -864,10 +892,9 @@ def derive_properties(
     # accusee sur une promesse qu'elle n'a pas faite.
     if cases and len(positional) >= 1:
         rendered = ", ".join("(" + ", ".join(repr(v) for v in case) + ",)" for case in cases)
-        lowered = node.name.lower()
-        if any(claim in lowered for claim in _SORT_CLAIMS):
-            lossy = any(claim in lowered for claim in _LOSSY_CLAIMS)
-            ascending = not any(mark in lowered for mark in _SORT_DESCENDING)
+        if _annonce(node.name, _SORT_CLAIMS):
+            lossy = _annonce(node.name, _LOSSY_CLAIMS)
+            ascending = not _annonce(node.name, _SORT_DESCENDING)
             out.append(
                 DerivedProperty(
                     id="P-004",
@@ -889,7 +916,7 @@ def derive_properties(
                     ),
                 )
             )
-        elif any(claim in lowered for claim in _DEDUPE_CLAIMS):
+        elif _annonce(node.name, _DEDUPE_CLAIMS):
             out.append(
                 DerivedProperty(
                     id="P-005",

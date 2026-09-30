@@ -505,3 +505,43 @@ def test_l_apport_des_proprietes_est_mesure_sur_le_corpus():
     avec = detectes(True)
     assert sans == 1, f"sans proprietes : {sans}/8 (le README annonce 1/8)"
     assert avec == 8, f"avec proprietes : {avec}/8 (le README annonce 8/8)"
+
+
+def test_un_nom_francais_qui_contient_sort_n_est_pas_juge():
+    """Le vrai defaut trouve par `jio scan .` sur CE depot : `sortir` accusee de tri infidele.
+
+    `jio scan .` remontait un PROBLEME : `jio/core/codes.py` -> `[P-004:sortir] espaces`. La
+    fonction s'appelle `sortir` — « quitter le programme » — et ne trie rien : le nom contient
+    la sous-chaine « sort » par accident linguistique. Le scan accusait donc du code juste.
+
+    Deux consequences, et c'est la seconde qui compte : l'utilisateur apprend a ignorer le
+    scan, et la vraie regle devient invisible. Ces tests figent la correction — comparer des
+    MOTS, pas des sous-chaines — et surtout les deux cotes : le francais n'est plus accuse, le
+    vrai tri l'est toujours.
+    """
+    source = '''def sortir(message: str, code: int) -> None:
+    """Quitte le programme.
+
+    >>> sortir("fini", 1)
+    fini
+    """
+    print(message)
+    raise SystemExit(code)
+'''
+    ids = [p.id for p in _props(source)]
+    assert "P-004" not in ids, "`sortir` ne trie pas : le scanner ne doit pas l'accuser"
+    assert "P-005" not in ids
+
+    for nom in ("sortie", "sorte", "sortir_un_message"):
+        ids = [p.id for p in _props(f"def {nom}(xs):\n    return xs\n")]
+        assert "P-004" not in ids, f"`{nom}` ne promet pas de tri"
+
+
+def test_les_vrais_noms_de_tri_restent_juges():
+    """Le pendant du test precedent : elargir la tolerance ne doit rien desarmer."""
+    from jio.verify.properties import _SORT_CLAIMS, _annonce
+
+    for nom in ("sort_values", "sorted", "sort_by_key", "order_lines", "sortAscending"):
+        assert _annonce(nom, _SORT_CLAIMS), f"`{nom}` promet un tri : la regle doit s'appliquer"
+    for nom in ("sortir", "sortie", "sorte", "resortir"):
+        assert not _annonce(nom, _SORT_CLAIMS), f"`{nom}` est du francais, pas une promesse"

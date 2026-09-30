@@ -88,8 +88,23 @@ class Sandbox:
         head = text[:2000]
         return f"{head}\n…[{len(text) - 2000} caracteres offloades vers {path}]"
 
-    def run_python(self, source: str, *, tag: str = "candidate") -> SandboxResult:
+    def run_python(
+        self, source: str, *, tag: str = "candidate", chemin_reel: Path | None = None
+    ) -> SandboxResult:
         """Ecrit la source dans un fichier temporaire et l'execute.
+
+        ``chemin_reel`` est le chemin de l'artefact DANS LE PROJET, quand l'appelant le
+        connait. Le script tourne toujours dans un dossier temporaire (aucune ecriture ne
+        tombe dans le projet), mais le module audite recoit alors son vrai `__file__`.
+        Sans cela, un fichier qui situe ses donnees par rapport a lui-meme —
+        `Path(__file__).resolve().parents[1] / "evidence"`, le geste le plus banal d'un
+        fichier de test — cherchait ces donnees sous `/tmp`, ne les trouvait pas, et
+        l'audit concluait « non testable » au lieu de conclure. Mesure faite sur ce depot :
+        `tests/test_divergence.py`, un test qui passe sous `pytest`, etait declare
+        « non testable ici » par le scan, avec pour toute preuve un FileNotFoundError sous
+        `/tmp` — une consequence de NOTRE facon de mesurer, presentee comme une limite du
+        projet.
+        ""
 
         Le chemin du dossier temporaire est NORMALISE avant de rendre le
         resultat. Sans cela, deux executions identiques produisent des sorties
@@ -190,6 +205,11 @@ class ProverResult:
 #: la demonstration du fichier au lieu de son code. Constate sur une bibliotheque
 #: reelle : `rich/traceback.py` divise par zero dans sa demonstration, et le module
 #: etait declare « ne s'execute pas » alors qu'il s'importe parfaitement.
+#: La ligne qui declare `__file__` au module audite. Quand l'appelant connait le vrai
+#: chemin du fichier, il est ecrit EN DUR dans le programme : c'est un fait, pas une
+#: supposition, et aucun etat ambiant ne peut le changer.
+_FILE_REELLE = '_jio_module.__dict__["__file__"] = {chemin!r}\n'
+
 _AUDIT_AS_MODULE = (
     "# L'artefact est audite COMME MODULE, jamais comme script : sinon son bloc\n"
     '# `if __name__ == "__main__":` (demonstration, script) s\'execute, et le\n'
@@ -252,10 +272,22 @@ _AUDIT_AS_MODULE = (
 #: recopie dedans — voyait sinon un dictionnaire VIDE, et l'audit declarait la
 #: bibliotheque fautive. `__file__` et `__package__` viennent du script (le preambule
 #: peut les avoir poses) pour que les chemins relatifs continuent de resoudre.
-_PREPARE_MODULE = (
-    '_jio_module.__dict__["__file__"] = globals().get("__file__") or "<artefact>"\n'
-    '_jio_module.__dict__["__package__"] = globals().get("__package__") or ""\n'
-)
+def _prepare_module(chemin: Path | None) -> str:
+    """Le `__file__` que verra le module audite : le vrai quand on le connait.
+
+    Un fichier de test qui se situe par rapport a lui-meme doit trouver ses donnees.
+    Le reste (dossier de travail, ecritures) reste dans le bac a sable.
+    """
+    if chemin is None:
+        return (
+            '_jio_module.__dict__["__file__"] = globals().get("__file__") or "<artefact>"\n'
+            '_jio_module.__dict__["__package__"] = globals().get("__package__") or ""\n'
+        )
+    return (
+        _FILE_REELLE.format(chemin=str(chemin.resolve()))
+        + '_jio_module.__dict__["__package__"] = globals().get("__package__") or ""\n'
+        + f'_jio_sys.path.insert(0, {str(chemin.resolve().parent)!r})\n'
+    )
 
 #: La source est executee DANS le dictionnaire du module, pas dans celui du script.
 _EXEC_ARTEFACT = (
@@ -296,6 +328,7 @@ class ExecutableProver:
         entrypoint: str = "",
         stage: Stage = Stage.PROVE,
         preamble: str = "",
+        chemin: Path | None = None,
     ) -> ProverResult:
         hidden = dict(hidden_checks or {})
         if not hidden and not any(r.check for r in spec.rules):
@@ -317,6 +350,7 @@ class ExecutableProver:
                     entrypoint=entrypoint,
                     stage=stage,
                     preamble=preamble,
+                    chemin=chemin,
                 )
             elif rule.check:
                 w = self._run_shell_rule(rule, source)
@@ -361,6 +395,7 @@ class ExecutableProver:
         entrypoint: str,
         stage: Stage,
         preamble: str = "",
+        chemin: Path | None = None,
     ) -> Witness:
         """Un test par regle : la source du candidat puis la verification de la regle.
 
@@ -388,14 +423,14 @@ class ExecutableProver:
             + "_jio_source = "
             + repr(source)
             + "\n"
-            + _PREPARE_MODULE
+            + _prepare_module(chemin)
             + _EXEC_ARTEFACT
             + _SYNC_MODULE
             + head
             + "\n"
             + textwrap.dedent(check_src)
         )
-        res = self.sandbox.run_python(program, tag=f"rule-{rule.id}")
+        res = self.sandbox.run_python(program, tag=f"rule-{rule.id}", chemin_reel=chemin)
         detail = _extract_assertion(res.stderr)
         return Witness(
             rule_id=rule.id,

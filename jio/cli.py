@@ -2950,6 +2950,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
             res = prover.prove(
                 source, derived.spec, hidden_checks=derived.checks,
                 entrypoint=derived.entrypoint, preamble=derived.preamble,
+                # Le vrai chemin : le fichier audite recoit son propre `__file__`, donc un
+                # test qui situe ses donnees par rapport a lui-meme les trouve. Sans cela
+                # il cherchait sous /tmp et le scan concluait « non testable ».
+                chemin=path,
             )
         except Exception as exc:
             problems.append((path, "SCAN", f"preuve impossible : {exc}"[:120]))

@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1190 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1199 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1305,6 +1305,19 @@ Après : **0 problème, 14 secondes**, et la sortie dit ce qu'elle n'a pas regar
 Un faux positif n'est pas un désagrément : une liste qu'on ne peut pas lire est
 ignorée **en entier**, y compris ses vrais défauts. C'est la perte de l'outil.
 
+Trois autres, trouvés plus tard — cette fois par le scan lancé sur **lui-même**, et
+c'est exactement ce qu'on lui demande :
+
+| Défaut | Ce qui se passait | Correctif |
+|---|---|---|
+| Il accusait de **trier** une fonction qui **quitte** — `sortir` | le nom contient la sous-chaîne `sort` : la propriété « tri fidèle » s'appliquait au cœur des codes de sortie | les promesses de nom se comparent désormais **en mots** (`sort_values`, `sorted`, `order_lines` oui ; `sortir`, `sortie`, `sorte` non) |
+| Il déclarait **non testable** un fichier de test qui passait | le fichier lit ses données par `Path(__file__).resolve().parents[1] / "evidence"`, or l'audit l'exécutait dans un dossier temporaire : `__file__` valait `/tmp/…/main.py`, donc les données étaient cherchées sous `/tmp`, et l'absence était présentée comme une limite **du projet** | le fichier audité reçoit son **vrai** `__file__` (le script tourne toujours dans un dossier temporaire : rien n'est écrit dans le projet) |
+
+Le second est celui qui compte. Un outil qui ne sait pas lire les fichiers de test — c'est-à-dire
+là où un projet met sa vérité — déclare « rien à vérifier » sur ce qui compte le plus. Après ces
+corrections, sur ce dépôt : **0 problème, 0 fichier non testable**, et les deux causes sont
+verrouillées par des tests qui échoueraient si elles revenaient.
+
 ### La même erreur, dans le vérificateur de prose
 
 Le corpus de documents a révélé trois façons d'accuser à tort, toutes corrigées :
@@ -1423,7 +1436,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1190 tests verts -> 1190 tests verts
+         - README.md ligne 15 : 1199 tests verts -> 1199 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
