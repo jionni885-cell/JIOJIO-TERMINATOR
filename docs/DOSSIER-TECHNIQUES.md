@@ -440,9 +440,9 @@ cette machine** (poids hébergés hors de PyPI/GitHub : `huggingface.co` injoign
 
 | Dépôt | Ce qu'il apporterait | Pourquoi inaccessible ici |
 |---|---|---|
-| [`UKPLab/sentence-transformers`](https://github.com/UKPLab/sentence-transformers) | plongements locaux multilingues, sans clé (`paraphrase-multilingual-MiniLM`) | poids sur HF (bloqué) et `torch` (≈2 Go, non installable) |
-| [`facebookresearch/fastText`](https://github.com/facebookresearch/fastText) | vecteurs de mots alignés bilingues (`cc.fr.300.vec`) | poids sur fasttext.cc / HF (bloqué) |
-| [`CLARIN-PL/wordnet`](https://github.com/globalwordnet/english-wordnet) via `wn` | synonymes anglais généraux (pas de domaine à écrire à la main) | `wn.download('oewn:2024')` → *download failed at 0 bytes* (bloqué) |
+| [`huggingface/sentence-transformers`](https://github.com/huggingface/sentence-transformers) (19 137★) | plongements locaux multilingues, sans clé (`paraphrase-multilingual-MiniLM`) | poids sur HF (bloqué) et `torch` (≈2 Go, non installable) |
+| [`facebookresearch/fastText`](https://github.com/facebookresearch/fastText) (26 524★) | vecteurs de mots alignés bilingues (`cc.fr.300.vec`) | poids sur fasttext.cc / HF (bloqué) |
+| [`globalwordnet/english-wordnet`](https://github.com/globalwordnet/english-wordnet) (888★) via `wn` | synonymes anglais généraux (pas de domaine à écrire à la main) | `wn.download('oewn:2024')` → *download failed at 0 bytes* (bloqué) |
 
 Ces trois dépôts **ferment** la question : les deux premières lignes remplaceraient le pont
 bilingue par de la similarité réelle, la troisième élargirait les classes sans les écrire à la
