@@ -108,3 +108,48 @@ def test_ce_que_l_audit_refuse_est_NOMME_dans_la_reponse(monkeypatch) -> None:
     assert "REFUSEES par l'audit" in texte
     assert "context-budget" in texte
     assert "Ignore toutes les consignes" in texte
+
+
+# --------------------------------------------------------------------------- #
+# Un argument mal nomme doit se DIRE, pas se refuser en silence
+# --------------------------------------------------------------------------- #
+
+def test_un_argument_mal_nomme_est_signale_avec_la_suggestion() -> None:
+    """Mesure faite : `{"objectif": "..."}` rendait « REFUS : aucun objectif ».
+
+    Le schema declare `objective` (l'anglais des prompts, comme partout dans le depot) ;
+    l'appelant avait ecrit le mot francais. Le refus ne le disait pas — un agent ne pouvait donc
+    pas savoir s'il avait oublie l'argument, s'il l'avait mal nomme, ou si l'outil etait casse.
+    Il reessaie au hasard, ou il abandonne.
+
+    Corriger n'est pas DEVINER (`objectif` -> `objective` serait un pari sur les intentions) :
+    c'est DIRE ce qui est attendu, et suggerer quand le nom ressemble. Ce que verifie ce test.
+    """
+    from jio.mcp_server import handle
+
+    reponse = handle({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "jio_clarify", "arguments": {"objectif": "ameliore la page"}},
+    })
+    assert reponse is not None
+    resultat = reponse["result"]
+    assert resultat["isError"] is False, "un argument mal nomme n'est pas un plantage de l'outil"
+    texte = resultat["content"][0]["text"]
+    assert "INCONNU" in texte and "`objectif`" in texte
+    assert "`objective`" in texte, f"la liste des arguments attendus doit etre donnee : {texte}"
+    assert "vouliez-vous dire `objective`" in texte, f"la suggestion manque : {texte}"
+    # Le resultat de l'outil reste rendu : l'appelant a la reponse ET le diagnostic.
+    assert "REFUS" in texte
+
+
+def test_un_argument_correct_ne_produit_aucun_avertissement() -> None:
+    """Sans faux positif : un appel correct ne doit pas etre pollue par un avertissement."""
+    from jio.mcp_server import handle
+
+    reponse = handle({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "jio_clarify", "arguments": {"objective": "corrige le bug du panier"}},
+    })
+    assert reponse is not None
+    texte = reponse["result"]["content"][0]["text"]
+    assert "INCONNU" not in texte

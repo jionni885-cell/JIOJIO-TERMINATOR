@@ -581,6 +581,38 @@ _HANDLERS: dict[str, Callable[[dict[str, Any]], str]] = {
 # --------------------------------------------------------------------------- #
 
 
+def _arguments_inconnus(nom: str, arguments: dict[str, Any]) -> str:
+    """Dit a l'appelant qu'il a nomme un argument qui n'existe pas — et lequel il visait.
+
+    POURQUOI, mesure faite : un appel reel avec `{"objectif": "ameliore la page de connexion"}`
+    a rendu « REFUS : aucun objectif. Donnez la demande telle que l'humain l'a ecrite. » Le
+    schema declare `objective` (anglais, comme tous les prompts du depot), l'appelant avait
+    ecrit le mot francais — et le refus ne le disait pas. Un agent qui lit ce refus ne peut pas
+    savoir s'il a oublie l'argument, s'il l'a mal nomme, ou si l'outil est casse : il reessaie
+    au hasard, ou il abandonne.
+
+    La correction n'est pas de DEVINER (`objectif` -> `objective`), c'est de le DIRE, avec la
+    liste des arguments attendus et, quand le nom ressemble a un autre, la suggestion. Un
+    appelant qui sait quoi corriger corrige en un tour.
+    """
+    import difflib
+
+    outil = next((o for o in TOOLS if o.get("name") == nom), None)
+    if outil is None:
+        return ""
+    attendus = sorted(((outil.get("inputSchema") or {}).get("properties") or {}).keys())
+    inconnus = sorted(cle for cle in arguments if cle not in attendus)
+    if not inconnus:
+        return ""
+    lignes = ["ARGUMENT(S) INCONNU(S) : " + ", ".join(f"`{cle}`" for cle in inconnus),
+              "  cet outil attend : " + (", ".join(f"`{cle}`" for cle in attendus) or "aucun")]
+    for cle in inconnus:
+        proche = difflib.get_close_matches(cle, attendus, n=1, cutoff=0.6)
+        if proche:
+            lignes.append(f"  vouliez-vous dire `{proche[0]}` ?")
+    return "\n".join(lignes)
+
+
 def handle(request: dict[str, Any]) -> dict[str, Any] | None:
     """Traite une requete JSON-RPC. Renvoie None pour une notification."""
     method = request.get("method")
@@ -608,7 +640,11 @@ def handle(request: dict[str, Any]) -> dict[str, Any] | None:
                 "error": {"code": -32602, "message": f"outil inconnu : {name}"},
             }
         try:
-            text = handler(dict(params.get("arguments") or {}))
+            arguments = dict(params.get("arguments") or {})
+            avertissement = _arguments_inconnus(name, arguments)
+            text = handler(arguments)
+            if avertissement:
+                text = avertissement + "\n\n" + text
             result = {"content": [{"type": "text", "text": text}], "isError": False}
         except Exception as exc:  # un outil qui plante ne doit pas tuer le serveur
             result = {
