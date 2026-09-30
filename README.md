@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1164 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1167 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -969,6 +969,46 @@ mais l'**écart aux témoins** — et le fait que le seuil déclaré soit celui 
 retrouve (`jio skills --seuil-balaye`, vérifié par un test : la constante et la mesure ne
 peuvent pas diverger en silence).
 
+### Et sur des objectifs **jamais vus**, le routeur tombe à 46 % — le chiffre est publié
+
+Le banc ci-dessus a *réglé* le routeur : il ne peut donc pas dire s'il **généralise**. Un second
+jeu a été écrit **avant** toute retouche des fiches, avec des formulations neuves (vocabulaire,
+langue, tournure) : 24 objectifs de contrôle, moitié français moitié anglais, plus 4 hors sujet.
+Le résultat
+
+```
+  banc du dépôt (39 objectifs de routage, celui du réglage) ... 87 %
+  jeu de contrôle (24 objectifs de contrôle, jamais vus) .... 46 %
+    dont anglais (la langue de travail de Hermes) .... 50 %
+    dont français ................................... 42 %
+```
+
+**L'écart entre les deux lignes est le résultat.** Afficher 87 % sans le second chiffre serait un
+chiffre vrai qui trompe, et c'est exactement ce que ce dépôt s'interdit. `jio skills --banc`
+renvoie désormais au jeu de contrôle, et `jio skills --controle` nomme chaque échec avec ce qui
+était attendu.
+
+La cause est identifiée : **les deux tiers des échecs sont des mots absents du pont bilingue**
+(« changed the assertion », « keeps coming back », « reusable procedure »). Le pont est une table
+de classes de synonymes de domaine ; la première version n'en couvrait qu'une partie. L'extension
+mesurée ici — synonymes de domaine ajoutés, dans les deux langues — fait passer le jeu de contrôle
+de **33 % à 46 %** (anglais 42 % → 50 %) **sans faire bouger le banc** (87,1 % avant, 87,1 %
+après) : c'est le contrôle anti-sur-ajustement.
+
+Ce qui reste hors de portée est déclaré : combler le reste demande de la **similarité
+sémantique**, donc des plongements — et aucun poids de modèle n'est téléchargeable depuis cette
+machine (`huggingface.co` injoignable, seuls PyPI et GitHub répondent). Deux pistes ont été
+essayées et **écartées par la mesure**, plutôt que gardées parce qu'elles avaient l'air bonnes :
+
+| piste essayée | résultat | décision |
+|---|---|---|
+| fusion RRF (BM25 + trigrammes de caractères) | 100 % → **5 %** au régime identifiant, 87 % → 23 % au mélange | **écartée** : un second classement faible *dilue* le premier |
+| indexer le vocabulaire **procédural** des corps (mots alphabétiques à IDF élevée, littéraux exclus) | 46 % → **46 %** | **écartée** : aucun gain, plus de bruit dans l'index |
+
+Ces deux lignes sont conservées ici pour ne pas refaire les essais : une brique qui n'a pas
+prouvé son utilité ne reste pas dans le dépôt, mais la trace de l'essai reste — sinon la même
+idée revient tous les six mois avec le même enthousiasme.
+
 ### Et elles entrent dans la mission, au bon moment
 
 Un routeur que personne ne charge est une décoration : une commande de plus, que personne ne
@@ -1287,7 +1327,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1164 tests verts -> 1164 tests verts
+         - README.md ligne 15 : 1167 tests verts -> 1167 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

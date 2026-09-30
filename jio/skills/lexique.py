@@ -97,6 +97,39 @@ CLASSES: tuple[tuple[str, ...], ...] = (
     # -- defaut et panne : un echec EST un defaut, dans les deux langues -------- #
     ("bug", "bugs", "bogue", "defaut", "defauts", "panne", "pannes", "fault", "faulty",
      "defect", "broken", "casse", "crashed", "crash", "plante", "plantage"),
+
+    # -- raccourcis de verification (vocabulaire manquant, mesure sur le jeu de controle) -- #
+    ("disable", "disabled", "desactive", "desactivee", "desactiver", "desactivation",
+     "skip", "skipped", "ignorer", "ignored", "bypass", "tamper", "tampered",
+     "xfail", "noqa", "affaibli", "weakened", "commented", "commentee"),
+    # -- preuve contre plausibilite ------------------------------------------------------- #
+    ("convincing", "convaincant", "convaincante", "plausible", "vraisemblable", "semble",
+     "sembler", "parait", "apparence", "rhetorique", "rhetoric", "pretend", "looks",
+     "proved", "proves", "run", "runs", "ran"),
+    # -- cout de la repetition ------------------------------------------------------------ #
+    ("repay", "repayer", "repaye", "recurring", "recurrent", "recurrente", "toujours",
+     "always", "chaque", "every", "refait", "systematique", "combien", "twice", "cout", "paye", "payee",
+     "repaie", "repayee"),
+    # -- ce qui se reutilise -------------------------------------------------------------- #
+    ("procedure", "procedural", "playbook", "recipe", "recette", "fiche", "fiches",
+     "reusable", "reutilisable", "template", "generaliser", "generalize", "factoriser",
+     "factor", "modele", "pattern", "repetable", "repeatable"),
+    # -- ordre, entree, sortie (invariance) ----------------------------------------------- #
+    ("shuffle", "shuffling", "melange", "melanger", "reorder", "reordonner",
+     "permutation", "permute", "ordre", "order", "ordering", "entree", "entrees",
+     "input", "inputs", "output", "sortie", "sorties", "result", "resultat",
+     "resultats", "computation", "calcul", "calculs"),
+    # -- aveu d'ignorance ----------------------------------------------------------------- # #
+    ("guess", "guessing", "devine", "deviner", "suppose", "supposer", "estimation",
+     "estimate", "echantillon", "echantillons", "sample", "samples", "observation",
+     "observations", "trancher", "decider", "decision", "sait", "savoir", "sait-on",
+     "unsure", "unclear", "flou", "incertain", "incertaine"),
+    # -- contenu venu de l'exterieur ------------------------------------------------------ #
+    ("extern", "externe", "external", "ticket", "issue", "url", "recupere", "fetched",
+     "page", "web", "collaborateur", "contributeur"),
+    # -- chantier interrompu -------------------------------------------------------------- #
+    ("chantier", "inacheve", "inachevee", "unfinished", "moitie", "partial", "partiel",
+     "partielle", "half", "incomplet", "incomplete", "abandonne", "laisse"),
     # -- agents et depot ----------------------------------------------------- #
     ("agent", "agents", "ia", "ai", "modele", "model", "models", "modele", "llm"),
     ("depot", "repository", "repo", "fichier", "fichiers", "file", "files", "code",

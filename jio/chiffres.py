@@ -105,7 +105,7 @@ CHIFFRES: tuple[Chiffre, ...] = (
     # phrase du README, elle, annoncait toujours 38.
     Chiffre(
         nom="objectifs",
-        motif=r"(\d+) objectifs(?! de routage| hors sujet| pertinents)",
+        motif=r"(\d+) objectifs(?! de routage| de contr| du jeu de contr| hors sujet| pertinents)",
         description="le banc d'objectifs de la porte de clarification (jio/bench/objectifs.py)",
     ),
     # Le routeur de competences publie lui aussi deux nombres dans le README : la taille de son
@@ -116,6 +116,15 @@ CHIFFRES: tuple[Chiffre, ...] = (
         nom="objectifs_routage",
         motif=r"(\d+) objectifs de routage",
         description="le banc annote du routeur de competences (jio/skills/banc.py)",
+    ),
+    # Le JEU DE CONTROLE du meme routeur. Sa taille entre dans la documentation au moment ou
+    # l'ecart banc/controle devient le resultat principal — c'est-a-dire au moment exact ou ce
+    # nombre peut pourrir : enrichir le jeu de controle sans relire la phrase qui l'annonce
+    # ferait disparaitre la mesure en silence. Il est donc VERIFIE, comme les autres.
+    Chiffre(
+        nom="objectifs_controle",
+        motif=r"(\d+) objectifs (?:de |du jeu de )contr[oô]le",
+        description="le jeu de controle du routeur, ecrit avant la derniere retouche des fiches",
     ),
     # Le motif est insensible a la casse parce que la phrase vit en milieu de paragraphe
     # (« Premier choix juste dans 77 % des cas ») : un chiffre juste mais non surveille a cause
@@ -171,6 +180,7 @@ def mesurer(racine: Path | str) -> dict[str, int]:
     # competences et rien d'autre ; le faire remonter en tete de module coupleraient les
     # chiffres a l'index, qui depend lui-meme des artefacts.
     from .skills.banc import BANC, mesurer as mesurer_le_routage
+    from .skills.controle import CAS
 
     return {
         "tests": _compter_tests(racine),
@@ -179,6 +189,7 @@ def mesurer(racine: Path | str) -> dict[str, int]:
         "objectifs": len(CORPUS),
         "objectifs_routage": len(BANC),
         "premier_choix": round(mesurer_le_routage().precision1 * 100),
+        "objectifs_controle": len(CAS),
     }
 
 

@@ -396,3 +396,59 @@ il est inatteignable ici, pas contournable par une astuce.
 | [`HKUDS/OpenHarness`](https://github.com/HKUDS/OpenHarness) | Harnais open-source complet : compactage automatique, MEMORY.md, reprise de session, règles de permission par chemin, hooks `PreToolUse`/`PostToolUse` | Comparaison de conception ; nos garde-fous sont déjà sur disque et vérifiables. |
 | [`affaan-m/ECC`](https://github.com/affaan-m/ECC) | Boucle `plan → test → implement → review → verify → remember → improve`, revue en **contexte neuf** (« le même contexte écrit et relit son propre code ») | Confirme le choix du vérificateur séparé ; la revue à contexte neuf est déjà celle de l'ablation `S1b`. |
 | [`bradagi/awesome-cli-coding-agents`](https://github.com/bradagi/awesome-cli-coding-agents) | Inventaire des harnais CLI (dont compression de contexte « Headroom », mémoire en anneaux, oplog à recherche hybride) | Veille : c'est la liste à relire quand un axe de compaction sera ouvert. |
+
+## Partie 8 — La généralisation du routeur de compétences : 87 % n'est pas 46 %
+
+### Le chiffre, et pourquoi il fallait un second jeu
+
+| Jeu | Objectifs | Premier choix juste |
+|---|---|---|
+| Banc du dépôt (celui du réglage) | 39 | **87 %** |
+| **Jeu de contrôle (jamais vus, écrits avant la retouche)** | **24** | **46 %** |
+| — dont anglais (langue de travail de Hermes/opencode) | 12 | 50 % |
+| — dont français | 12 | 42 % |
+| Abstention sur 4 objectifs hors sujet | 4 | 100 % |
+
+Le banc ne peut pas mesurer la généralisation : il a servi à régler le routeur, et la fiche des
+compétences est **l'entrée** du routeur — l'améliorer en regardant ce banc serait de
+l'entraînement sur le jeu de test. Le second jeu, écrit avant toute retouche, est un **jeu de
+contrôle** (déclaré comme tel : même auteur, donc pas un banc externe).
+
+### La cause, et le remède mesuré
+
+Les deux tiers des échecs étaient des **mots absents du pont bilingue** : « changed the
+assertion » (il faut « cheat », « disable », « bypass »), « keeps coming back » (« repay »,
+« recurring »), « reusable procedure » (« fiche », « playbook », « recette »). L'extension des
+classes de synonymes de domaine fait passer le jeu de contrôle de **33 % à 46 %** — anglais
+42 % → 50 % — **sans déplacer le banc** (87,1 % avant et après), ce qui est le contrôle
+anti-sur-ajustement. Un test existant a d'ailleurs attrapé une entrée interdite introduite par
+l'extension (« deux fois », une expression) : le lexique ne contient que des mots.
+
+### Deux pistes écartées, par la mesure
+
+| Piste | Attendu (littérature) | Mesuré ici | Décision |
+|---|---|---|---|
+| **Fusion RRF** BM25 + trigrammes de caractères | la fusion bat chacun isolément (0,661 / 0,645 / **0,694** nDCG@10) | 100 % → **5 %** au régime identifiant ; 87 % → 23 % au mélange | écartée : un second classement faible **dilue** le premier. La RRF exige un second retriever *comparable* — donc un vrai plongement dense |
+| **Vocabulaire procédural des corps** (mots alphabétiques à IDF élevée, littéraux du dépôt exclus) | corriger l'échec mesure jadis (indexer le corps entier coûtait 29 points) | 46 % → **46 %** | écartée : aucun gain, plus de bruit |
+
+### Ce qui manque, et où il faudrait aller le chercher
+
+La limite du pont est la **paraphrase sans mot rare partagé** : BM25 ne la voit pas, même
+excellente soit sa pondération. Les dépôts qui la traitent, et qui restent inaccessibles **depuis
+cette machine** (poids hébergés hors de PyPI/GitHub : `huggingface.co` injoignable,
+`cdn-lfs.huggingface.co` injoignable, `raw.githubusercontent.com` injoignable) :
+
+| Dépôt | Ce qu'il apporterait | Pourquoi inaccessible ici |
+|---|---|---|
+| [`UKPLab/sentence-transformers`](https://github.com/UKPLab/sentence-transformers) | plongements locaux multilingues, sans clé (`paraphrase-multilingual-MiniLM`) | poids sur HF (bloqué) et `torch` (≈2 Go, non installable) |
+| [`facebookresearch/fastText`](https://github.com/facebookresearch/fastText) | vecteurs de mots alignés bilingues (`cc.fr.300.vec`) | poids sur fasttext.cc / HF (bloqué) |
+| [`CLARIN-PL/wordnet`](https://github.com/globalwordnet/english-wordnet) via `wn` | synonymes anglais généraux (pas de domaine à écrire à la main) | `wn.download('oewn:2024')` → *download failed at 0 bytes* (bloqué) |
+
+Ces trois dépôts **ferment** la question : les deux premières lignes remplaceraient le pont
+bilingue par de la similarité réelle, la troisième élargirait les classes sans les écrire à la
+main. Chacune est vérifiée comme inaccessible **ici**, et aucune ne l'est en général — sur une
+machine avec accès à Hugging Face, `pip install sentence-transformers` suffit et le score du jeu
+de contrôle est la mesure qui dit si le remplacement vaut le coût.
+
+**Conclusion honnête** : 87 % était un chiffre vrai sur un jeu écrit par son auteur ; 46 % est la
+généralisation mesurée. Les deux sont désormais affichés ensemble, et l'écart n'est plus caché.

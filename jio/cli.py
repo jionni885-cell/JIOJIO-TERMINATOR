@@ -3849,6 +3849,10 @@ def build_parser() -> argparse.ArgumentParser:
     sk.add_argument("--seuil", type=int, default=-1,
                     help="nombre de concepts de domaine en dessous duquel ne rien charger "
                          "(defaut : la valeur mesuree). 0 = ne jamais s'abstenir, -1 = defaut")
+    sk.add_argument("--controle", action="store_true",
+                    help="passer au routeur le jeu de CONTROLE : des objectifs jamais vus, "
+                         "ecrits AVANT la derniere retouche des fiches — l'ecart avec le banc "
+                         "est la generalisation reelle")
     sk.add_argument("--seuil-balaye", action="store_true",
                     help="le seuil contre ses consequences : rappel et abstentions justes")
     sk.add_argument("--json", action="store_true", help="verdict lisible par une machine")
@@ -4150,6 +4154,24 @@ def cmd_skills(args: argparse.Namespace) -> int:
         print()
         return 0
 
+    if getattr(args, "controle", False):
+        from .skills.controle import CAS, resume
+
+        print()
+        print("  LE JEU DE CONTROLE — la mesure que le banc ne peut pas faire")
+        print()
+        print(resume())
+        print()
+        for objectif, attendu, langue in CAS:
+            obtenu = choisir(objectif, maximum=args.maximum)
+            premier = obtenu[0].nom if obtenu else "(abstention)"
+            marque = "ok " if premier == attendu else "RATE"
+            print(f"    [{marque}] [{langue}] {objectif[:66]}")
+            if premier != attendu:
+                print(f"           attendu {attendu} — obtenu {premier}")
+        print()
+        return 0
+
     if getattr(args, "banc", False):
         print()
         print("  LE ROUTEUR ET SES TEMOINS SUR LE MEME BANC ANNOTE")
@@ -4171,6 +4193,13 @@ def cmd_skills(args: argparse.Namespace) -> int:
         print("  `alphabetique` dit ce que vaut un choix qui ne regarde pas l'objectif, et")
         print("  `mots-cles bruts` ce que BM25, la saturation et la ponderation apportent.")
         print()
+        from .skills.controle import mesurer as mesurer_controle
+        ctrl = mesurer_controle()
+        print(f"  ET SUR DES OBJECTIFS JAMAIS VUS (`jio skills --controle`) : "
+              f"{ctrl['premier_choix']:.0%} de premier choix juste "
+              f"({ctrl['premier_choix_en']:.0%} en anglais). L'ecart avec le banc est la")
+        print("  generalisation reelle du routeur : le banc seul ne peut pas la montrer.")
+        print()
         return 0
 
     objectif = " ".join(getattr(args, "objectif", []) or []).strip()
@@ -4178,6 +4207,8 @@ def cmd_skills(args: argparse.Namespace) -> int:
         print()
         print("  usage : jio skills \"<objectif en une phrase>\"")
         print("          jio skills --banc            (la mesure sur le banc annote)")
+        print("          jio skills --controle        (des objectifs JAMAIS VUS : le banc ne")
+        print("                                        peut pas mesurer la generalisation)")
         print("          jio skills --seuil-balaye    (le seuil d'abstention et ses consequences)")
         print()
         catalogue = catalogue_du_depot()

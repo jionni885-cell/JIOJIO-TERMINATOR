@@ -332,3 +332,63 @@ def test_aucun_objectif_du_banc_ne_fait_planter_le_routeur(objectif: str) -> Non
     """Un routeur qui leve une exception en pleine mission coute plus cher qu'un routeur muet."""
     choix = choisir(objectif)
     assert isinstance(choix, list)
+
+
+# --------------------------------------------------------------------------- #
+# Le jeu de CONTROLE — la mesure que le banc ne peut pas faire
+# --------------------------------------------------------------------------- #
+
+def test_le_jeu_de_controle_mesure_la_GENERALISATION_et_pas_le_banc() -> None:
+    """Le banc a regle le routeur ; il ne peut donc pas dire s'il generalise.
+
+    Constate a l'ecriture de ce jeu : 87 % de premier choix juste sur le banc du depot,
+    mais **33 %** sur des objectifs jamais vus — et 42 % en anglais, la langue de travail
+    de Hermes. L'ecart entre les deux chiffres EST le resultat ; un rapport qui n'affiche
+    que le premier est vrai et trompeur a la fois.
+    """
+    from jio.skills.controle import CAS, HORS_SUJET, mesurer
+
+    m = mesurer()
+    assert m["premier_choix"] >= 0.45, (
+        f"generalisation tombee a {m['premier_choix']:.0%} : le seuil bas est celui mesure "
+        f"apres l'extension du lexique (33 % avant)"
+    )
+    assert m["premier_choix_en"] >= 0.4, "l'anglais est la langue des agents cibles"
+    assert m["abstentions_justes"] == 1.0, "un objectif hors sujet ne doit rien charger"
+
+    # Le jeu reste un jeu de controle : il doit contenir les deux langues et des
+    # objectifs hors sujet, sinon il ne mesure plus la meme chose.
+    langues = {langue for _, _, langue in CAS}
+    assert langues == {"fr", "en"}
+    assert len(HORS_SUJET) >= 3
+
+
+def test_la_commande_controle_affiche_les_deux_chiffres(capsys) -> None:
+    """Le rapport du banc DOIT renvoyer au jeu de controle : sinon l'ecart disparait."""
+    code, sortie = _lancer(["skills", "--banc"], capsys)
+    assert code == 0
+    assert "JAMAIS VUS" in sortie
+    assert "generalisation reelle" in sortie
+
+    code, sortie = _lancer(["skills", "--controle"], capsys)
+    assert code == 0
+    assert "JEU DE CONTROLE" in sortie
+    assert "en anglais" in sortie
+    # Les echecs sont NOMMES avec ce qui etait attendu : le chiffre doit etre exploitable.
+    assert "[RATE]" in sortie or "[ok ]" in sortie
+
+
+def test_le_lexique_du_routeur_ne_contient_aucune_PHRASE_d_objectif() -> None:
+    """La limite que le module s'impose : un lexique de phrases serait de la triche.
+
+    Une entree qui ressemble a une question recopiee du banc ferait gagner le banc sans
+    rien generaliser. Les classes ne contiennent donc que des mots simples.
+    """
+    from jio.skills.lexique import CLASSES
+
+    for classe in CLASSES:
+        for mot in classe:
+            assert " " not in mot.strip(), f"entree a plusieurs mots : {mot!r}"
+            # Le seuil de longueur est celui de la limite deja testee ailleurs : un mot de
+            # domaine est court. « ia » (2 lettres) est legitime, une phrase ne l'est pas.
+            assert len(mot) <= 20, f"entree trop longue pour un mot de domaine : {mot!r}"
