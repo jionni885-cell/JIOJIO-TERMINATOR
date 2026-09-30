@@ -16,3 +16,8 @@ dist/
 # Un verrou est un etat d'execution, pas une preuve : il change a chaque campaigne et ne
 # doit pas entrer dans l'histoire du depot (il a ete committe une fois, par `git add -A`).
 *.verrou
+
+# Le modele entraine ici (scripts/modele-local/) : un binaire de quelques megaoctets n'a rien
+# a faire dans l'historique. Ce qui est versionne, c'est la graine, la configuration, le
+# corpus (le depot) et le journal d'entrainement — de quoi le refaire et verifier l'empreinte.
+modele/

@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1206 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1209 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1436,7 +1436,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1206 tests verts -> 1206 tests verts
+         - README.md ligne 15 : 1209 tests verts -> 1209 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2891,6 +2891,73 @@ Trois règles y sont appliquées, et elles viennent de défauts vus ici même :
 
 Un écart **négatif** s'affiche aussi. Un rapport qui ne montre que ses gains n'est pas une
 mesure, c'est une plaidoirie.
+
+## Un modèle RÉEL, entraîné ici : la réserve « le modèle est simulé » tombe
+
+Chaque rapport de ce dépôt portait la même réserve, en clair :
+
+> le modèle est **SIMULÉ** : ce n'est pas une mesure de modèle réel.
+
+C'est honnête, et ça laisse ouverte la seule question qui compte pour un harness : **tient-il
+quand le modèle qui répond n'est pas le nôtre ?** Une simulation dont *nous* avons choisi le
+taux d'erreur ne peut pas répondre — on mesure ce qu'on a mis dedans — et elle peut faire passer
+un réglage pour une preuve.
+
+`scripts/modele-local/` entraîne donc un modèle **réel** sur cette machine : des poids, un vrai
+calcul, une vraie distribution de sortie, et des erreurs que **personne n'a modélisées**. Il est
+petit — c'est assumé : ce n'est pas un substitut à un modèle frontière, c'est un modèle dont les
+erreurs sont authentiques, ce qui suffit à mettre le harness à l'épreuve.
+
+| Mesuré | Non mesuré (et dit tel quel) |
+| --- | --- |
+| Le harness **livre-t-il faux sans réserve** face à un modèle inconnu de lui ? | Un gain de réussite face à un modèle frontière |
+| **S'abstient-il** quand la vérification échoue ? | La qualité linguistique du modèle |
+| La **reproductibilité** à graine fixée | Un gain de « QI » du modèle |
+
+L'architecture suit **`karpathy/nanoGPT`** et **`karpathy/minGPT`** (transformeur décodeur :
+self-attention causale, embeddings de position appris, tête de langage), avec
+**`pytorch/pytorch`** comme seule dépendance. Le corpus est le meilleur disponible ici : le code
+de ce dépôt. Le modèle est servi par une **API compatible OpenAI**, ce qui a une conséquence
+précise — **le harness n'est pas modifié pour ce cas particulier**. Ce qui est mesuré est le
+chemin réel qu'un utilisateur emprunte avec Ollama, vLLM ou OpenRouter :
+
+```sh
+scripts/modele-local/entrainer.py     # ~10 min sur 2 cœurs, graine fixée
+scripts/modele-local/mesurer.sh 5 3   # mesure + rapport, sur le serveur local
+```
+
+Le modèle entraîné n'est pas versionné (un binaire de plusieurs mégaoctets n'a rien à faire dans
+un historique) : ce qui est versionné, c'est la **graine**, la **configuration**, le **corpus**
+(le dépôt) et le **journal d'entraînement** — de quoi le refaire et vérifier son empreinte.
+
+### Deux défauts trouvés en l'écrivant — et c'est la même leçon que partout ici
+
+1. **Un masque causal 4096×4096 partait dans le `state_dict`.** Mesure : un modèle de
+   **251 904 paramètres** produisait un fichier de **135 Mo** — la taille du fichier disait autre
+   chose que le nombre de paramètres. Un masque est une constante, pas un poids appris.
+   Après correction : **1,0 Mo**, exactement 250 k paramètres en float32.
+2. **La table de décodage était inversée** (`{i: c for c, i in enumerate(...)}` construit
+   l'inverse de ce qu'il faut) : le premier appel réel a rendu `KeyError: 84` au lieu d'une
+   réponse. Aucun test unitaire ne l'aurait attrapé sans **appeler** le service pour de vrai.
+
+## Le régime de mesure fait partie du chiffre : `jio ablation --fidelite`
+
+Même leçon, appliquée à l'ablation. Elle mesurait chaque brique en la retirant — mais elle
+fournissait toujours des témoins **parfaits**, y compris dans le mode sans oracle, celui où
+personne ne donne les tests et où c'est le modèle qui les écrit. Avec des témoins parfaits, il
+n'y a rien à rattraper : la vérification ne peut pas montrer mieux que ce qu'elle a.
+
+Résultat, mesuré : la plupart des leviers ressortaient « NON DISTINGUABLE », y compris ceux dont
+tout le rôle est d'attraper ce qu'un témoin imparfait laisse passer. Un levier mesuré dans un
+régime où il ne peut rien faire n'est pas un levier inutile — c'est une **mesure inadaptée**.
+
+`--fidelite` (borné dans `[0, 1]`, annoncé dans l'en-tête du rapport) rend ce régime réglable :
+
+```sh
+jio ablation --sans-oracle --fidelite 0.6 --levers mutation,red-team,consensus,porte
+```
+
+Un chiffre sans son régime ne se compare pas.
 
 ## Toutes les commandes répondent, et c'est testé
 
