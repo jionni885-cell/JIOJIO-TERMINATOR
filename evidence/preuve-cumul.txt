@@ -92,3 +92,58 @@
 
 === FIN BLOC 2 (code 0) ===
 === BLOC 3 ===
+=== BLOC 3 (reprise) ===
+
+  AUTO-AMELIORATION MULTI-CYCLES  ·  trois bras apparies par cycle
+    competence simulee 0.4  ·  2 cycles  ·  8 tirage(s) par tache  ·  2 tours  ·  5 taches
+    cout annonce : 240 mission(s) x 2.3 s/mission mesure = ~9 min sur 2 cœurs
+    Par mission : CHAUD (memoire, avertissement actif) -> TEMOIN (memoire
+    presente, avertissement desactive) -> FROID (aucune memoire). Memes taches,
+    memes graines, MEME bras : le temoin separe l'effet de la memoire du bruit.
+
+    CUMUL : 4 cycle(s) deja mesure(s) dans preuve-cumul.jsonl ; cette
+    execution utilise des graines DISTINCTES (bloc 4000) — rejouer les
+    memes graines doublerait le compte sans ajouter une seule preuve.
+
+    Chaque cycle est ECRIT des qu'il est mesure : une coupure ne perd que le
+    cycle en cours (fichier evidence/preuve-cumul.jsonl). Le cumul est VERROUILLE pendant la mesure :
+    deux mesures simultanees rejoueraient les memes graines.
+
+  CUMUL : 6 cycle(s) au total dans evidence/preuve-cumul.jsonl
+  REPLICATIONS INDEPENDANTES : 3 (blocs de graines : 0, 2000, 4000)
+
+    cycle  memoire rappels jetons     froid    temoin     chaud  artef   ecart
+    ----- -------- ------- ------ --------- --------- --------- ------ -------
+     1         0    31    9609   33/40    33/40    36/40     +0     +3
+     2        11    40   14997   36/40    36/40    38/40     +0     +2
+     3         0    17    5036   35/40    35/40    35/40     +0     +0
+     4        10    30    9679   35/40    35/40    37/40     +0     +2
+     5         0    21    6400   36/40    36/40    37/40     +0     +1
+     6         7    31   10804   36/40    36/40    36/40     +0     +0
+
+  MEMOIRE ACCUMULEE : 15 souvenir(s) apres 6 cycle(s)
+  BRUIT DE FOND (froid -> temoin, sans effet de memoire) : 0 reussite(s) au pire cycle
+  PORTEE DU LEVIER : 508/678 appel(s) de generation avertis (74.9%) — c'est ce qui borne tout effet possible de la memoire.
+  TEST APPARIE (McNemar exact, le plan experimental) : la memoire fait REUSSIR seule 8 fois, ECHOUER seule 0 fois — p = 0.0078
+    IC95 de la difference (paires) : [+0.011 ; +0.056]   -> zéro EXCLU
+  REPLICATIONS INDEPENDANTES (un cumul est une somme de tirages, pas une moyenne) :
+    bloc de graines     0 : +5 reussite(s) (5 contre 0 dissociation(s))
+    bloc de graines  2000 : +2 reussite(s) (2 contre 0 dissociation(s))
+    bloc de graines  4000 : +1 reussite(s) (1 contre 0 dissociation(s))
+  PAIRES REQUISES POUR DEMONTRER LA DISSOCIATION : ~120, soit ~21 min ici au debit mesure (0.29 essai/s).
+    (Mesure a 95 % de confiance et 80 % de puissance, formule du banc ; c'est un budget, pas un verdict.)
+  DEBIT MESURE : 0.29 essai(s)/s sur cette machine.
+
+  VERDICT : PROGRESSE
+
+    ecart cumule +8 sur 240 paires appariees, dissociation DEMONTREE ; dernier cycle +0 sur 40 avec la memoire accumulee (7 souvenir(s)) et l'intervalle exclut zero. Gain cumule sur le premier cycle : -3 reussite(s). TEST APPARIE (McNemar exact) : 8 mission(s) ou la memoire fait REUSSIR seule, 0 ou elle fait ECHOUER seule, sur 240 paires — p = 0.0078. C'est le test du plan experimental (memes taches, memes graines, meme bras) : les missions ou les deux bras reussissent ensemble n'apprennent rien sur l'effet. L'ecart froid->temoin au dernier cycle (+0, au pire 0 sur tout le run) mesure ce qui bouge SANS la memoire : c'est le plancher de bruit de ce protocole, et il est declare plutot que suppose. Portee du levier : 74.9% des appels de generation ont ete avertis (508 appel(s)). REPLICATIONS (3) : bloc de graines 0 : +5 reussite(s) (5 contre 0 dissociation(s)) ; bloc de graines 2000 : +2 reussite(s) (2 contre 0 dissociation(s)) ; bloc de graines 4000 : +1 reussite(s) (1 contre 0 dissociation(s)) — meme sens dans tous les blocs.
+
+  CE QUE CE PROTOCOLE NE DIT PAS
+    - le modele est SIMULE : ce n'est pas une mesure de modele reel.
+    - l'effet d'un souvenir injecte est une MODELISATION declaree (gain relatif).
+    - un plateau ici ne condamne pas la memoire : il dit qu'a ce niveau de
+      difficulte la VERIFICATION suffisait deja. Le banc ne represente pas le
+      regime ou la verification ne voit pas l'erreur (plausibilite, conception).
+
+=== FIN BLOC 3 (code 0) ===
+=== CAMPAGNE TERMINEE ===
