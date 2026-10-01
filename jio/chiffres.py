@@ -178,6 +178,15 @@ CHIFFRES: tuple[Chiffre, ...] = (
         motif=r"(\d+) objectifs d'un projet",
         description="le jeu de controle de la porte de clarification (un projet etranger)",
     ),
+    # La TAILLE des jeux de controle, reunie : elle est publiee dans le README comme un
+    # argument (« 113 cas jamais vus »), donc elle est mesuree comme les autres. Le mot choisi
+    # est « cas » et non « objectifs » : c'est ce qui la distingue des huit autres nombres
+    # surveilles, et un motif qui les melangerait reecrirait les uns avec la valeur des autres.
+    Chiffre(
+        nom="cas_controle",
+        motif=r"(\d+) cas jamais vus",
+        description="les quatre jeux de controle du routeur de competences (jio/skills/controle*.py)",
+    ),
     # Le motif est insensible a la casse parce que la phrase vit en milieu de paragraphe
     # (« Premier choix juste dans 77 % des cas ») : un chiffre juste mais non surveille a cause
     # d'une majuscule serait exactement le defaut que ce module supprime.
@@ -232,6 +241,7 @@ def mesurer(racine: Path | str) -> dict[str, int]:
     # competences et rien d'autre ; le faire remonter en tete de module coupleraient les
     # chiffres a l'index, qui depend lui-meme des artefacts.
     from .skills.banc import BANC, mesurer as mesurer_le_routage
+    from .skills.controle import JEUX
     from .bench.controle_clarify import CAS as CAS_CLARIFY
     from .skills.controle import CAS
 
@@ -243,6 +253,10 @@ def mesurer(racine: Path | str) -> dict[str, int]:
         "objectifs_routage": len(BANC),
         "premier_choix": round(mesurer_le_routage().precision1 * 100),
         "objectifs_controle": len(CAS),
+        # Les quatre jeux REUNIS : un seul chiffre a surveiller pour une phrase qui parle des
+        # quatre. Les tailles jeu par jeu ne sont pas surveillees separement — le README les
+        # publie, mais une phrase par jeu ferait huit motifs de plus pour un gain nul.
+        "cas_controle": sum(len(jeu.cas) for jeu in JEUX),
         "objectifs_controle_clarify": len(CAS_CLARIFY),
     }
 

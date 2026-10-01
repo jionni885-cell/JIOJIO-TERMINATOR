@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1232 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1236 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1139,26 +1139,42 @@ mais l'**écart aux témoins** — et le fait que le seuil déclaré soit celui 
 retrouve (`jio skills --seuil-balaye`, vérifié par un test : la constante et la mesure ne
 peuvent pas diverger en silence).
 
-### Et sur des objectifs **jamais vus**, le routeur monte à 58 % — les deux chiffres sont publiés
+### Et sur des objectifs **jamais vus**, le routeur est à 41 % — la distribution est publiée
 
-Le banc ci-dessus a *réglé* le routeur : il ne peut donc pas dire s'il **généralise**. Un second
-jeu a été écrit **avant** toute retouche des fiches, avec des formulations neuves (vocabulaire,
-langue, tournure) : 24 objectifs de contrôle, moitié français moitié anglais, plus 4 hors sujet.
-Le résultat
+Le banc ci-dessus a *réglé* le routeur : il ne peut donc pas dire s'il **généralise**. **113 cas
+jamais vus**, en quatre jeux écrits chacun **avant** une retouche, disent ce qu'il vaut vraiment :
 
 ```
-  banc du dépôt (39 objectifs de routage, celui du réglage) ... 87 %
-  jeu de contrôle (24 objectifs de contrôle, jamais vus) .... 58 %
-    dont anglais (la langue de travail de Hermes) .... 58 %
-    dont français ................................... 58 %
-  second jeu de contrôle (24 objectifs, écrit avant la retouche) .. 50 %
-  les deux jeux jamais vus, regroupés (48 cas) ............. 54 %
+  banc du dépôt (39 objectifs de routage, celui du réglage) .......... 87 %
+  jeu A (24 objectifs de contrôle, avant la retouche du lexique) ..... 58 %
+  jeu B (24 cas, avant la retouche BM25F) ............................ 50 %
+  jeu C (35 cas, pré-enregistré, préfixes d'objets métier) ........... 29 %
+  jeu D (30 cas, pré-enregistré, AVEC DÉTAIL RESTÉ AVEUGLE) .......... 33 %
+  TOTAL des 113 cas jamais vus ....................................... 41 %
+  abstention juste, 23 hors sujet confondus ......................... 96 %
 ```
 
-**L'écart entre les deux lignes est le résultat.** Afficher 87 % sans le second chiffre serait un
-chiffre vrai qui trompe, et c'est exactement ce que ce dépôt s'interdit. `jio skills --banc`
-renvoie désormais au jeu de contrôle, et `jio skills --controle` nomme chaque échec avec ce qui
-était attendu.
+Quatre jeux plutôt qu'un, parce qu'un seul donne un chiffre, deux donnent un désaccord, et quatre
+donnent une **distribution**. C'est la distribution qu'on peut résumer honnêtement — et c'est
+elle qui empêche de proclamer une retouche gagnante sur la foi d'un seul jeu. Le jeu D l'est
+encore moins que les autres : son **détail** n'a jamais été ouvert avant la retouche suivante,
+donc si le prochain gain se confirme, il ne pourra pas venir d'un ajustement pensé pour ces cas.
+
+Deux détails de méthode qui ont coûté, et qui sont donc écrits ici :
+
+- Le **matériel du jeu B vivait hors du dépôt** (`/tmp`) et le bac à sable a été réinitialisé. Il
+  n'en restait que les douze échecs cités par l'archive. Un témoin qu'on ne peut pas **rejouer**
+  n'est plus un témoin, c'est une anecdote : la même phrase « 50 % », sans le matériel, ne refute
+  plus rien. Le jeu a donc été reconstitué **et vérifié** — rejoué, il doit rendre exactement les
+  douze échecs de l'archive, faute de quoi il est déclaré faux. C'est un test.
+- Sa **première** transcription reprenait, sans le voir, des cas du jeu A : le jeu « neuf »
+  mesurait 37,5 % au lieu de 50 % et n'apportait aucune information. C'est aussi un test : aucun
+  texte de cas ne peut désormais apparaître dans deux jeux.
+
+**L'écart entre les lignes est le résultat.** Afficher 87 % sans les autres serait un chiffre vrai
+qui trompe, et c'est exactement ce que ce dépôt s'interdit. `jio skills --banc` renvoie aux jeux
+de contrôle, et `jio skills --controle` affiche leurs taux ; `--detail` n'existe que pour ouvrir
+chaque cas **après** une retouche.
 
 La cause a été identifiée par étapes, et chaque étape est mesurée :
 
@@ -1522,7 +1538,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1232 tests verts -> 1232 tests verts
+         - README.md ligne 15 : 1236 tests verts -> 1236 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

@@ -404,18 +404,31 @@ def test_le_jeu_de_controle_mesure_la_GENERALISATION_et_pas_le_banc() -> None:
     assert len(HORS_SUJET) >= 3
 
 
-def test_la_commande_controle_affiche_les_deux_chiffres(capsys) -> None:
-    """Le rapport du banc DOIT renvoyer au jeu de controle : sinon l'ecart disparait."""
+def test_la_commande_controle_affiche_les_QUATRE_jeux_et_le_total(capsys) -> None:
+    """Le rapport du banc DOIT renvoyer aux jeux de controle : sinon l'ecart disparait.
+
+    Et les jeux doivent etre quatre : un seul donne un chiffre, deux donnent un desaccord, quatre
+    donnent une distribution. C'est la distribution qu'on peut resumer honnetement — et c'est
+    elle qui empeche d'annoncer une retouche gagnante sur la foi d'un seul jeu.
+    """
     code, sortie = _lancer(["skills", "--banc"], capsys)
     assert code == 0
     assert "JAMAIS VUS" in sortie
     assert "generalisation reelle" in sortie
+    assert "QUATRE JEUX" in sortie
+
+    from jio.skills.controle import JEUX
 
     code, sortie = _lancer(["skills", "--controle"], capsys)
     assert code == 0
-    assert "JEU DE CONTROLE" in sortie
-    assert "en anglais" in sortie
+    assert "QUATRE JEUX DE CONTROLE" in sortie
+    for jeu in JEUX:
+        assert f"{jeu.nom}  " in sortie, f"le jeu {jeu.nom} n'apparait pas dans le rapport"
+        assert "ecrit avant" in sortie
+    assert "en anglais" in sortie and "TOTAL" in sortie
+
     # Les echecs sont NOMMES avec ce qui etait attendu : le chiffre doit etre exploitable.
+    code, sortie = _lancer(["skills", "--controle", "--detail"], capsys)
     assert "[RATE]" in sortie or "[ok ]" in sortie
 
 
@@ -497,3 +510,112 @@ def test_la_CLI_et_le_MCP_rendent_LE_MEME_texte_par_nom() -> None:
 
     attendu = next(s.body for s in SKILLS if s.name == "prose-witnesses")
     assert _tool_skills({"name": "prose-witnesses"}).strip() == attendu.strip()
+
+
+# --------------------------------------------------------------------------- #
+# Les quatre jeux : ce qui les rend utilisables comme temoins
+# --------------------------------------------------------------------------- #
+
+
+def test_le_jeu_B_reconstitue_reproduit_l_ARCHIVE() -> None:
+    """Un temoin qui ne peut pas etre REJOUE n'est plus un temoin, c'est une anecdote.
+
+    Le jeu B a ete ecrit hors du depot, mesure une fois (50,0 %), puis perdu avec le bac a sable.
+    Il a ete reconstitue, et cette reconstitution est VERIFIABLE : rejouee sur le routeur actuel,
+    elle doit rendre exactement les douze echecs de l'archive `evidence/routeur-bm25f-075.json`.
+    Si un seul cas differait, la reconstitution serait fausse — et c'est ce test qui le dirait,
+    au lieu d'une phrase dans un commentaire.
+    """
+    import json
+    from pathlib import Path
+
+    from jio.skills.controle import JEUX
+    from jio.skills.router import choisir
+
+    archive = Path(__file__).resolve().parents[1] / "evidence" / "routeur-bm25f-075.json"
+    if not archive.is_file():  # pragma: no cover - l'archive est versionnee
+        pytest.skip("archive de la mesure absente")
+    reference = json.loads(archive.read_text(encoding="utf-8"))["jeux"][
+        "jeu B (jamais vu, ecrit avant la retouche)"
+    ]
+    jeu = next(j for j in JEUX if j.nom == "B")
+    echecs = {
+        texte for texte, attendu, _ in jeu.cas
+        if not ((c := choisir(texte, maximum=3)) and c[0].nom == attendu)
+    }
+    assert echecs == set(reference["echecs_apres"]), (
+        "la reconstitution ne reproduit pas les echecs archives : elle a ete reecrite, "
+        "donc elle ne mesure plus la meme chose"
+    )
+    assert len(jeu.cas) == int(reference["cas"])
+    assert len(jeu.hors_sujet) == int(reference["hors_sujet"])
+
+
+def test_les_quatre_jeux_sont_DISTINCTS_et_complets() -> None:
+    """Deux jeux qui partagent des cas ne mesurent qu'une fois — et c'est arrive.
+
+    A la versionnage du jeu B, sa premiere transcription a repris SANS LE VOIR des cas du jeu A
+    (memes phrases, meme attentes) : le jeu « neuf » mesurait alors 37,5 % au lieu de 50,0 %, et
+    surtout il n'ajoutait aucune information. Ce test rend la faute impossible : aucun texte de
+    cas ne peut apparaitre dans deux jeux, et chaque jeu porte les deux langues et au moins trois
+    hors sujet — sinon son taux d'abstention ne veut rien dire.
+    """
+    from jio.skills.controle import JEUX
+
+    assert [j.nom for j in JEUX] == ["A", "B", "C", "D"], "les quatre jeux, dans l'ordre"
+    vus: dict[str, str] = {}
+    for jeu in JEUX:
+        assert len(jeu.cas) >= 20, f"jeu {jeu.nom} : trop peu de cas pour mesurer quoi que ce soit"
+        assert len(jeu.hors_sujet) >= 3, f"jeu {jeu.nom} : trop peu de hors sujet"
+        assert jeu.ecrit_avant, f"jeu {jeu.nom} : ne dit pas devant quelle retouche il a ete ecrit"
+        langues = {langue for _, _, langue in jeu.cas}
+        assert langues == {"fr", "en"}, f"jeu {jeu.nom} : langues {langues}"
+        for texte, attendu, _ in jeu.cas:
+            assert texte not in vus, (
+                f"« {texte[:50]} » est dans les jeux {vus.get(texte)} ET {jeu.nom} : "
+                "un cas partage ne compte qu'une fois et fait croire a un jeu neuf"
+            )
+            vus[texte] = jeu.nom
+            attendu_noms = {s.name for s in __import__(
+                "jio.artifacts.definitions", fromlist=["SKILLS"]).SKILLS}
+            assert attendu in attendu_noms, f"competence inexistante : {attendu}"
+
+
+def test_la_ligne_de_base_des_jeux_pre_enregistres_est_PUBLIEE() -> None:
+    """Un jeu pre-enregistre doit dire ce qu'il valait AVANT : sinon l'apres ne prouve rien.
+
+    C'est la seule facon de montrer, plus tard, qu'une retouche a apporte quelque chose : un
+    chiffre d'apres sans chiffre d'avant est une photo sans sujet. Le test verifie que les taux
+    publies dans les docstrings correspondent a ceux mesures aujourd'hui — un ecart veut dire que
+    le routeur a bouge sans que la ligne de base soit relue.
+    """
+    from jio.skills.controle import JEUX, mesurer_jeu
+
+    attendus = {"A": 0.583, "B": 0.500}
+    for jeu in JEUX:
+        if jeu.nom in attendus:
+            mesure = mesurer_jeu(jeu)["premier_choix"]
+            assert abs(mesure - attendus[jeu.nom]) < 0.001, (
+                f"jeu {jeu.nom} : {mesure:.1%} mesure contre {attendus[jeu.nom]:.1%} publie. "
+                "Si le routeur a change, la ligne de base se met a jour — et on dit ce qui a "
+                "change, on ne reecrit pas le chiffre en silence."
+            )
+
+
+def test_la_commande_controle_ne_MONTRE_pas_le_detail_par_defaut(capsys) -> None:
+    """Consulter les echecs d'un jeu qu'on n'a pas encore utilise le transforme en jeu de reglage.
+
+    Le detail reste accessible (`--detail`), parce qu'un rapport doit pouvoir etre lu en entier ;
+    il n'est simplement pas le comportement par defaut. La discipline est ici un choix d'interface
+    : ce qui protege le jeu C et le jeu D, c'est que personne ne les ouvre par accident.
+    """
+    code, sortie = _lancer(["skills", "--controle"], capsys)
+    assert code == 0
+    assert "QUATRE JEUX DE CONTROLE" in sortie
+    assert "TOTAL" in sortie
+    assert "RATE" not in sortie, "le detail des echecs ne doit pas s'afficher par defaut"
+
+    code, detail = _lancer(["skills", "--controle", "--detail"], capsys)
+    assert code == 0
+    assert "RATE" in detail
+    assert "jeu C" in detail

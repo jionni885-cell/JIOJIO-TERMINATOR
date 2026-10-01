@@ -4104,9 +4104,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="nombre de concepts de domaine en dessous duquel ne rien charger "
                          "(defaut : la valeur mesuree). 0 = ne jamais s'abstenir, -1 = defaut")
     sk.add_argument("--controle", action="store_true",
-                    help="passer au routeur le jeu de CONTROLE : des objectifs jamais vus, "
-                         "ecrits AVANT la derniere retouche des fiches — l'ecart avec le banc "
-                         "est la generalisation reelle")
+                    help="passer au routeur les QUATRE jeux de CONTROLE : des objectifs jamais "
+                         "vus, ecrits AVANT les retouches des fiches — l'ecart avec le banc est "
+                         "la generalisation reelle")
+    sk.add_argument("--detail", action="store_true",
+                    help="avec --controle : afficher aussi chaque cas et chaque echec. A "
+                         "n'ouvrir qu'APRES une retouche : lire les echecs d'un jeu qu'on n'a "
+                         "pas encore utilise le transforme en jeu de reglage")
     sk.add_argument("--seuil-balaye", action="store_true",
                     help="le seuil contre ses consequences : rappel et abstentions justes")
     sk.add_argument("--nom", default="",
@@ -4422,21 +4426,33 @@ def cmd_skills(args: argparse.Namespace) -> int:
         return 0
 
     if getattr(args, "controle", False):
-        from .skills.controle import CAS, resume
+        from .skills.controle import JEUX, resume_tous
 
         print()
-        print("  LE JEU DE CONTROLE — la mesure que le banc ne peut pas faire")
+        print("  LES QUATRE JEUX DE CONTROLE — la mesure que le banc ne peut pas faire")
         print()
-        print(resume())
+        print(resume_tous())
         print()
-        for objectif, attendu, langue in CAS:
-            obtenu = choisir(objectif, maximum=args.maximum)
-            premier = obtenu[0].nom if obtenu else "(abstention)"
-            marque = "ok " if premier == attendu else "RATE"
-            print(f"    [{marque}] [{langue}] {objectif[:66]}")
-            if premier != attendu:
-                print(f"           attendu {attendu} — obtenu {premier}")
+        print("  Un jeu qu'on a lu n'est plus aveugle : chacun a servi UNE fois, et les deux")
+        print("  derniers (C, D) sont pre-enregistres AVANT la prochaine retouche. Le detail")
+        print("  n'est affiche que si l'on demande `--detail` : consulter les echecs d'un jeu")
+        print("  qu'on n'a pas encore utilise le transforme en jeu de reglage.")
         print()
+        if getattr(args, "detail", False):
+            for jeu in JEUX:
+                print(f"    --- jeu {jeu.nom} ({len(jeu.cas)} cas) ---")
+                for objectif, attendu, langue in jeu.cas:
+                    obtenu = choisir(objectif, maximum=args.maximum)
+                    premier = obtenu[0].nom if obtenu else "(abstention)"
+                    marque = "ok " if premier == attendu else "RATE"
+                    print(f"    [{marque}] [{langue}] {objectif[:66]}")
+                    if premier != attendu:
+                        print(f"           attendu {attendu} — obtenu {premier}")
+                for objectif in jeu.hors_sujet:
+                    obtenu = choisir(objectif, maximum=args.maximum)
+                    if obtenu:
+                        print(f"    [RATE] [hors sujet] {objectif[:58]} -> {obtenu[0].nom}")
+                print()
         return 0
 
     if getattr(args, "banc", False):
@@ -4460,12 +4476,13 @@ def cmd_skills(args: argparse.Namespace) -> int:
         print("  `alphabetique` dit ce que vaut un choix qui ne regarde pas l'objectif, et")
         print("  `mots-cles bruts` ce que BM25, la saturation et la ponderation apportent.")
         print()
-        from .skills.controle import mesurer as mesurer_controle
-        ctrl = mesurer_controle()
-        print(f"  ET SUR DES OBJECTIFS JAMAIS VUS (`jio skills --controle`) : "
-              f"{ctrl['premier_choix']:.0%} de premier choix juste "
-              f"({ctrl['premier_choix_en']:.0%} en anglais). L'ecart avec le banc est la")
-        print("  generalisation reelle du routeur : le banc seul ne peut pas la montrer.")
+        from .skills.controle import mesurer_tous
+        ctrl = mesurer_tous()
+        print(f"  ET SUR {int(ctrl['cas'])} OBJECTIFS JAMAIS VUS, EN QUATRE JEUX "
+              f"(`jio skills --controle`) : {ctrl['premier_choix']:.0%} de premier choix juste.")
+        print("  L'ecart avec le banc est la generalisation reelle du routeur : le banc seul ne")
+        print("  peut pas la montrer, et quatre jeux ecrits avant les retouches disent en plus")
+        print("  si le gain a servi PARTOUT ou seulement la ou son auteur regardait.")
         print()
         return 0
 

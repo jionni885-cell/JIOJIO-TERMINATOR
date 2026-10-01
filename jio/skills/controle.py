@@ -42,6 +42,15 @@ CE QUI A ETE ESSAYE POUR LE COMBLER, ET ECARTE PAR LA MESURE :
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+from .controle_b import CAS as CAS_B
+from .controle_b import HORS_SUJET as HORS_B
+from .controle_c import CAS as CAS_C
+from .controle_c import HORS_SUJET as HORS_C
+from .controle_d import CAS as CAS_D
+from .controle_d import HORS_SUJET as HORS_D
+
 #: (objectif, competence attendue au premier rang, langue)
 CAS: tuple[tuple[str, str, str], ...] = (
     # -- anglais : le mode de travail de Hermes et d'opencode ---------------------- #
@@ -97,12 +106,129 @@ CAS: tuple[tuple[str, str, str], ...] = (
      "calibrated-abstention", "fr"),
 )
 
+#: Les trois jeux, dans l'ordre ou ils ont ete ecrits. Chacun a servi UNE fois : celui-ci a
+#: mesure une retouche, celui-la la suivante. Un jeu qui a servi ne sert plus de temoin — il
+#: devient un cas de reference, et c'est la raison d'etre des deux suivants.
+#:
+#: Le nom porte sa fonction : `A` est le jeu d'origine, `B` a ete ecrit avant la retouche BM25F,
+#: `C` avant la retouche suivante. Les trois ensemble donnent une DISTRIBUTION, qu'on resume
+#: honnetement (`resume_tous`), au lieu du chiffre unique d'un seul jeu.
+#: (rempli plus bas, une fois la dataclass `JeuControle` definie)
+
+
 #: Objectifs qui ne relevent d'AUCUNE competence : le routeur doit s'abstenir.
 HORS_SUJET: tuple[str, ...] = (
     "Rename the variable so the linter stops complaining about shadowing",
     "Change the button colour to match the new brand palette",
     "Ajouter la traduction portugaise de la page d'accueil",
     "Update the copyright year in the footer",
+)
+
+
+@dataclass(frozen=True)
+class JeuControle:
+    """Un jeu de controle : ses cas, ses hors sujet, et la retouche devant laquelle il a ete ecrit.
+
+    `ecrit_avant` n'est pas une decoration : c'est ce qui distingue un temoin d'un jeu de reglage.
+    Un jeu ecrit APRES la retouche mesure l'auteur, pas le routeur.
+    """
+
+    nom: str
+    cas: tuple[tuple[str, str, str], ...]
+    hors_sujet: tuple[str, ...]
+    ecrit_avant: str
+    #: Ce que ce jeu a mesure la derniere fois qu'il a servi. Un jeu deja lu ne redevient pas
+    #: aveugle : le garder ici evite de faire semblant, et dit au lecteur ce qu'il regarde.
+    derniere_mesure: float = 0.0
+
+
+def _taux(cas: tuple[tuple[str, str, str], ...]) -> tuple[int, int]:
+    """(premiers choix justes, cas) pour un jeu — la brique de tout le reste."""
+    justes = sum(1 for objectif, attendu, _ in cas if _premier(objectif) == attendu)
+    return justes, len(cas)
+
+
+def mesurer_jeu(jeu: JeuControle) -> dict[str, float]:
+    """Les taux d'UN jeu : premier choix juste, par langue, et abstentions justes."""
+    justes, total = _taux(jeu.cas)
+    par_langue: dict[str, list[int]] = {}
+    for objectif, attendu, langue in jeu.cas:
+        cumul = par_langue.setdefault(langue, [0, 0])
+        cumul[0] += _premier(objectif) == attendu
+        cumul[1] += 1
+    abstentions = sum(1 for objectif in jeu.hors_sujet if _premier(objectif) is None)
+    resultat: dict[str, float] = {
+        "premier_choix": justes / total if total else 0.0,
+        "cas": float(total),
+        "abstentions_justes": abstentions / len(jeu.hors_sujet) if jeu.hors_sujet else 0.0,
+        "hors_sujet": float(len(jeu.hors_sujet)),
+    }
+    for langue, (bons, nombre) in par_langue.items():
+        resultat[f"premier_choix_{langue}"] = bons / nombre
+    return resultat
+
+
+def mesurer_tous() -> dict[str, float]:
+    """Les trois jeux REUNIS, et jeu par jeu.
+
+    Agreger compte : un seul jeu de 24 cas a un intervalle de confiance de +/-20 points, et c'est
+    ce qui a fait dire « direction, pas preuve » a la derniere retouche. Separes, les jeux disent
+    en plus si une retouche a aide PARTOUT ou seulement la ou son auteur regardait — un chiffre
+    global cache exactement ce desaccord-la.
+    """
+    reunis: dict[str, float] = {}
+    justes = total = 0
+    abstentions = hors = 0
+    for jeu in JEUX:
+        m = mesurer_jeu(jeu)
+        reunis[f"{jeu.nom}:premier_choix"] = m["premier_choix"]
+        reunis[f"{jeu.nom}:cas"] = m["cas"]
+        reunis[f"{jeu.nom}:abstentions_justes"] = m["abstentions_justes"]
+        justes += round(m["premier_choix"] * m["cas"])
+        total += int(m["cas"])
+        abstentions += round(m["abstentions_justes"] * m["hors_sujet"])
+        hors += int(m["hors_sujet"])
+    reunis["premier_choix"] = justes / total if total else 0.0
+    reunis["cas"] = float(total)
+    reunis["abstentions_justes"] = abstentions / hors if hors else 0.0
+    reunis["hors_sujet"] = float(hors)
+    return reunis
+
+
+def resume_tous() -> str:
+    """Le tableau des trois jeux, puis la ligne agregee. Ce qu'un rapport doit montrer."""
+    lignes = []
+    for jeu in JEUX:
+        m = mesurer_jeu(jeu)
+        lignes.append(
+            f"    {jeu.nom}  {m['premier_choix']:>6.1%} sur {int(m['cas']):>3} cas "
+            f"({m.get('premier_choix_en', 0):.0%} en anglais, {m.get('premier_choix_fr', 0):.0%} "
+            f"en francais) · abstention juste {m['abstentions_justes']:.0%} sur "
+            f"{int(m['hors_sujet'])} hors sujet   ecrit avant : {jeu.ecrit_avant}"
+        )
+    t = mesurer_tous()
+    lignes.append(
+        f"    {'TOTAL':>3} {t['premier_choix']:>5.1%} sur {int(t['cas'])} cas jamais vus · "
+        f"abstention juste {t['abstentions_justes']:.0%} sur {int(t['hors_sujet'])} hors sujet"
+    )
+    return "\n".join(lignes)
+
+
+JEUX = (
+    JeuControle(nom="A", cas=CAS, hors_sujet=HORS_SUJET,
+                ecrit_avant="la retouche du lexique bilingue", derniere_mesure=0.583),
+    JeuControle(nom="B", cas=CAS_B, hors_sujet=HORS_B,
+                ecrit_avant="la retouche BM25F (le corps entre dans l'index)",
+                derniere_mesure=0.500),
+    JeuControle(nom="C", cas=CAS_C, hors_sujet=HORS_C,
+                ecrit_avant="la retouche A VENIR (pre-enregistre ; detail relu pour les "
+                            "annotations, jamais regle dessus)",
+                derniere_mesure=0.0),
+    # D est le seul dont le DETAIL n'a pas ete regarde avant la retouche : c'est lui qui permet
+    # de dire, si le resultat est bon, que le gain n'a pas ete obtenu en pensant a ses cas.
+    JeuControle(nom="D", cas=CAS_D, hors_sujet=HORS_D,
+                ecrit_avant="la retouche A VENIR (pre-enregistre, detail AVEUGLE)",
+                derniere_mesure=0.0),
 )
 
 
