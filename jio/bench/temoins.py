@@ -137,6 +137,39 @@ def contrefacon(test: str, distracteurs: Sequence[str]) -> str | None:
     return ast.unparse(ast.Module(body=[neuf], type_ignores=[]))
 
 
+def _premiere_contrefacon(tache: Task, test: str) -> str:
+    """Une implementation FAUSSE que ce test-la rejette, sinon une chaine vide.
+
+    On ne devine pas : on EXECUTE. Un distracteur que le test ne rejette pas ne peut pas
+    servir de contrefacon, et en choisir un au hasard ferait echouer la validation pour la
+    mauvaise raison — le rapport accuserait alors le modele d'un defaut de notre choix.
+    """
+    for source in tache.distractors:
+        espace: dict[str, object] = {}
+        try:
+            exec(source, espace)  # noqa: S102 — code du banc, pas du modele
+            exec(test, espace)  # noqa: S102
+        except AssertionError:
+            return source
+        except Exception:  # noqa: BLE001 — un distracteur qui plante n'est pas une preuve
+            continue
+    return ""
+
+
+def _en_triplet(test: str, tache: Task) -> dict[str, object]:
+    """Le temoin, sa reference et sa contrefacon — la forme que le prompt de CONTROLE exige.
+
+    Quand aucune contrefacon du banc n'est rejetee par ce test, la reponse est un AVEU motive,
+    pas un triplet incomplet : un modele honnete dirait qu'il ne sait pas prouver ce temoin-la.
+    Rendre un triplet sans contrefacon ferait rejeter la reponse par la porte d'execution, et
+    le rapport accuserait alors le modele d'un defaut qui est celui du banc.
+    """
+    faux = _premiere_contrefacon(tache, test)
+    if not faux:
+        return {"impossible": "aucune contrefacon du banc n'est rejetee par ce test"}
+    return {"test": test, "reference": tache.correct, "contrefacon": faux}
+
+
 @dataclass
 class TraducteurSimule:
     """Un modele qui traduit les regles d'une tache en tests executables."""
@@ -181,6 +214,11 @@ class TraducteurSimule:
             )
 
         regles = self._regles_du_prompt(prompt) or list(tache.checks)
+        # Le prompt de CONTROLE demande, en plus du test, une implementation de reference et
+        # une contrefacon. Un modele simule doit savoir repondre aux deux prompts — sinon la
+        # mesure ne pourrait pas exercer le controle, et une brique qu'aucune mesure n'exerce
+        # est une brique dont on ne sait rien.
+        controle = '"contrefacon"' in prompt or "contrefacon" in prompt.lower()
         traduits: dict[str, object] = {}
         for rid in regles:
             fidele = tache.checks.get(rid)
@@ -190,14 +228,18 @@ class TraducteurSimule:
             taux = min(1.0, max(0.0, self.fidelite))
             tirage = (_graine(tache.id, rid, seed) % 1000) / 1000.0
             if tirage < taux:
-                traduits[rid] = fidele
+                traduits[rid] = _en_triplet(fidele, tache) if controle else fidele
                 continue
             faux = contrefacon(fidele, tache.distractors)
             if faux is None:
-                traduits[rid] = fidele  # aucune contrefacon constructible : on reste fidele
+                traduits[rid] = _en_triplet(fidele, tache) if controle else fidele
                 continue
             self.contrefaites.append(f"{tache.id}:{rid}")
-            traduits[rid] = faux
+            # En mode CONTROLE, la contrefacon du TEMOIN part avec l'implementation correcte
+            # comme reference : le test contredit donc la reference fournie avec lui, et le
+            # harness le refuse par EXECUTION. C'est exactement ce qu'un modele reel produirait
+            # en se trompant, et c'est ce que la reparation doit rattraper.
+            traduits[rid] = _en_triplet(faux, tache) if controle else faux
 
         return Completion(
             text=json.dumps(traduits, ensure_ascii=False),

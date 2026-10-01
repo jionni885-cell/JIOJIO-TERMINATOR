@@ -13,6 +13,8 @@ Trois choses sont verrouillees ici, dans l'ordre d'importance :
 
 from __future__ import annotations
 
+import json
+
 import pathlib
 
 import pytest
@@ -315,3 +317,31 @@ def test_le_resume_affiche_des_POURCENTAGES_et_non_des_fractions() -> None:
     assert "(aveugle 25.0%, oracle best-of 75.0%)" in texte
     assert "SILENCIEUX : 0" in texte and "appels 3.5" in texte
     assert "50.5%" not in texte
+
+
+def test_le_banc_de_prose_ECRIT_le_rapport_demande(tmp_path, capsys) -> None:
+    """`--rapport` etait accepte puis IGNORE par le banc de prose.
+
+    Mesure a l'origine : `jio bench --prose --rapport f.md` affichait son tableau, sortait
+    sans ecrire `f.md`, et personne ne pouvait archiver ni comparer deux mesures de documents.
+    Un drapeau qui ne fait rien est pire qu'un drapeau absent : il donne l'illusion d'un
+    enregistrement. Meme exigence que pour le banc de code : Markdown lisible + JSON comparable.
+    """
+    import argparse
+
+    from jio.cli import _bench_prose
+
+    cible = tmp_path / "prose.md"
+    args = argparse.Namespace(skill=0.35, runs=1, rounds=2, rapport=str(cible), taches=1)
+    assert _bench_prose(args) == 0
+    capsys.readouterr()
+
+    assert cible.exists(), "le rapport demande doit exister"
+    texte = cible.read_text(encoding="utf-8")
+    assert "SANS RIEN DIRE" in texte, "le chiffre qui doit rester a zero doit y etre"
+    assert "IC95" in texte, "un taux sans intervalle invite a surinterpreter"
+    jumeau = cible.with_suffix(".json")
+    assert jumeau.exists(), "le JSON est ce qui se compare d'une execution a l'autre"
+    donnees = json.loads(jumeau.read_text(encoding="utf-8"))
+    assert donnees["genre"] == "prose"
+    assert donnees["bras"] and "ic95" in donnees["bras"][0]

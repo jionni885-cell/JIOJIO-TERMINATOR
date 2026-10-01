@@ -79,7 +79,12 @@ def test_une_traduction_validee_nest_plus_repayee(tmp_path: Path) -> None:
     appels = {"n": 0}
 
     premier, biblio1, _ = _mission(chemin, 1, traducteur=TraducteurCompte(appels=appels))
-    assert premier.status.value == "delivered", premier.abstention_reason
+# `delivered` OU `delivered_with_reservation` : le banc ne fournit AUCUN oracle ici, et la
+    # regle R-002 de `sum_even` n'a pas de contrefacon exploitable — le modele l'avoue. Une
+    # regle sans temoin interdit desormais la mention « sans reserve » (mesure : un artefact
+    # faux passait les trois autres regles et echouait sur celle-la). Ce que ce test mesure,
+    # c'est la MEMOIRE, pas la reserve.
+    assert premier.status.value.startswith("delivered"), premier.abstention_reason
     assert _check(premier.subject, TACHE)
     assert appels["n"] == 1, "la premiere mission traduit les regles : un appel"
     entrees = biblio1.size
@@ -90,7 +95,12 @@ def test_une_traduction_validee_nest_plus_repayee(tmp_path: Path) -> None:
         "la deuxieme mission identique ne doit RIEN demander au modele pour la "
         f"traduction (appels cumules : {appels['n']})"
     )
-    assert deuxieme.status.value == "delivered", deuxieme.abstention_reason
+# `delivered` OU `delivered_with_reservation` : le banc ne fournit AUCUN oracle ici, et la
+    # regle R-002 de `sum_even` n'a pas de contrefacon exploitable — le modele l'avoue. Une
+    # regle sans temoin interdit desormais la mention « sans reserve » (mesure : un artefact
+    # faux passait les trois autres regles et echouait sur celle-la). Ce que ce test mesure,
+    # c'est la MEMOIRE, pas la reserve.
+    assert deuxieme.status.value.startswith("delivered"), deuxieme.abstention_reason
     assert _check(deuxieme.subject, TACHE), "le resultat doit rester correct"
     assert biblio2.size == entrees
     source = next(e.payload.get("source", "") for e in moteur2.journal.events()
@@ -154,7 +164,12 @@ def test_un_fichier_de_memoire_forge_est_mis_en_quarantaine_et_jamais_applique(
     appels = {"n": 0}
     rapport, _, _ = _mission(chemin, 2, traducteur=TraducteurCompte(appels=appels))
     assert appels["n"] == 1, "memoire vide : il faut re-traduire"
-    assert rapport.status.value == "delivered", rapport.abstention_reason
+# `delivered` OU `delivered_with_reservation` : le banc ne fournit AUCUN oracle ici, et la
+    # regle R-002 de `sum_even` n'a pas de contrefacon exploitable — le modele l'avoue. Une
+    # regle sans temoin interdit desormais la mention « sans reserve » (mesure : un artefact
+    # faux passait les trois autres regles et echouait sur celle-la). Ce que ce test mesure,
+    # c'est la MEMOIRE, pas la reserve.
+    assert rapport.status.value.startswith("delivered"), rapport.abstention_reason
 
 
 # --------------------------------------------------------------------------- #
@@ -193,7 +208,12 @@ def test_un_temoin_memorise_qui_accuse_tout_le_monde_est_revoque(tmp_path: Path)
     appels = {"n": 0}
     troisieme, _, _ = _mission(chemin, 3, traducteur=TraducteurCompte(appels=appels))
     assert appels["n"] == 1, "apres revocation, la traduction doit etre repayee"
-    assert troisieme.status.value == "delivered", troisieme.abstention_reason
+# `delivered` OU `delivered_with_reservation` : le banc ne fournit AUCUN oracle ici, et la
+    # regle R-002 de `sum_even` n'a pas de contrefacon exploitable — le modele l'avoue. Une
+    # regle sans temoin interdit desormais la mention « sans reserve » (mesure : un artefact
+    # faux passait les trois autres regles et echouait sur celle-la). Ce que ce test mesure,
+    # c'est la MEMOIRE, pas la reserve.
+    assert troisieme.status.value.startswith("delivered"), troisieme.abstention_reason
 
 
 # --------------------------------------------------------------------------- #

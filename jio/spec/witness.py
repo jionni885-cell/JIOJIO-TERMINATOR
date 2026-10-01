@@ -103,6 +103,40 @@ SYSTEME = (
 )
 
 
+#: Prompt de CONTROLE : le temoin doit venir avec de quoi le METTRE EN DEFAUT.
+#:
+#: POURQUOI, et c'est la reponse a une mesure : avec des traductions imparfaites (le regime
+#: reel d'une mission sans oracle), un temoin faux fait echouer TOUS les candidats — y compris
+#: les bons — et le harness n'a rien a livrer. Mesure : 15 missions sur 15 en abstention a
+#: 60 % de fidelite de traduction. Le moteur re-demandait des CANDIDATS quand la preuve
+#: echouait ; il ne re-demandait jamais l'INSTRUMENT.
+#:
+#: La correction ne demande AUCUNE confiance supplementaire, et c'est ce qui la rend utilisable :
+#: le modele doit fournir, avec son test, une implementation CORRECTE de reference et une
+#: implementation FAUSSE. Le harness execute alors les deux et exige : le test PASSE sur la
+#: reference, le test ECHOUE sur la contrefacon. Un test qui passe sur les deux ne prouve rien ;
+#: un test qui echoue sur sa propre reference se contredit. Les deux cas sont refuses
+#: mecaniquement, sans croire le modele sur parole — et un instrument refuse est redemande une
+#: fois, en lui disant exactement pourquoi.
+SYSTEME_CONTROLE = (
+    "You turn enumerated RULES into executable checks, and each check must come with the\n"
+    "PROOF THAT IT CAN FAIL. Output ONLY a JSON object. For each rule id, either:\n"
+    '  {"test": "assert ...", "reference": "<python defining the entrypoint>",\n'
+    '   "contrefacon": "<same entrypoint, WRONG on purpose>"}\n'
+    'or an explicit refusal: {"impossible": "why it cannot be tested"}.\n'
+    "\n"
+    "The three parts are EXECUTED before anything else:\n"
+    "  * `test` must PASS on `reference` — otherwise it contradicts its own reference;\n"
+    "  * `test` must FAIL on `contrefacon` — otherwise it proves nothing at all.\n"
+    'A pair that fails either check is discarded. Keep `reference` MINIMAL (the entrypoint\n'
+    "and nothing else) and make `contrefacon` differ in the way the rule talks about.\n"
+    "\n"
+    "Same constraints as always: no imports in `test`, no files, no network, no time, no\n"
+    "randomness, and a single assertion with the observed value in the message.\n"
+    "A rule you cannot translate must be declared impossible WITH its reason."
+)
+
+
 @dataclass(frozen=True)
 class Temoignage:
     """Ce qu'un modele a su (et n'a pas su) traduire d'une specification."""
@@ -116,6 +150,22 @@ class Temoignage:
     #: Vrai quand il a fallu DEUX appels : le rapport doit pouvoir le dire, parce que
     #: deux appels ne sont pas le meme budget qu'un seul.
     relance: bool = False
+    #: Regles dont le temoin a ete VALIDE par execution : le test passe sur la reference
+    #: fournie avec lui et echoue sur sa contrefacon. Un temoin valide est un instrument qui
+    #: peut echouer — ce qui est exactement ce qu'un temoin doit etre.
+    valides: frozenset[str] = frozenset()
+    #: Regles dont le temoin a ete ACCEPTE sans etre mis a l'epreuve : le modele a rendu un
+    #: test seul, executable et conforme a la porte statique, mais sans la reference et la
+    #: contrefacon qui prouveraient qu'il peut echouer. Ce temoin JUGE (il vaut mieux qu'aucune
+    #: preuve) mais la regle n'est pas declaree prouvee : le rapport nomme la difference.
+    non_eprouves: frozenset[str] = frozenset()
+    #: Regles dont le temoin s'est CONTREDIT (test refuse sur sa propre reference, ou passant
+    #: sur sa contrefacon) : motif lisible, pour que la relance puisse dire quoi corriger.
+    incoherents: Mapping[str, str] = field(default_factory=dict)
+    #: Regles dont l'instrument a ete REPARE : la premiere reponse se contredisait, la seconde
+    #: a passe les deux executions. C'est un fait de la mesure, pas un detail — l'instrument
+    #: livre n'est pas celui du premier essai.
+    reparations: frozenset[str] = frozenset()
 
     @property
     def utilisable(self) -> bool:
@@ -243,6 +293,104 @@ def _normaliser(data: object) -> dict[str, object] | None:
     return None
 
 
+#: Fragments interdits dans une IMPLEMENTATION fournie comme reference ou contrefacon.
+#: Plus courte que celle des tests, et pour une raison : une implementation correcte a le
+#: DROIT d'importer `re` ou `math` (les solutions du banc le font). Ce qui reste interdit est
+#: ce qui sortirait du bac a sable : fichiers, reseau, processus, execution dynamique.
+INTERDITS_IMPLEMENTATION: tuple[tuple[str, str], ...] = (
+    ("open(", "acces au systeme de fichiers"),
+    ("exec(", "execution dynamique"),
+    ("eval(", "execution dynamique"),
+    ("compile(", "execution dynamique"),
+    ("subprocess", "lancement de processus"),
+    ("socket", "acces reseau"),
+    ("urllib", "acces reseau"),
+    ("requests", "acces reseau"),
+    ("input(", "attente d'une saisie"),
+    ("while True", "boucle infinie"),
+    ("__import__", "chargement dynamique"),
+    ("importlib", "chargement dynamique"),
+    ("os.system", "acces au systeme"),
+)
+
+
+def valider_implementation(code: str, *, entrypoint: str) -> tuple[bool, str]:
+    """Une implementation fournie est-elle exploitable par le bac a sable ?"""
+    texte = (code or "").strip()
+    if not texte:
+        return False, "implementation absente"
+    if entrypoint and f"def {entrypoint}" not in texte:
+        return False, f"l'implementation ne definit pas `{entrypoint}`"
+    for fragment, motif in INTERDITS_IMPLEMENTATION:
+        if fragment in texte:
+            return False, f"fragment interdit ({fragment}) : {motif}"
+    try:
+        ast.parse(texte)
+    except SyntaxError as exc:
+        return False, f"l'implementation ne compile pas : {exc.msg}"
+    return True, ""
+
+
+def valider_triplet(
+    sandbox: object,
+    *,
+    test: str,
+    reference: str,
+    contrefacon: str,
+    entrypoint: str,
+) -> tuple[bool, str]:
+    """LE coeur de l'instrument auto-valide : deux executions, aucune confiance.
+
+    Un temoin ne vaut rien s'il ne peut pas echouer. On l'EXECUTE donc deux fois, avant de
+    l'utiliser pour juger quoi que ce soit :
+
+      * sur l'implementation de reference fournie AVEC lui : il doit PASSER ;
+      * sur la contrefacon fournie avec lui : il doit ECHOUER.
+
+    Ce que chaque echec veut dire, et c'est tout l'interet :
+
+      * il echoue sur sa propre reference  -> l'instrument se CONTREDIT (le modele a ecrit une
+        assertion qui contredit l'implementation correcte qu'il donne lui-meme) ;
+      * il passe sur la contrefacon       -> l'instrument ne prouve RIEN (il ne distingue pas
+        une implementation fausse de la bonne) ;
+      * un couple reference/contrefacon identique -> il n'y a rien a distinguer.
+
+    Le tout est verifie par le bac a sable deja utilise pour les artefacts : meme confinement,
+    meme delai, aucun reseau.
+    """
+    ok, motif = valider_test(test, entrypoint=entrypoint)
+    if not ok:
+        return False, motif
+    for role, code in (("reference", reference), ("contrefacon", contrefacon)):
+        ok, motif = valider_implementation(code, entrypoint=entrypoint)
+        if not ok:
+            return False, f"{role} : {motif}"
+    if reference.strip() == contrefacon.strip():
+        return False, "reference et contrefacon sont identiques : rien a distinguer"
+
+    sur_reference = sandbox.run_python(f"{reference}\n{test}\n", tag="triplet-reference")
+    if sur_reference.exit_code != 0:
+        detail = _derniere_ligne(sur_reference.stderr) or _derniere_ligne(sur_reference.stdout)
+        return False, (
+            "le test ECHOUE sur l'implementation de reference fournie avec lui "
+            f"(l'instrument se contredit : {detail[:120]})"
+        )
+    sur_contrefacon = sandbox.run_python(f"{contrefacon}\n{test}\n", tag="triplet-contrefacon")
+    if sur_contrefacon.exit_code == 0:
+        return False, (
+            "le test PASSE sur la contrefacon fournie avec lui : il ne distingue pas une "
+            "implementation fausse de la bonne, donc il ne prouve rien"
+        )
+    return True, ""
+
+
+def _derniere_ligne(texte: str) -> str:
+    for ligne in reversed((texte or "").splitlines()):
+        if ligne.strip():
+            return ligne.strip()
+    return ""
+
+
 def _valeur_brute(valeur: object) -> tuple[str, str]:
     """Rend (test, refus) : une seule des deux est non vide."""
     if isinstance(valeur, str):
@@ -256,6 +404,31 @@ def _valeur_brute(valeur: object) -> tuple[str, str]:
         if isinstance(test, str) and test.strip():
             return test.strip(), ""
     return "", "entree de traduction illisible (ni test, ni refus motive)"
+
+
+def _triplet(valeur: object) -> tuple[str, str, str, str]:
+    """Rend (test, reference, contrefacon, refus) depuis une entree de traduction.
+
+    Les formes acceptees, dans l'ordre de tolerance : le triplet complet, le couple
+    test+reference sans contrefacon (refuse plus loin, avec la raison), la chaine simple
+    (l'ancien format — un temoin n'est alors PAS valide, et le rapport le dit).
+    """
+    if isinstance(valeur, dict):
+        test = valeur.get("test") or valeur.get("check") or valeur.get("assert")
+        ref = valeur.get("reference") or valeur.get("correct") or valeur.get("reference_ok")
+        faux = (
+            valeur.get("contrefacon") or valeur.get("contrefaçon")
+            or valeur.get("wrong") or valeur.get("faux") or valeur.get("mutation")
+        )
+        if isinstance(test, str) and test.strip():
+            return (
+                test.strip(),
+                ref.strip() if isinstance(ref, str) else "",
+                faux.strip() if isinstance(faux, str) else "",
+                "",
+            )
+    test, refus = _valeur_brute(valeur)
+    return test, "", "", refus
 
 
 def valider_test(test: str, *, entrypoint: str) -> tuple[bool, str]:
@@ -323,14 +496,22 @@ def _tentative(
     regles: Sequence[Rule],
     seed: int | None,
     rappel: str = "",
+    controle: bool = False,
+    sandbox: object | None = None,
 ) -> Temoignage:
-    """UNE tentative de traduction, avec sa porte de securite. Aucune relance ici."""
+    """UNE tentative de traduction, avec sa porte de securite. Aucune relance ici.
+
+    En mode CONTROLE, chaque temoin doit venir avec sa reference et sa contrefacon, et les deux
+    sont EXECUTEES avant que le temoin serve a quoi que ce soit. Un temoin qui se contredit ne
+    juge personne : il est refuse, avec le motif exact qui servira a le redemander.
+    """
     utilisateur = _prompt_utilisateur(spec, entrypoint, objectif, regles)
     if rappel:
         utilisateur = f"{utilisateur}\n\n{rappel}"
     try:
         completion = provider.complete(
-            [Message("system", SYSTEME), Message("user", utilisateur)],
+            [Message("system", SYSTEME_CONTROLE if controle else SYSTEME),
+             Message("user", utilisateur)],
             temperature=0.0,
             max_tokens=2048,
             seed=seed,
@@ -359,6 +540,12 @@ def _tentative(
     tests: dict[str, str] = {}
     aveux: dict[str, str] = {}
     refuses: dict[str, str] = {}
+    valides: set[str] = set()
+    #: Temoins acceptes SANS avoir ete mis a l'epreuve (l'ancien format, un test seul). Ils
+    #: restent utilisables — un test executable vaut mieux que pas de preuve — mais la regle
+    #: qu'ils jugent n'est PAS declaree prouvee, et le rapport le dit.
+    non_eprouves: set[str] = set()
+    incoherents: dict[str, str] = {}
     connues = {r.id for r in regles}
     for brut, valeur in data.items():
         rid = str(brut).strip().strip("[]").strip()
@@ -366,9 +553,52 @@ def _tentative(
             # Une regle inventee n'est pas un temoin : le modele n'en est pas l'autorite.
             refuses[rid] = "regle inconnue de la specification"
             continue
-        test, refus = _valeur_brute(valeur)
+        # DEUX CHEMINS, DEUX FORMES — et surtout pas un tuple construit a la volee : la
+        # version qui empilait `(*_valeur_brute(valeur), "", "")` mettait le REFUS dans
+        # `reference` et laissait `refus` vide. Tout devenait « test vide », y compris les
+        # aveux honnetes, et le moteur relancait ce qu'il aurait du lire du premier coup.
+        if controle:
+            test, reference, contrefacon, refus = _triplet(valeur)
+        else:
+            test, refus = _valeur_brute(valeur)
+            reference, contrefacon = "", ""
         if refus:
             aveux[rid] = refus
+            continue
+        if controle:
+            if not reference or not contrefacon:
+                # L'ANCIEN FORMAT, et il ne doit pas bloquer la mission. Un modele qui rend un
+                # test seul ne se contredit pas : il n'a pas fourni de quoi le mettre a
+                # l'epreuve. Le refuser ferait s'abstenir le moteur sur un simple FORMAT de
+                # reponse — c'est precisement le blocage que ce controle existe pour reparer.
+                # On le garde donc, on le NOMME `non eprouve`, et on ne le compte jamais parmi
+                # les regles prouvees.
+                ok, motif = valider_test(test, entrypoint=entrypoint)
+                if ok:
+                    tests[rid] = test
+                    non_eprouves.add(rid)
+                else:
+                    refuses[rid] = f"{motif} — test : {test[:120]}"
+                continue
+            if sandbox is None:
+                # Sans bac a sable, on ne peut pas PROUVER l'instrument : on refuse plutot
+                # que de faire semblant. C'est la doctrine du depot, appliquee au dernier
+                # endroit ou elle pourrait etre oubliee.
+                refuses[rid] = "aucun bac a sable : l'instrument ne peut pas etre mis a l'epreuve"
+                continue
+            ok, motif = valider_triplet(
+                sandbox, test=test, reference=reference, contrefacon=contrefacon,
+                entrypoint=entrypoint,
+            )
+            if not ok:
+                # Le temoin se contredit : il n'entre PAS dans `tests` (il ne jugera aucun
+                # candidat), et il n'est pas un aveu non plus — le modele n'a pas dit qu'il
+                # ne savait pas, il a rendu un instrument faux. Le motif part tel quel dans
+                # la relance, sinon le second essai repetterait la meme erreur.
+                incoherents[rid] = motif
+                continue
+            tests[rid] = test
+            valides.add(rid)
             continue
         ok, motif = valider_test(test, entrypoint=entrypoint)
         if ok:
@@ -376,7 +606,8 @@ def _tentative(
         else:
             refuses[rid] = f"{motif} — test : {test[:120]}"
 
-    manquantes = [r.id for r in regles if r.id not in tests and r.id not in aveux and r.id not in refuses]
+    manquantes = [r.id for r in regles if r.id not in tests and r.id not in aveux
+                  and r.id not in refuses and r.id not in incoherents]
     for rid in manquantes:
         aveux[rid] = "aucune reponse du modele pour cette regle"
 
@@ -386,6 +617,9 @@ def _tentative(
         refuses=refuses,
         appels=1,
         modele=str(getattr(completion, "model", "") or ""),
+        valides=frozenset(valides),
+        non_eprouves=frozenset(non_eprouves),
+        incoherents=dict(incoherents),
     )
 
 
@@ -397,6 +631,8 @@ def traduire(
     objectif: str = "",
     seed: int | None = None,
     max_tests: int = MAX_TESTS,
+    controle: bool = False,
+    sandbox: object | None = None,
 ) -> Temoignage:
     """Traduit les regles d'une specification en temoins executables.
 
@@ -424,15 +660,104 @@ def traduire(
 
     temoignage = _tentative(
         spec, provider, entrypoint=entrypoint, objectif=objectif, regles=regles, seed=seed,
+        controle=controle, sandbox=sandbox,
     )
-    if temoignage.tests or temoignage.aveux:
+    if controle and temoignage.incoherents:
+        # LA REPARATION DE L'INSTRUMENT. Mesure a l'origine : quand les temoins sont
+        # imparfaits (le regime reel d'une mission sans oracle), un instrument qui se
+        # contredit fait echouer TOUS les candidats — et le harness n'avait rien a livrer :
+        # 15 missions sur 15 en abstention. Le moteur re-demandait des candidats ; il ne
+        # re-demandait jamais l'instrument.
+        #
+        # Une seule passe, pour les seules regles concernees, avec le motif EXACT de chaque
+        # refus. Le cout est borne et compte (deux appels ne sont pas un appel) ; le fait est
+        # journalise (`reparations`), parce qu'un instrument repare n'est pas l'instrument du
+        # premier essai et qu'un rapport doit pouvoir le dire.
+        temoignage = _reparer(
+            spec, provider, entrypoint=entrypoint, objectif=objectif, regles=regles,
+            seed=seed, premier=temoignage, sandbox=sandbox,
+        )
+    if temoignage.tests or temoignage.aveux or temoignage.incoherents:
         return temoignage
 
     temoignage = _relancer(
         spec, provider, entrypoint=entrypoint, objectif=objectif, regles=regles,
-        seed=seed, premier=temoignage,
+        seed=seed, premier=temoignage, controle=controle, sandbox=sandbox,
     )
     return temoignage
+
+
+def _rappel_incoherence(premier: Temoignage, regles: Sequence[Rule]) -> str:
+    """Dit au modele ce qui a ete refuse, et POURQUOI — le meme fait, sans interpretation.
+
+    La raison est celle rendue par l'EXECUTION (`le test ECHOUE sur l'implementation de
+    reference fournie avec lui`), jamais un jugement de style : c'est ce qui rend la seconde
+    tentative capable de corriger, au lieu de retirer au hasard.
+    """
+    lignes = [
+        f"- [{rid}] votre essai a ete REJETE : {motif}"
+        for rid, motif in sorted(premier.incoherents.items())
+    ]
+    ids = ", ".join(sorted(premier.incoherents))
+    return (
+        "YOUR PREVIOUS ATTEMPT WAS REJECTED BY EXECUTION:\n"
+        + "\n".join(lignes)
+        + "\n\nRewrite ONLY these rules: " + ids + ".\n"
+        "A check that fails on the reference you wrote yourself, or that passes on your own\n"
+        "wrong implementation, is refused before it is ever used. Make the pair COHERENT:\n"
+        "the reference must satisfy the rule, the contrefacon must violate it, and the test\n"
+        "must tell them apart."
+    )
+
+
+def _reparer(
+    spec: Spec,
+    provider: Provider,
+    *,
+    entrypoint: str,
+    objectif: str,
+    regles: Sequence[Rule],
+    seed: int | None,
+    premier: Temoignage,
+    sandbox: object | None,
+) -> Temoignage:
+    """Redemande UNIQUEMENT les instruments refuses, avec leur motif de refus."""
+    a_refaire = [r for r in regles if r.id in premier.incoherents]
+    if not a_refaire:
+        return premier
+    seconde = _tentative(
+        spec, provider, entrypoint=entrypoint, objectif=objectif, regles=a_refaire,
+        seed=None if seed is None else seed + 1,
+        rappel=_rappel_incoherence(premier, a_refaire),
+        controle=True, sandbox=sandbox,
+    )
+    tests = dict(premier.tests)
+    tests.update(seconde.tests)
+    incoherents = dict(premier.incoherents)
+    reparations: set[str] = set()
+    for rid in seconde.tests:
+        if rid in incoherents:
+            incoherents.pop(rid, None)
+            reparations.add(rid)
+    for rid, motif in seconde.incoherents.items():
+        incoherents[rid] = motif
+    aveux = dict(premier.aveux)
+    aveux.update(seconde.aveux)
+    refuses = dict(premier.refuses)
+    refuses.update(seconde.refuses)
+    return Temoignage(
+        tests=tests,
+        aveux=aveux,
+        refuses=refuses,
+        motif=premier.motif,
+        appels=premier.appels + seconde.appels,
+        modele=seconde.modele or premier.modele,
+        relance=True,
+        valides=frozenset(premier.valides | seconde.valides),
+        non_eprouves=frozenset(premier.non_eprouves | seconde.non_eprouves),
+        incoherents=incoherents,
+        reparations=frozenset(reparations),
+    )
 
 
 def _relancer(
@@ -444,6 +769,8 @@ def _relancer(
     regles: Sequence[Rule],
     seed: int | None,
     premier: Temoignage,
+    controle: bool = False,
+    sandbox: object | None = None,
 ) -> Temoignage:
     """La seconde tentative : elle dit au modele ce qui a ete refuse, et pourquoi.
 
@@ -454,6 +781,9 @@ def _relancer(
         spec, provider, entrypoint=entrypoint, objectif=objectif, regles=regles,
         seed=None if seed is None else seed + 1,
         rappel=_rappel(list(premier.refuses.values()), premier.motif),
+        # La RELANCE garde le mode : une seconde tentative sans le controle rendrait un temoin
+        # non mis a l'epreuve apres avoir refuse le premier pour cette raison precise.
+        controle=controle, sandbox=sandbox,
     )
     appels = premier.appels + seconde.appels
     if seconde.tests or seconde.aveux:

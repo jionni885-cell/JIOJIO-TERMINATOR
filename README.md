@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1209 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1223 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -274,6 +274,30 @@ que du « best-of-N » déguisé.
 > niveau des meilleures*. Le harness ne remplace pas un meilleur modèle ; il
 > récupère ce qu'un modèle moyen sait déjà faire mais ne sait pas **choisir**. Et
 > c'est précisément là que l'écart était le plus grand.
+
+**La mesure archivée.** Le tableau ci-dessus est une série de relevés ; voici celui qui est
+conservé, avec son régime et ses intervalles — `evidence/bench-simule-skill-035.md`, produit par
+le commit `ab2d3ff`, 5 tâches × 5 tirages, compétence simulée 0,35 :
+
+| Configuration | Réussite | IC95 | Appels |
+|---|---|---|---|
+| modèle brut (1 appel) | 32 % | — | 1,0 |
+| échantillonnage seul (best-of-3) | 76 % | — | 3,0 |
+| **contrôle : autant d'appels, 0 vérification** | 76 % | — | 3,6 |
+| **vérification exécutable + reprise** | **100 %** | — | 3,6 |
+| JIO complet (livraison auditée) | 100 % | — | 3,6 |
+| sans oracle : traducteur fidèle | 96 % | [80 % ; 99 %] | 4,6 |
+| sans oracle : traducteur à 50 % | 80 % | [61 % ; 91 %] | 5,6 |
+| sans oracle : traducteur faux | 0 % | [0 % ; 13 %] | 5,0 |
+
+Gain total du harness : **+68,0 points**, IC95 **[+53,2 ; +91,7]** (la littérature mesure +15 à
++54 sur des modèles réels). Écart apparié vérification contre échantillonnage à budget d'appels
+égal : **+24,0 points**, intervalle excluant zéro.
+
+Et, dans les trois bras sans oracle — le cas de **toute** mission réelle, où personne ne fournit
+le test : **0 erreur livrée sans réserve**, 25 abstentions (le système refuse de livrer quand il
+ne peut pas prouver), et 6 candidats **corrects** rejetés (le coût, nommé, d'un traducteur
+imparfait).
 
 **Ce que ces chiffres ne disent pas.** Les réponses sont **simulées** : le chiffre
 mesure l'architecture, pas un modèle réel. La littérature mesure le harness sur
@@ -830,10 +854,18 @@ c'est là que se logent les hallucinations, dans du texte que personne ne recalc
 machinerie : un vérificateur qui se présente comme un prouveur.
 
 ```
-jio run --prose --simulate                 # banc de documents, sans clé API
+jio run --prose --simulate                    # banc de documents, sans clé API
 jio run "rédige le rapport de perf" --prose   # mission réelle
-jio bench --prose --runs 5                 # mesure : aveugle vs vérifié
+jio bench --prose --runs 5                    # mesure : aveugle vs vérifié
+jio bench --prose --rapport evidence/bench-prose-skill-020.md   # …et on l'archive
 ```
+
+**La mesure est archivée** (`evidence/bench-prose-skill-020.md`, document simulé, 5 tirages) :
+compétence 0,00 → **0 %** de justes, 5 documents livrés **sous réserve nommée**, 0 silencieux ;
+compétence 0,35 → **100 %**, 0 sous réserve, 0 silencieux. Le chiffre qui compte est le même que
+pour le code : **0 erreur livrée sans rien dire**. Le banc de code avait son archivage ; celui des
+documents l'acceptait puis l'ignorait — un drapeau qui ne fait rien donne l'illusion d'un
+enregistrement, et c'est la même famille de défaut que les autres corrigés ici.
 
 | Étage | Sur du code | Sur un document |
 |---|---|---|
@@ -1436,7 +1468,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1209 tests verts -> 1209 tests verts
+         - README.md ligne 15 : 1223 tests verts -> 1223 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2930,6 +2962,34 @@ Le modèle entraîné n'est pas versionné (un binaire de plusieurs mégaoctets 
 un historique) : ce qui est versionné, c'est la **graine**, la **configuration**, le **corpus**
 (le dépôt) et le **journal d'entraînement** — de quoi le refaire et vérifier son empreinte.
 
+### Première mesure sur ce modèle : ce qu'elle dit, et ce qu'elle ne dit pas
+
+`jio bench --provider openai:modele-local-char`, 5 tâches, commit `e951a5f` :
+
+| bras | réussite | IC95 | appels/tâche |
+| --- | ---: | ---: | ---: |
+| modèle brut (1 appel) | 0,0 % | [0 % ; 43 %] | 1,0 |
+| échantillonnage seul (best-of-3) | 0,0 % | [0 % ; 43 %] | 3,0 |
+| contrôle apparié (même budget, 0 vérification) | 0,0 % | [0 % ; 43 %] | 3,0 |
+| JIO complet (livraison auditée) | 0,0 % | [0 % ; 43 %] | 3,0 |
+
+```
+candidats CORRECTS rejetes    : 0
+ERREURS LIVEES SANS RESERVE   : 0      <- le seul chiffre qui doit rester a zero
+exploits d'integrite detectes : 0
+```
+
+Ce que ces zéros disent : face à un générateur **inconnu de lui**, dont le harness n'a pas
+choisi les erreurs, le dispositif n'a **rien livré de faux sans le dire**. C'est la propriété
+qu'on lui demandait, et elle est mesurée au lieu d'être espérée.
+
+Ce qu'ils ne disent pas, et il faut l'écrire aussi clairement : un modèle char-level de 1,9 M
+paramètres **ne produit pas de code correct**, donc cette mesure éprouve la *containment*, pas la
+*sélection*. Réussir à refuser du charabia est facile — le code ne compile même pas. La mesure
+qui compte pour un harness est la suivante : *garde-t-il un candidat juste, et refuse-t-il un
+candidat faux ?* Elle demande un modèle qui produit du code **plausible**, et c'est à quoi sert
+le second corpus (`--avec-banc`).
+
 ### Deux défauts trouvés en l'écrivant — et c'est la même leçon que partout ici
 
 1. **Un masque causal 4096×4096 partait dans le `state_dict`.** Mesure : un modèle de
@@ -2958,6 +3018,122 @@ jio ablation --sans-oracle --fidelite 0.6 --levers mutation,red-team,consensus,p
 ```
 
 Un chiffre sans son régime ne se compare pas.
+
+### Réparer l'INSTRUMENT, pas seulement le candidat
+
+Le constat précédent laissait la phrase la plus dure du dossier : *le moteur re-demande des
+**candidats** quand la preuve échoue ; il ne re-demande jamais l'**instrument***. Un système qui
+s'abstient toujours est sûr et inutile.
+
+La correction ne demande **aucune confiance supplémentaire**, et c'est ce qui la rend utilisable.
+Chaque témoin traduit doit maintenant venir avec une **implémentation de référence** et une
+**contrefaçon**, et le harness les **exécute** avant que le témoin serve à quoi que ce soit :
+
+```
+le test PASSE sur la référence fournie avec lui   -> sinon il se contredit ;
+le test ÉCHOUE sur la contrefaçon fournie avec lui -> sinon il ne prouve rien.
+```
+
+Un instrument refusé est **redemandé une fois**, en lui donnant le motif exact rendu par
+l'exécution — puis le fait est **journalisé** (`valides`, `incohérents`, `réparations`) et
+publié dans le rapport : un instrument réparé n'est pas l'instrument du premier essai.
+
+Il y a un **troisième état**, et c'est celui qui évite de casser le chemin existant : un modèle
+qui rend un test **sans** référence ni contrefaçon ne se contredit pas — il n'a pas fourni de
+quoi le mettre à l'épreuve. Le refuser ferait s'abstenir le moteur sur un simple **format de
+réponse**, c'est-à-dire sur rien. Ce témoin est donc accepté (il vaut mieux qu'aucune preuve),
+**nommé** `non éprouvé` dans le journal, et il ne compte jamais parmi les règles déclarées
+prouvées.
+
+Enfin, une **aveu n'est pas une panne et ne se repaie pas** : quand le modèle déclare une règle
+non testable, cette réponse est mémorisée comme savoir négatif — la mission suivante ne repose
+pas la question. Elle ne devient jamais une preuve pour autant : une règle dont le témoin est un
+aveu reste non couverte, exactement comme si l'aveu venait d'arriver.
+
+Le garde-fou qui rend l'idée sûre : *réparer* ne doit jamais devenir *redemander jusqu'à ce
+qu'un témoin laisse passer*. C'est pour ça que la validation est **mécanique** (deux exécutions
+dans le bac à sable, mêmes règles que pour les artefacts : aucun réseau, délai, confinement) et
+qu'un témoin aveugle — qui passe sur les deux implémentations — est refusé **quelle que soit la
+bonne volonté du modèle**. Un test le vérifie nommément : le modèle peut répéter un témoin
+complaisant autant de fois qu'il veut, rien n'est accepté.
+
+**L'effet est mesuré, sur le même banc et la même graine** (15 missions, 5 tâches, 3 graines,
+`--sans-oracle --fidelite 0.6`, leviers par défaut) :
+
+| | témoins naïfs (avant) | témoins auto-validés (après) |
+|---|---|---|
+| missions justes | 9 / 15 | **13 / 15** |
+| livrées **sans** réserve | 0 | 0 |
+| livrées **avec** réserve nommée | 0 | **15 / 15** |
+| **abstentions** | **15 / 15** | **0 / 15** |
+| erreurs silencieuses | 0 | **0** |
+| appels par mission | 3,7 | 5,2 |
+| leviers distinguables | 0 | **1** (`preuve`, p = 0,031) |
+
+Le chiffre à lire est celui du milieu. Le moteur ne s'abstenait pas parce qu'il était prudent :
+il s'abstenait parce que **l'instrument fourni mentait**, et il n'avait aucun moyen de le lui
+dire. Un témoin qui ne peut pas échouer ne prouve rien, et un moteur qui refuse tous les témoins
+ne peut rien livrer. Une fois les témoins exécutés **avant** d'être crus, l'abstention tombe à
+zéro, les missions justes montent de 9 à 13, et le levier `preuve` — muet jusque-là — devient
+mesurable : sans lui, 6 missions justes sur 15 en moins (40 points, IC95 [15 ; 65], p = 0,031).
+
+Les deux lignes du milieu comptent autant que la première. Dans les deux régimes, **aucune
+erreur n'est livrée sans réserve** et **aucune erreur n'est silencieuse** : le progrès n'a pas
+été acheté en relâchant l'invariant. Ce qui change, c'est que le système *livre* — avec une
+réserve nommée quand il n'a pas pu prouver — au lieu de tout bloquer.
+
+Le prix est nommé, lui aussi : **5,2 appels par mission au lieu de 3,7**, parce que chaque témoin
+coûte deux exécutions et qu'un instrument refusé est redemandé une fois. C'est un coût
+d'instrument, pas de candidat — il ne dépend pas de la taille du modèle et il est borné.
+
+Ce que le lecteur voit, et ce que la mémoire n'a **pas le droit** de faire :
+
+* le rapport humain a une section `INSTRUMENT` : « *N témoin(s) mis à l'épreuve* », « *accepté
+  sans l'être* », « *refusé* ». `preuves 2/2 règles satisfaites` ne veut pas dire la même chose
+  dans les trois cas, et c'est écrit juste en dessous de la ligne qui l'affirme ;
+* **la mémoire ne blanchit pas.** Un témoin entre dans la bibliothèque avec la mention « mis à
+  l'épreuve » ou sans elle, et il en ressort avec la même. Sans ce champ, la bibliothèque servait
+  du même air un témoin qui avait prouvé qu'il peut échouer et un témoin seulement accepté —
+  c'est-à-dire qu'elle *augmentait* la confiance de ce qu'elle servait. Par défaut, une entrée
+  dont on ne sait rien ressort `non éprouvé` : rien n'est prouvé par omission.
+
+**Et c'est là que le banc d'ablation a fait son travail.** La première version de ce contrôle
+refusait *trop tôt* : une règle dont l'instrument était refusé n'avait plus de témoin du tout, et
+plus aucun mécanisme ne la déclarait non couverte. Mesure : sur `safe_divide` sans oracle, la
+mission est repartie « livrée **sans** réserve » sur **un** témoin valide sur **quatre** règles,
+avec un artefact **faux** — l'invariant du dépôt, cassé par une amélioration. Un témoin que
+l'ancien régime acceptait déclenchait, en échouant sur tous les candidats, la réserve qui
+protégeait le rapport ; en le refusant plus tôt, on avait supprimé ce signal.
+
+La correction est dans la même doctrine : une règle dont l'instrument est **refusé** n'a aucun
+témoin, donc elle est **NON COUVERTE** — nommée dans le rapport, et la livraison porte la
+réserve. Le chiffre est revenu à **0 erreur silencieuse**, et un test le verrouille.
+
+### Une règle sans témoin n'est pas une règle tenue
+
+Même famille de défaut, trouvée au tour suivant — et cette fois par le **banc**, pas par
+l'ablation. `jio bench` a affiché `ERREURS LIVREES SANS RESERVE : 1`, un chiffre qui doit rester
+à **zéro**. La mission coupable, reproduite à la main :
+
+```
+median, graine 4, sans oracle
+  R-001, R-002, R-004 : témoins traduits, mis à l'épreuve, satisfaits par l'artefact livré
+  R-003               : le modèle AVOUE ne pas savoir la tester (aucune contrefaçon trouvée)
+  verdict             : delivered — sans réserve
+  vérification externe : l'artefact ÉCHOUE sur R-003 (IndexError sur liste vide)
+```
+
+Le système avait donc livré « sans réserve » un artefact qui échouait précisément sur la seule
+règle dont personne n'avait jamais parlé. Sa propre mesure le dit : un aveu est une **absence de
+preuve**, pas une preuve d'absence. Une règle sans témoin exécutable — instrument refusé, témoin
+rejeté par la porte, **ou aveu du modèle** — est maintenant déclarée **NON COUVERTE**, et la
+mention « livré sans réserve » devient impossible.
+
+Deuxième conséquence, tirée de la même mesure : **la mémoire n'accepte que des témoins mis à
+l'épreuve**. Avant, elle capitalisait aussi les témoins seulement *acceptés* (l'ancien format) et
+les resservait ensuite sans dire qu'ils n'avaient rien prouvé — elle *augmentait* la confiance de
+ce qu'elle servait. Désormais un témoin non éprouvé ne se mémorise pas : la mission suivante
+**repaie** sa traduction. C'est un coût, et il est choisi.
 
 ### Ce que ce régime a montré, et qui n'était pas prévu
 

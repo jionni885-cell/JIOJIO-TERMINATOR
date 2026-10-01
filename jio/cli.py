@@ -386,6 +386,22 @@ def render_report(
             mark = _c("ok", "ok", color) if w.ok else _c("KO", "bad", color)
             lines.append(f"    [{mark}] {w.rule_id:<8} {w.command[:58]}")
 
+    # L'INSTRUMENT, c'est-a-dire ce sur quoi la section PREUVES s'appuie. « 2/2 regles
+    # satisfaites » ne dit pas la meme chose selon que les temoins ont ete EXECUTES sur une
+    # reference et une contrefacon (ils peuvent echouer, donc ils prouvent), acceptes sans
+    # mise a l'epreuve, ou refuses. Ces constats existaient deja dans le rapport et dans le
+    # journal, mais le rendu humain ne montrait que les constats BLOQUANTS : le lecteur voyait
+    # l'affirmation sans sa nuance. C'est la seule ligne qui manquait a la transparence.
+    instrument = [f for f in report.findings if f.agent == "temoins" and not f.blocking]
+    if instrument:
+        lines.append("")
+        lines.append(_c("  INSTRUMENT (ce qui prouve, et a quel prix)", "bold", color))
+        for f in instrument[:4]:
+            marque = _c("!!", "warn", color) if f.severity.value in ("medium", "high") else "  "
+            lines.append(f"    {marque} {f.message[:150]}")
+        if len(instrument) > 4:
+            lines.append(f"        (+{len(instrument) - 4} autre(s) constat(s) : `jio trace`)")
+
     blocking = [f for f in report.findings if f.blocking]
     if blocking:
         lines.append("")
@@ -816,9 +832,12 @@ def _bench_prose(args: argparse.Namespace) -> int:
     print("    bras                                   justes       IC95   comparaison")
     print("    -------------------------------------- -------  ----------  --------------------")
     total = {"essais": 0, "silencieux": 0, "sous_reserve": 0, "abstentions": 0}
+    debut = time.monotonic()
+    mesures: list[tuple[float, object]] = []
     for skill in sorted({0.0, 0.35, float(args.skill)}):
         mesure = mesurer_prose(skill=skill, runs=args.runs, max_rounds=args.rounds,
                                racine=Path.cwd())
+        mesures.append((skill, mesure))
         bas, haut = mesure.intervalle()
         resume = mesure.resume(f"competence {skill:.2f}")
         # L'IC95 est insere au bon endroit dans une ligne deja longue : on ne reformate
@@ -845,7 +864,125 @@ def _bench_prose(args: argparse.Namespace) -> int:
     print("      calcul comme prouve.")
     print("    - les documents sont SIMULES : ce chiffre mesure l'architecture.")
     print()
+    # LE RAPPORT DEMANDE DOIT ETRE ECRIT — sinon `--rapport` est un drapeau qui ne fait
+    # rien, c'est-a-dire un mensonge par omission. Mesure : `jio bench --prose --rapport f.md`
+    # affichait son tableau puis sortait SANS ecrire `f.md`, code 2. Le banc de code avait son
+    # archivage ; celui des documents ne l'avait pas, et personne ne pouvait comparer deux
+    # mesures de prose.
+    if getattr(args, "rapport", ""):
+        chemin = _ecrire_rapport_prose(args, mesures, time.monotonic() - debut)
+        print(f"  RAPPORT ECRIT : {chemin}")
+        print(f"    JSON a cote  : {Path(chemin).with_suffix('.json')}")
+        print()
     return 0 if total["silencieux"] == 0 else 1
+
+
+def _ecrire_rapport_prose(args: argparse.Namespace, mesures, duree_s: float) -> Path:
+    """Archive une mesure de PROSE : Markdown lisible + JSON comparable.
+
+    Meme doctrine que le rapport du duel : il date la mesure, nomme son regime, donne les
+    intervalles, et repete le chiffre qui doit rester a zero. Un chiffre qui ne vit que dans
+    un terminal ne se compare pas.
+    """
+    import json as _json
+
+    def _commit() -> str:
+        import subprocess
+
+        try:
+            sortie = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"], cwd=Path.cwd(),
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return "inconnu"
+        return sortie.stdout.strip() if sortie.returncode == 0 else "inconnu"
+
+    from .bench.prose import PROSE_TASKS
+
+    horodatage = time.strftime("%Y-%m-%d %H:%M:%S %z")
+    bras = []
+    for skill, mesure in mesures:
+        bas, haut = mesure.intervalle()
+        bras.append({
+            "competence": skill,
+            "justes": round(mesure.jio * mesure.essais),
+            "essais": mesure.essais,
+            "taux": round(mesure.jio, 4),
+            "ic95": [round(bas, 4), round(haut, 4)],
+            "aveugle": round(mesure.aveugle, 4),
+            "aveugle_best_of": round(mesure.aveugle_best_of, 4),
+            "silencieuses": mesure.erreurs_silencieuses,
+            "sous_reserve": mesure.sous_reserve,
+            "abstentions": mesure.abstentions,
+            "appels": round(mesure.appels, 2),
+        })
+    silencieuses = sum(b["silencieuses"] for b in bras)
+    donnees = {
+        "horodatage": horodatage,
+        "genre": "prose",
+        "modele": "simule",
+        "note_modele": "documents simules ; la VERIFICATION de leurs affirmations, elle, est reelle",
+        "competence_simulee": float(args.skill),
+        "tirages": int(args.runs),
+        "taches": len(PROSE_TASKS),
+        "tours_max": int(args.rounds),
+        "commit": _commit(),
+        "duree_s": round(duree_s, 1),
+        "bras": bras,
+        "erreurs_silencieuses": silencieuses,
+    }
+    lignes = [
+        "# Duel sur DOCUMENTS : ce que le harness apporte, sur des rapports",
+        "",
+        f"- **date** : {horodatage}",
+        f"- **modele mesure** : `simule` — {donnees['note_modele']}",
+        f"- **taches** : {len(PROSE_TASKS)} document(s) · **{args.runs} tirage(s)** · "
+        f"{args.rounds} tour(s) de boucle maximum",
+        f"- **duree** : {duree_s:.1f} s · **commit** : `{donnees['commit']}`",
+        "",
+        "## Les bras, avec leurs intervalles",
+        "",
+        "| competence | justes | IC95 | aveugle | best-of (oracle) | SILENCIEUX | "
+        "sous reserve | abstentions | appels |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for b in bras:
+        lignes.append(
+            f"| {b['competence']:.2f} | {b['taux']:.1%} | "
+            f"[{b['ic95'][0]:.0%} ; {b['ic95'][1]:.0%}] | {b['aveugle']:.1%} | "
+            f"{b['aveugle_best_of']:.1%} | **{b['silencieuses']}** | {b['sous_reserve']} | "
+            f"{b['abstentions']} | {b['appels']} |"
+        )
+    lignes += [
+        "",
+        f"**Erreurs livrees SANS RIEN DIRE : {silencieuses}** — le seul chiffre qui doit rester",
+        "a zero dans tout le projet. Un document FAUX livre *sous reserve nommee* n'est pas un",
+        "silence : le systeme a dit ce qu'il ne pouvait pas garantir.",
+        "",
+        "## Ce que cette mesure ne dit pas",
+        "",
+        "- un document peut etre FAUX sans qu'aucune de ses affirmations ne le soit : la",
+        "  verification porte sur ce qui est CALCULABLE, pas sur le sens ;",
+        "- a competence 0,00, tous les tirages sont des distracteurs : le systeme livre alors",
+        "  sous reserve, ou s'abstient — jamais en presentant un faux calcul comme prouve ;",
+        "- les documents sont SIMULES : ce chiffre mesure l'architecture, pas un modele reel.",
+        "",
+        "## Reproduction",
+        "",
+        "```sh",
+        f"jio bench --prose --runs {args.runs} --rounds {args.rounds} "
+        f"--rapport {getattr(args, 'rapport', 'evidence/bench-prose.md')}",
+        "```",
+        "",
+    ]
+    cible = Path(getattr(args, "rapport"))
+    cible.parent.mkdir(parents=True, exist_ok=True)
+    cible.write_text("\n".join(lignes), encoding="utf-8")
+    cible.with_suffix(".json").write_text(
+        _json.dumps(donnees, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+    return cible
 
 
 class _Progression:

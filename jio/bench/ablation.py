@@ -621,7 +621,13 @@ class RapportAblation:
             "graines": self.graines,
             "complet": {
                 "justes": self.complet.justes,
+                # TROIS etats de sortie, pas deux. `livrees` = livree SANS reserve ; `reservees`
+                # = livree AVEC reserve nommee (le systeme a dit ce qu'il ne couvrait pas) ;
+                # `abstentions` = rien livre. Publier seulement `livrees` faisait lire « le
+                # moteur ne livre rien » la ou il livrait 13 artefacts sur 15 en nommant ses
+                # reserves — et une mesure qui cache un etat ne se compare pas.
                 "livrees": self.complet.livrees,
+                "reservees": self.complet.reservees,
                 "silencieuses": self.complet.silencieuses,
                 "abstentions": self.complet.abstentions,
                 "appels": round(self.complet.appels, 2),
@@ -632,7 +638,10 @@ class RapportAblation:
                     "sans": c.sans,
                     "justes_avec": c.justes_avec,
                     "justes_sans": c.justes_sans,
+                    "livrees_avec": c.livrees_avec,
                     "livrees_sans": c.livrees_sans,
+                    "reservees_avec": c.reservees_avec,
+                    "reservees_sans": c.reservees_sans,
                     "abstentions_sans": c.abstentions_sans,
                     "silencieuses_avec": c.silencieuses_avec,
                     "silencieuses_sans": c.silencieuses_sans,

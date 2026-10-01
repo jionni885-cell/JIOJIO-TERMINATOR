@@ -87,6 +87,18 @@ class EngineConfig:
     #: modele, precis et executable. Cout : une derivation STATIQUE (aucun reseau) et
     #: une passe de bac a sable par regle trouvee, memorisee par artefact.
     self_check: bool = True
+    #: EXIGER que chaque temoin traduit PROUVE QU'IL PEUT ECHOUER : le modele doit fournir,
+    #: avec son test, une implementation de reference et une contrefacon, et le harness
+    #: execute les deux (le test doit passer sur la reference, echouer sur la contrefacon).
+    #: Un temoin qui se contredit est refuse puis REDEMANDE une fois, avec son motif de refus.
+    #:
+    #: Mesure a l'origine : sans ce controle, un traducteur imparfait (le regime reel d'une
+    #: mission sans oracle) faisait echouer TOUS les candidats, y compris les bons — 15
+    #: missions sur 15 en abstention a 60 % de fidelite. Le moteur re-demandait des
+    #: CANDIDATS quand la preuve echouait ; il ne re-demandait jamais l'INSTRUMENT.
+    #: Cout : deux executions dans le bac a sable par temoin (aucun appel de modele), plus
+    #: une passe de reparation bornee aux regles refusees.
+    witness_control: bool = True
     #: Traduire les regles de la specification en TEMOINS EXECUTABLES quand la mission
     #: n'en fournit aucun (toute mission reelle : le banc, lui, a ses oracles).
     #: Sans cela, la seule preuve executable est l'auto-coherence — l'artefact peut
@@ -142,6 +154,17 @@ class WorkItem:
 # --------------------------------------------------------------------------- #
 # Moteur
 # --------------------------------------------------------------------------- #
+
+
+def _bac_a_sable(prover: object) -> object | None:
+    """Le bac a sable du verificateur, quand il en a un.
+
+    L'instrument auto-valide doit EXECUTER (le test sur sa reference, puis sur sa contrefacon)
+    pour prouver qu'il peut echouer. On reutilise le bac a sable du verificateur — meme
+    confinement, meme delai, aucun reseau — plutot que d'en ouvrir un second : deux bacs a
+    sable, ce serait deux politiques de securite, et un jour deux comportements.
+    """
+    return getattr(prover, "sandbox", None)
 
 
 def _motif_consensus(outcome: object | None) -> str:
@@ -361,6 +384,13 @@ class Engine:
             # documentation en ne faisant rien de la mission (voir spec/witness.py).
             temoignage = self._temoins_de_la_spec(spec, work, usage)
             checks: dict[str, str] = dict(self._checks_en_vigueur(work))
+            if rnd == 0:
+                # Le constat sur l'INSTRUMENT s'ecrit meme quand la memoire a servi les
+                # temoins (0 appel) : « 2/2 regles satisfaites » ne dit pas la meme chose selon
+                # que les temoins ont ete mis a l'epreuve, acceptes sans l'etre, ou refuses.
+                instrument = self._avertir_sur_l_instrument(temoignage)
+                if instrument is not None:
+                    warnings.append(instrument)
             if rnd == 0 and temoignage.appels:
                 # PROVENANCE DE LA PREUVE, toujours declaree : le rapport doit dire sur
                 # QUOI il s'appuie. Un artefact prouve par des temoins traduits par un
@@ -604,6 +634,58 @@ class Engine:
             )
         self._learn(mission, report)
         return report
+
+    @staticmethod
+    def _avertir_sur_l_instrument(temoignage: Temoignage) -> Finding | None:
+        """Ce que l'INSTRUMENT a subi : mis a l'epreuve, refuse, repare.
+
+        POURQUOI c'est un constat et pas un detail : un temoin VALIDE a prouve qu'il peut
+        echouer (il a ete execute sur sa reference et sur sa contrefacon) ; un temoin REFUSE
+        s'est contredit et n'a juge personne ; un temoin REPARE est le produit d'un second
+        essai, parce que le premier n'etait pas exploitable. Trois etats differents, trois
+        niveaux de confiance differents — les confondre reviendrait a dire « 3/3 regles
+        satisfaites » sans dire avec quoi on les a mesurees.
+        """
+        faits: list[str] = []
+        if temoignage.valides:
+            faits.append(
+                f"{len(temoignage.valides)} temoin(s) MIS A L'EPREUVE (le test passe sur sa "
+                "reference et echoue sur sa contrefacon)"
+            )
+        elif temoignage.non_eprouves:
+            # Le cas de la MEMOIRE, et il doit etre dit : ces temoins ne sont pas neufs, ils
+            # ont deja servi. Mais on n'a pas montre qu'ils peuvent echouer — donc ils jugent
+            # sans prouver, et le rapport ne peut pas les compter comme des preuves etablies.
+            faits.append(
+                f"{len(temoignage.non_eprouves)} temoin(s) ACCEPTE(S) SANS ETRE MIS A "
+                "L'EPREUVE : executable(s), mais rien n'a montre qu'ils peuvent echouer"
+            )
+        if temoignage.reparations:
+            faits.append(
+                "INSTRUMENT REPARE pour "
+                + ", ".join(sorted(temoignage.reparations))
+                + " : la premiere reponse se contredisait, elle a ete redemandee"
+            )
+        if temoignage.incoherents:
+            faits.append(
+                "temoin(s) REFUSE(S) apres reparation pour "
+                + ", ".join(sorted(temoignage.incoherents))
+                + " (regle declaree NON PROUVEE, jamais supposee satisfaite)"
+            )
+        if temoignage.non_eprouves and temoignage.valides:
+            faits.append(
+                f"dont {len(temoignage.non_eprouves)} NON EPROUVE(S) ("
+                + ", ".join(sorted(temoignage.non_eprouves))
+                + ") : ils jugent sans avoir montre qu'ils peuvent echouer"
+            )
+        if not faits:
+            return None
+        return Finding(
+            agent="temoins",
+            severity=Severity.MEDIUM if (temoignage.incoherents or temoignage.reparations)
+            else Severity.LOW,
+            message=" ; ".join(faits) + ".",
+        )
 
     @staticmethod
     def _avertir_sur_les_temoins(temoignage: Temoignage) -> Finding:
@@ -1075,20 +1157,43 @@ class Engine:
         objectif = work.objective or spec.mission
 
         # -- 1. la bibliotheque d'abord : une traduction deja VALIDEE ne se repaie pas.
-        memorises = self._rappeler_les_temoins(spec, objectif)
         provider = self.spec_compiler.provider or (self.generators[0] if self.generators else None)
+        memorises = self._rappeler_les_temoins(spec, objectif)
+        # Les AVEUX se reprennent aussi. Un modele qui a declare une regle non testable ne
+        # changera pas d'avis parce qu'on lui repose la question : repayer cet appel a chaque
+        # mission identique coute sans rien apprendre. La regle reste NON PROUVEE.
+        aveux_memorises = self._rappeler_les_aveux(spec, objectif, provider)
         manquantes = [r for r in spec.rules
-                      if r.kind is not RuleKind.ADVISORY and r.id not in memorises]
-        if memorises and not manquantes:
+                      if r.kind is not RuleKind.ADVISORY and r.id not in memorises
+                      and r.id not in aveux_memorises]
+        if (memorises or aveux_memorises) and not manquantes:
             # Reprise COMPLETE : aucun appel au modele, la memoire suffit.
             self._temoins_memorises = True
-            self._temoignage = Temoignage(tests=memorises, modele="bibliotheque")
+            # L'ETAT DE L'INSTRUMENT NE SE PERD PAS EN CHEMIN. Un temoin entre dans la memoire
+            # avec la mention « mis a l'epreuve » ou sans elle, et il ressort avec la meme :
+            # sinon la memoire AUGMENTERAIT la confiance de ce qu'elle sert, ce qui est la
+            # definition d'un blanchiment — et un rapport qui dit « reprouve » sans le dire
+            # serait exactement l'affirmation que ce depot refuse.
+            eprouves = self._rappeler_les_eprouves(spec, objectif)
+            self._temoignage = Temoignage(
+                tests=memorises, aveux=aveux_memorises, modele="bibliotheque",
+                valides=frozenset(rid for rid in memorises if eprouves.get(rid, False)),
+                non_eprouves=frozenset(rid for rid in memorises if not eprouves.get(rid, False)),
+            )
             self.journal.append(
                 "temoins",
                 {
                     "regles": len(spec.rules),
                     "traduites": sorted(memorises),
                     "tests": {k: v[:400] for k, v in memorises.items()},
+                    "aveux": {k: v[:200] for k, v in aveux_memorises.items()},
+                    # L'ETAT DE L'INSTRUMENT FAIT PARTIE DE LA REPONSE, meme quand la memoire
+                    # n'a rien paye. Sans ces deux listes, `jio trace` montrait un temoin
+                    # repris sans dire s'il avait ete mis a l'epreuve — la memoire pouvait
+                    # donc blanchir un temoin simplement accepte, sans que rien ne le montre.
+                    "valides": sorted(rid for rid in memorises if eprouves.get(rid, False)),
+                    "non_eprouves": sorted(rid for rid in memorises
+                                           if not eprouves.get(rid, False)),
                     "source": "bibliotheque",
                     "appels": 0,
                 },
@@ -1104,20 +1209,38 @@ class Engine:
             partielle = Spec(mission=spec.mission, rules=tuple(manquantes),
                              under_specified=spec.under_specified,
                              acceptance=spec.acceptance)
+            manquantes = [r for r in manquantes if r.id not in aveux_memorises]
+            partielle = Spec(mission=spec.mission, rules=tuple(manquantes),
+                             under_specified=spec.under_specified,
+                             acceptance=spec.acceptance)
             frais = traduire(partielle, provider, entrypoint=work.entrypoint,
-                             objectif=objectif)
+                             objectif=objectif, controle=self.config.witness_control,
+                             sandbox=_bac_a_sable(self.prover))
             if frais.tests:
                 self._temoins_memorises = False
             temoignage = Temoignage(
                 tests={**memorises, **frais.tests},
-                aveux=dict(frais.aveux), refuses=dict(frais.refuses),
+                aveux={**aveux_memorises, **frais.aveux}, refuses=dict(frais.refuses),
                 motif=frais.motif, appels=frais.appels, modele=frais.modele,
+                # Une traduction REPRISE de la bibliotheque a ete mise a l'epreuve le jour
+                # ou elle y est entree : elle reste `valide`. Seules les fraiches peuvent
+                # arriver `non eprouvees`.
+                valides=frozenset(frais.valides),
+                non_eprouves=frozenset(frais.non_eprouves),
+                incoherents=dict(frais.incoherents),
             )
         else:
             temoignage = traduire(
                 spec, provider, entrypoint=work.entrypoint, objectif=objectif,
+                controle=self.config.witness_control,
+                sandbox=_bac_a_sable(self.prover),
             )
         self._temoignage = temoignage
+        if not self._temoins_memorises and temoignage.aveux:
+            # Un AVEU s'ecrit tout de suite, meme si la mission finit en abstention : ce n'est
+            # pas une preuve, donc il n'y a pas de porte de livraison a franchir, et le perdre
+            # ferait repayer la meme question a la mission suivante.
+            self._memoriser_les_aveux(spec, objectif, temoignage, provider)
         usage["calls"] = usage.get("calls", 0) + temoignage.appels
         self.journal.append(
             "temoins",
@@ -1128,6 +1251,10 @@ class Engine:
                 # lui, « jio trace » montrerait un vote sans montrer la question.
                 # Borne a 400 caracteres par temoin : c'est un journal, pas un depot.
                 "tests": {k: v[:400] for k, v in temoignage.tests.items()},
+                # L'ETAT DE L'INSTRUMENT. `non_eprouves` est le troisieme etat : un temoin
+                # accepte (il juge) sans avoir ete mis a l'epreuve — l'ancien format. Il ne
+                # doit jamais etre confondu avec `valides`, et c'est pour ca qu'il est ICI.
+                "non_eprouves": sorted(temoignage.non_eprouves),
                 "aveux": {k: v[:200] for k, v in temoignage.aveux.items()},
                 "refuses": {k: v[:200] for k, v in temoignage.refuses.items()},
                 "motif": temoignage.motif,
@@ -1137,6 +1264,12 @@ class Engine:
                 # la comparaison a budget egal — la seule qui compte — ininterpretable.
                 "relance": temoignage.relance,
                 "modele": temoignage.modele,
+                # Un temoin VALIDE a passe deux executions : il a prouve qu'il peut echouer.
+                # Un instrument REPARE est un fait de la mesure : le premier essai se
+                # contredisait, et le rapport doit pouvoir le dire.
+                "valides": sorted(temoignage.valides),
+                "incoherents": {k: v[:200] for k, v in temoignage.incoherents.items()},
+                "reparations": sorted(temoignage.reparations),
             },
         )
         return temoignage
@@ -1161,6 +1294,64 @@ class Engine:
             return {}
         return {k: v for k, v in rappeles.items() if k in empreintes}
 
+    def _rappeler_les_eprouves(self, spec: Spec, objectif: str) -> dict[str, bool]:
+        """Regle -> le temoin repris de la bibliotheque avait-il ete mis a l'epreuve ?"""
+        if self.bibliotheque is None:
+            return {}
+        empreintes = {
+            r.id: empreinte_regle(r.id, r.statement)
+            for r in spec.rules
+            if r.kind is not RuleKind.ADVISORY
+        }
+        try:
+            return self.bibliotheque.rappeler_eprouves(objectif, empreintes)
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _rappeler_les_aveux(
+        self, spec: Spec, objectif: str, provider: object | None,
+    ) -> dict[str, str]:
+        """Les regles que ce modele avait deja declarees NON TESTABLES, pour cette mission.
+
+        Meme cle que les temoins (empreinte de l'objectif, empreinte de l'enonce) : une
+        specification qui bouge d'un mot ne retrouve rien, et un AUTRE modele n'herite pas de
+        l'aveu du precedent.
+        """
+        if self.bibliotheque is None:
+            return {}
+        empreintes = {
+            r.id: empreinte_regle(r.id, r.statement)
+            for r in spec.rules
+            if r.kind is not RuleKind.ADVISORY
+        }
+        modele = str(getattr(provider, "model", "") or "")
+        try:
+            rappeles = self.bibliotheque.rappeler_aveux(objectif, empreintes, modele)
+        except Exception:  # noqa: BLE001 — une memoire defaillante ne bloque pas une mission
+            return {}
+        return {k: v for k, v in rappeles.items() if k in empreintes}
+
+    def _memoriser_les_aveux(
+        self, spec: Spec, objectif: str, temoignage: Temoignage, provider: object | None,
+    ) -> int:
+        """Ecrit les aveux frais. Ils ne Prouvent rien : ils evitent une question deja posee."""
+        if self.bibliotheque is None or not temoignage.aveux:
+            return 0
+        empreintes = {
+            r.id: empreinte_regle(r.id, r.statement)
+            for r in spec.rules
+            if r.kind is not RuleKind.ADVISORY
+        }
+        try:
+            return int(self.bibliotheque.retenir_aveux(
+                objectif=objectif,
+                empreintes=empreintes,
+                aveux=dict(temoignage.aveux),
+                modele=str(getattr(provider, "model", "") or ""),
+            ))
+        except Exception:  # noqa: BLE001
+            return 0
+
     def _conserver_les_temoins(self, spec: Spec, work: WorkItem, report: MissionReport) -> int:
         """Alimente la bibliotheque — uniquement sur une livraison PROUVEE.
 
@@ -1172,7 +1363,22 @@ class Engine:
             return 0
         if self._temoins_memorises or self._temoignage.modele == "bibliotheque":
             return 0
-        if report.status is not MissionStatus.DELIVERED or not self._temoignage.tests:
+        # CE QUI ENTRE DANS LA MEMOIRE, et rien d'autre : un temoin MIS A L'EPREUVE, issu d'une
+        # mission qui a bien ete livree (avec ou sans reserve).
+        #
+        # Deux corrections par rapport a la version precedente, toutes les deux imposees par la
+        # mesure : (1) la reserve n'est plus un motif d'exclusion — depuis que « une regle sans
+        # temoin » declenche la reserve, exclure les livraisons reservees viderait la memoire de
+        # ses temoins pourtant valides ; (2) on ne stocke plus les temoins NON EPROUVES. C'est
+        # la meme regle qu'a l'entree du raisonnement : un temoin dont on n'a pas montre qu'il
+        # peut echouer ne prouve rien, donc il n'a rien a faire dans une memoire de preuves.
+        if report.status not in (
+            MissionStatus.DELIVERED, MissionStatus.DELIVERED_WITH_RESERVATION
+        ):
+            return 0
+        a_retenir = {rid: t for rid, t in self._temoignage.tests.items()
+                     if rid in self._temoignage.valides}
+        if not a_retenir:
             return 0
         objectif = work.objective or spec.mission
         empreintes = {
@@ -1184,8 +1390,11 @@ class Engine:
             return int(self.bibliotheque.retenir(
                 objectif=objectif,
                 empreintes=empreintes,
-                correspondance=self._temoignage.tests,
+                correspondance=a_retenir,
                 mission_id=report.mission_id,
+                # Ce que la memoire a le droit de promettre plus tard : uniquement ce qui a
+                # ete mis a l'epreuve ici — et c'est deja le filtre d'entree.
+                eprouves={rid: True for rid in a_retenir},
             ))
         except Exception:  # noqa: BLE001
             return 0
@@ -1555,20 +1764,86 @@ class Engine:
                 ),
             ))
 
+        # LES REGLES SANS TEMOIN DU TOUT — parce que l'INSTRUMENT a ete refuse.
+        #
+        # Mesure a l'origine de ce bloc, et c'est une regression que la mesure d'ablation a
+        # attrapee : sur `safe_divide` (graine 0, sans oracle, fidelite 0.6), le controle
+        # d'instrument a refuse les temoins de R-003 et R-004 (leur test echouait sur la
+        # reference fournie AVEC eux). L'ancien regime les acceptait, l'artefact les ratait,
+        # `temoins-non-discriminants` les declarait non prouves, et la livraison portait une
+        # reserve. En refusant l'instrument PLUS TOT, on a supprime ce signal : la meme
+        # mission est passee « livree SANS reserve » sur un temoin valide sur QUATRE regles,
+        # avec un artefact FAUX. Un invariant (zero erreur livree sans reserve) a ete casse
+        # par une amelioration — c'est exactement ce qu'un banc d'ablation existe pour voir.
+        #
+        # La regle : une regle dont l'instrument a ete refuse n'a aucun temoin. Ne rien dire
+        # d'elle, c'est laisser croire qu'elle est couverte. On la declare donc NON PROUVEE,
+        # avec la raison exacte du refus.
+        sans_temoin: set[str] = set()
+        if self._temoignage is not None:
+            # « Couverte » veut dire : il existe un temoin executable pour cette regle. Tout le
+            # reste — instrument refuse, temoin rejete par la porte, ou AVEU du modele — laisse
+            # la regle sans temoin, et donc NON COUVERTE.
+            #
+            # L'AVEU COMPTE, et c'est une mesure qui l'a impose : sur `median` (graine 4, sans
+            # oracle), le modele a avoue ne pas savoir tester R-003, trois temoins valides
+            # couvraient les trois autres regles, l'artefact livre PASSAIT ces trois-la et
+            # ECHOUAIT sur R-003 — et la mission est sortie « livree SANS reserve ». Une regle
+            # dont personne n'a jamais parle ne peut pas etre supposee tenue : c'est
+            # exactement ce qu'un « livre sans reserve » affirme.
+            sans_temoin = (
+                set(self._temoignage.incoherents)
+                | set(self._temoignage.refuses)
+                | set(self._temoignage.aveux)
+            ) - set(self._temoignage.tests)
+        for rid in sorted(sans_temoin):
+            if self._temoignage is None:  # pragma: no cover — garde de type
+                break
+            if rid in self._temoignage.incoherents:
+                quoi = f"l'instrument a ete REFUSE ({self._temoignage.incoherents[rid][:180]})"
+            elif rid in self._temoignage.refuses:
+                quoi = ("le temoin a ete rejete par la porte statique "
+                        f"({self._temoignage.refuses[rid][:180]})")
+            else:
+                quoi = ("le modele a declare la regle NON TESTABLE "
+                        f"({self._temoignage.aveux.get(rid, '')[:180]})")
+            findings.append(Finding(
+                agent="temoins",
+                severity=Severity.MEDIUM,
+                message=(
+                    f"regle {rid} NON COUVERTE : {quoi}. La regle n'a donc AUCUN temoin "
+                    "executable — elle n'est ni satisfaite ni violee par l'artefact livre, "
+                    "elle est hors de ce que cette mission a verifie."
+                ),
+            ))
+
         # POST-CONDITION, quelle que soit la branche empruntee plus haut : une regle
         # dont le temoin echoue sur TOUS les candidats n'est PAS prouvee. La livrer
         # « sans reserve » laisserait croire que la specification est couverte alors
         # qu'elle ne l'est pas. On ne peut pas non plus la transformer en rejet : un
         # temoin que personne ne satisfait peut etre faux. Donc : reserve, et le nom
         # de la regle dans le rapport.
-        if self._regles_non_prouvees and status in (
+        a_declarer = set(self._regles_non_prouvees)
+        if sans_temoin:
+            a_declarer |= sans_temoin
+        if a_declarer and status in (
             MissionStatus.DELIVERED, MissionStatus.DELIVERED_WITH_RESERVATION
         ):
-            mention = (
-                "regle(s) NON PROUVEE(s) : " + ", ".join(sorted(self._regles_non_prouvees))
-                + " — leur temoin traduit echoue sur TOUS les candidats : il ne les "
-                "departage pas, donc il ne peut ni accuser ni innocenter."
-            )
+            morceaux = []
+            if self._regles_non_prouvees:
+                morceaux.append(
+                    "regle(s) NON PROUVEE(s) : " + ", ".join(sorted(self._regles_non_prouvees))
+                    + " — leur temoin traduit echoue sur TOUS les candidats : il ne les "
+                    "departage pas, donc il ne peut ni accuser ni innocenter."
+                )
+            if sans_temoin:
+                morceaux.append(
+                    "regle(s) NON COUVERTE(s) : " + ", ".join(sorted(sans_temoin))
+                    + " — aucun temoin executable pour elles (instrument refuse, temoin rejete, "
+                    "ou regle declaree non testable par le modele) : la livraison ne dit RIEN "
+                    "de ces regles."
+                )
+            mention = " · ".join(morceaux)
             status = MissionStatus.DELIVERED_WITH_RESERVATION
             abstention = f"{abstention} · {mention}" if abstention else mention
 
