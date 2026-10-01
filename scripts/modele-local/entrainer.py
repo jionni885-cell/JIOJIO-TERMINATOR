@@ -150,7 +150,30 @@ class ModeleDeCode(nn.Module):
         return idx
 
 
-def _corpus(racine: pathlib.Path, plafond: int) -> str:
+def _corpus_du_banc(racine: pathlib.Path) -> str:
+    """Les taches du banc, avec leurs solutions ET leurs distracteurs, en tete de corpus.
+
+    POURQUOI, et c'est un choix de mesure qu'il faut assumer en le declarant : un modele
+    entraine sur le seul code du depot produit du charabia sur une demande de fonction. Le
+    harness le refuse — mais refuser du charabia est FACILE : le code ne compile meme pas.
+    Ce qui met vraiment la verification a l'epreuve, c'est un modele qui produit du code
+    PLAUSIBLE et parfois faux.
+
+    En mettant les taches du banc dans le corpus (les solutions correctes ET les distracteurs
+    sont dans `jio/bench/tasks.py`), on obtient exactement ce regime : le modele a vu les
+    bonnes reponses et les mauvaises, et il en produit des deux. Ce que la mesure raconte
+    alors n'est pas la competence du modele — elle est faible et annoncee — mais ce que le
+    harness en FAIT : garde-t-il un candidat juste, et refuse-t-il un candidat faux ?
+
+    Ce que ce corpus ne permet PAS de conclure, et qui doit etre ecrit partout ou le chiffre
+    apparait : le modele peut RECITER ce qu'il a vu. Une reussite ici n'est pas une
+    generalisation, c'est une selection.
+    """
+    source = racine / "jio" / "bench" / "tasks.py"
+    return source.read_text(encoding="utf-8") if source.is_file() else ""
+
+
+def _corpus(racine: pathlib.Path, plafond: int, *, avec_banc: bool = False) -> str:
     """Le corpus : le code Python du depot, tous fichiers confondus, ordre melange.
 
     Deux corrections, toutes deux trouvees a la premiere execution — et la seconde est un
@@ -180,6 +203,11 @@ def _corpus(racine: pathlib.Path, plafond: int) -> str:
 
     morceaux: list[str] = []
     total = 0
+    if avec_banc:
+        # En TETE de corpus : le banc doit etre vu, pas coupe par le plafond.
+        banc = _corpus_du_banc(racine)
+        morceaux.append(banc)
+        total += len(banc) + 2
     for chemin in fichiers:
         texte = chemin.read_text(encoding="utf-8", errors="replace")
         morceaux.append(texte)
@@ -202,12 +230,19 @@ def main() -> int:
     parseur.add_argument("--dropout", type=float, default=0.1)
     parseur.add_argument("--lr", type=float, default=3e-3)
     parseur.add_argument("--graine", type=int, default=1337)
+    parseur.add_argument(
+        "--avec-banc", action="store_true",
+        help="met les taches du banc (solutions et distracteurs) en tete de corpus. Le modele "
+             "peut alors RECITER ce qu'il a vu : la mesure qui suit raconte la SELECTION par "
+             "le harness, pas la competence du modele. Ce biais est declare partout ou le "
+             "chiffre apparait.",
+    )
     parseur.add_argument("--eval-toutes", type=int, default=250)
     args = parseur.parse_args()
 
     torch.manual_seed(args.graine)
     racine = pathlib.Path(__file__).resolve().parents[2]
-    texte = _corpus(racine, args.corpus_octets)
+    texte = _corpus(racine, args.corpus_octets, avec_banc=args.avec_banc)
     alphabet = sorted(set(texte))
     stoi = {c: i for i, c in enumerate(alphabet)}
     donnees = torch.tensor([stoi[c] for c in texte], dtype=torch.long)

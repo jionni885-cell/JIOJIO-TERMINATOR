@@ -21,3 +21,6 @@ dist/
 # a faire dans l'historique. Ce qui est versionne, c'est la graine, la configuration, le
 # corpus (le depot) et le journal d'entrainement — de quoi le refaire et verifier l'empreinte.
 modele/
+
+# Journaux d'execution d'un service local : une trace d'affichage, pas une preuve.
+evidence/modele-local-serveur.log

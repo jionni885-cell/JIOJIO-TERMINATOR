@@ -17,7 +17,9 @@ TACHES="${1:-5}"
 RUNS="${2:-3}"
 PORT="${3:-8099}"
 
-MODELE="$RACINE/modele/modele.pt"
+# JIO_MODELE permet de mesurer un AUTRE modele sans toucher au script : c'est ce qui rend
+# deux modeles comparables (v1 contre v2), et une comparaison sans le modele nomme ne vaut rien.
+MODELE="${JIO_MODELE:-$RACINE/modele/modele.pt}"
 if [ ! -f "$MODELE" ]; then
   echo "modele absent : $MODELE"
   echo "entrainez-le d'abord :"

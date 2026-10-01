@@ -63,6 +63,35 @@ dans l'historique) : ce qui est versionné, c'est la **graine**, la **configurat
 **corpus** (le dépôt lui-même) et le **journal d'entraînement** — de quoi refaire exactement
 le même modèle et vérifier l'empreinte.
 
+## Deux corpus, deux questions différentes
+
+Un modèle entraîné sur le seul code du dépôt produit du **charabia** sur une demande de
+fonction. Le harness le refuse — mais refuser du charabia est **facile** : le code ne compile
+même pas. Ce qui met vraiment la vérification à l'épreuve, c'est un modèle qui produit du code
+**plausible et parfois faux**, parce qu'il a vu les bonnes réponses *et* les mauvaises.
+
+```sh
+# le corpus naturel : le code du dépôt (1,3 Mo, 1,87 M paramètres, validation 1,273)
+python entrainer.py --corpus-octets 1300000 --n-couches 4 --n-emb 192 --n-tetes 6 \
+                    --bloc 192 --iterations 3000
+
+# le corpus « banc en tête » : les tâches du banc, solutions ET distracteurs, en premier
+python entrainer.py --corpus-octets 250000 --avec-banc --iterations 1200
+```
+
+| question | corpus | ce que le chiffre peut dire |
+| --- | --- | --- |
+| Le harness livre-t-il faux **sans réserve** face à un générateur inconnu ? | dépôt | la containment : c'est le chiffre qui doit rester à zéro |
+| Le harness **garde-t-il** un candidat juste et **refuse-t-il** un candidat faux ? | dépôt + banc | la **sélection** — la vraie valeur d'un harness |
+
+Le second corpus porte un biais qu'il faut écrire noir sur blanc : le modèle peut **réciter**
+ce qu'il a vu. Une réussite là n'est pas une généralisation de sa part, c'est une sélection de
+la part du harness. C'est exactement ce qu'on veut mesurer, et c'est pour ça que le biais est
+déclaré au lieu d'être caché.
+
+`JIO_MODELE=<chemin>` permet de mesurer un autre modèle sans toucher au script : c'est ce qui
+rend deux modèles comparables, et une comparaison sans le modèle nommé ne vaut rien.
+
 ## Les deux défauts trouvés en l'écrivant
 
 Un modèle qu'on entraîne soi-même est aussi un banc d'essai pour nos propres réflexes de
