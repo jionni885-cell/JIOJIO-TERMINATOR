@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1223 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1225 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -753,6 +753,34 @@ il est maintenant porté par le consensus et affiché.
 
 ---
 
+## Ce qu'un agent va EXÉCUTER n'est pas un document
+
+Une compétence Hermes, un agent opencode, `AGENTS.md`, `CLAUDE.md`, `.cursor/rules` : ce sont des
+**consignes**, pas des textes à lire. La différence n'est pas littéraire, elle est mesurable — et
+elle a été mesurée.
+
+<!-- prose:hors-controle: recit d'un defaut passe — la commande citee ici est l'EXEMPLE de ce qui n'existe pas, c'est le sujet de la phrase et non une instruction a executer -->
+`jio coherence` annonçait « 36 commande(s) citée(s), toutes existantes » alors qu'une compétence
+citait `jio prouve-tout`, une sous-commande qui n'existe pas. Le contrôle ne regardait que
+`README.md`, `docs/` et les trois fichiers d'instructions racine : **les 12 compétences et les
+7 agents — exactement ce qu'un agent lit comme une consigne — n'étaient pas dans le champ.**
+L'agent aurait tapé la commande, elle aurait échoué, et il aurait conclu que l'outil est cassé.
+<!-- /prose:hors-controle -->
+
+Deux règles, tirées de la mesure :
+
+* le **chemin** décide du régime (`jio/verify/consignes.py`, source unique) : un document peut
+  *montrer* un message d'erreur — les exemples de sortie plus bas en contiennent — donc une
+  commande dans un bloc de code y est **signalée** ; dans une consigne, le même bloc est
+  **l'instruction que l'agent va exécuter**, donc il est **refusé** ;
+* le portail de cohérence compte désormais les commandes des artefacts exécutés. Dans ce dépôt,
+  le contrôle est passé de **36** à **101** commandes vérifiées — et elles existent toutes.
+
+```
+jio coherence        # refusé si une consigne cite une commande inexistante
+jio claims --hook .hermes/skills/verification/executable-proof/SKILL.md   # refusé, code 1
+```
+
 ## Quand il n'y a pas de code à exécuter : la prose a ses témoins
 
 Tout ce qui précède prouve du **code**. Une mission généraliste — analyse, rapport,
@@ -1468,7 +1496,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1223 tests verts -> 1223 tests verts
+         - README.md ligne 15 : 1225 tests verts -> 1225 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

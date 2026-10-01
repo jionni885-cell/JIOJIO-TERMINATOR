@@ -61,6 +61,20 @@ DOCUMENTS = ("README.md",)
 #: Documents dont les chiffres sont suivis. Un chiffre non suivi est un chiffre qui derive.
 DOCUMENTS_CHIFFRES = ("README.md",)
 
+#: LES ARTEFACTS QU'UN AGENT EXECUTE. Ce ne sont pas des documents : ce sont des consignes.
+#: La liste vit dans `verify/consignes.py`, source unique partagee avec la verification des
+#: documents — deux listes recopiees auraient fini par diverger sur le point qui compte.
+from .consignes import ARTEFACTS_EXECUTES  # noqa: E402  (re-export, place apres les docs)
+
+
+def _artefacts_executes(racine: Path) -> list[Path]:
+    """Les fichiers qu'un agent lit comme une consigne, presents dans cette racine."""
+    trouves: list[Path] = []
+    for motif in ARTEFACTS_EXECUTES:
+        trouves += sorted(p for p in racine.glob(motif) if p.is_file())
+    # Un doublon (deux motifs qui se recouvrent) ferait compter deux fois la meme commande.
+    return list(dict.fromkeys(trouves))
+
 
 @dataclass(frozen=True)
 class Constat:
@@ -345,6 +359,9 @@ def _controle_commandes(racine: Path) -> Constat:
         chemin = racine / nom
         if chemin.is_file():
             cibles.append(chemin)
+    # Les consignes EXECUTEES par un agent : voir ARTEFACTS_EXECUTES, et la mesure qui l'a
+    # imposee (une competence citait une commande inexistante sans que rien ne le signale).
+    cibles += _artefacts_executes(racine)
     from .hors_controle import masquer, raisons_manquantes, zones
 
     # Un exemple de SORTIE d'outil n'affirme rien : le README cite `jio scna` parce que c'est
@@ -377,7 +394,11 @@ def _controle_commandes(racine: Path) -> Constat:
         for citee in sorted(set(motif.findall(texte))):
             vues += 1
             if citee not in connues:
-                inconnues.append(f"{chemin.name} cite `jio {citee}` (inexistante)")
+                try:
+                    ou = str(chemin.relative_to(racine))
+                except ValueError:  # pragma: no cover — chemin hors racine
+                    ou = chemin.name
+                inconnues.append(f"{ou} cite `jio {citee}` (inexistante)")
     ok = not inconnues and not sans_raison
     if ok:
         resume = f"{vues} commande(s) citee(s), toutes existantes"

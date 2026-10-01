@@ -515,7 +515,9 @@ class RapportProse:
         ) + manques
 
 
-def _verifier_une(affirmation: Affirmation, racine: Path) -> Verification | None:
+def _verifier_une(
+    affirmation: Affirmation, racine: Path, *, consigne: bool = False
+) -> Verification | None:
     """Verifie une affirmation. Rend None quand elle n'est PAS verifiable."""
     if affirmation.genre is Genre.ARITHMETIQUE:
         gauche, droite = affirmation.detail.split("|")
@@ -567,11 +569,16 @@ def _verifier_une(affirmation: Affirmation, racine: Path) -> Verification | None
                 affirmation=affirmation, ok=True, bloquant=True,
                 message=f"commande citee EXISTE : `jio {affirmation.detail} ...`",
             )
+        # UNE CONSIGNE N'ILLUSTRE RIEN. Dans un document, un bloc de code peut montrer un
+        # message d'erreur (« jio scna ») : on signale sans condamner. Dans une competence
+        # Hermes ou un agent opencode, le meme bloc est l'INSTRUCTION que l'agent va executer :
+        # la signaler sans la condamner laisserait passer exactement le defaut qu'on cherche.
+        bloquant = not affirmation.cite or consigne
         return Verification(
-            affirmation=affirmation, ok=False, bloquant=not affirmation.cite,
+            affirmation=affirmation, ok=False, bloquant=bloquant,
             message=(
                 f"{refus}"
-                if not affirmation.cite
+                if bloquant
                 else f"{refus} (commande citee dans un bloc : on signale, on ne condamne pas)"
             ),
         )
@@ -631,12 +638,18 @@ def _verifier_une(affirmation: Affirmation, racine: Path) -> Verification | None
     )
 
 
-def verifier(texte: str, *, racine: Path | None = None) -> RapportProse:
+def verifier(
+    texte: str, *, racine: Path | None = None, consigne: bool = False
+) -> RapportProse:
     """Verifie tout ce qui est verifiable dans un document, et declare le reste.
 
     `racine` est la racine a partir de laquelle un chemin cite est cherche. Sans
     elle, les chemins ne sont ni confirmes ni accuses : ils sont ignores — faute de
     reference, il n'y a rien a dire.
+
+    `consigne` dit que ce texte est une INSTRUCTION pour un agent, pas un document : voir
+    `verify/consignes.py`. Consequence unique et voulue : une commande citee dans un bloc de
+    code y est REFUTEE, pas seulement signalee.
     """
     rapport = RapportProse()
     sorties: list[Verification] = []
@@ -644,7 +657,7 @@ def verifier(texte: str, *, racine: Path | None = None) -> RapportProse:
     for affirmation in affirmations:
         if affirmation.genre is Genre.CHEMIN and racine is None:
             continue
-        verification = _verifier_une(affirmation, racine or Path("."))
+        verification = _verifier_une(affirmation, racine or Path("."), consigne=consigne)
         if verification is None:
             continue
         sorties.append(verification)

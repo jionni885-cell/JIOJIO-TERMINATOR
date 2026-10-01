@@ -1572,10 +1572,15 @@ def _rapport_du_document(
     le seul point qui compte — quand dire « refute ».
     """
     from .verify.claims import verifier
+    from .verify.consignes import consigne as est_une_consigne
 
     texte = chemin.read_text(encoding="utf-8", errors="replace")
     ou = racine if racine is not None else _racine_du_document(chemin)
-    return verifier(texte, racine=ou), ou
+    # LE CHEMIN DECIDE DU REGIME. Une competence Hermes ou un agent opencode est une
+    # CONSIGNE : ses blocs de code sont des instructions, donc une commande inexistante y est
+    # refusee, pas seulement signalee. Un document garde le regime de citation (il peut montrer
+    # un message d'erreur). Voir jio/verify/consignes.py pour la mesure a l'origine.
+    return verifier(texte, racine=ou, consigne=est_une_consigne(chemin, ou)), ou
 
 
 def _rapport_prose(chemin: Path, racine: Path | None, *, titre: str) -> int:

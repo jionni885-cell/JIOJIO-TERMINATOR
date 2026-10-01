@@ -869,3 +869,58 @@ def test_apres_jio_start_le_portail_accepte_la_commande_ecrite(tmp_path) -> None
             f"`{rel}` a ete ecrit avec la commande RESOLUE et est declare divergent : {details}"
         )
         assert f"manquant : {rel}" not in details, details
+
+
+def test_une_commande_INEXISTANTE_dans_une_competence_est_REFUTEE(tmp_path) -> None:
+    """Ce qui va etre EXECUTE par un agent n'est pas un document.
+
+    Mesure a l'origine : `jio coherence` annoncait « 36 commande(s) citee(s), toutes
+    existantes » alors qu'une competence Hermes citait `jio prouve-tout`, une commande qui
+    n'existe pas. Le controle ne regardait que README, docs/ et les trois fichiers
+    d'instructions racine : les competences et les agents — exactement ce qu'un agent lit
+    comme une consigne — n'etaient pas dans le champ. L'agent aurait tape la commande, elle
+    aurait echoue, et il aurait conclu que l'outil est casse.
+    """
+    from jio.verify.coherence import controler
+
+    skill = tmp_path / ".hermes" / "skills" / "verification" / "executable-proof"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "# Une competence\n\n## Etape\n\n```sh\njio prouve-tout --avec-un-drapeau-invente\n```\n",
+        encoding="utf-8",
+    )
+
+    rapport = controler(tmp_path)
+    constat = next(c for c in rapport.constats if c.controle == "commandes")
+    assert not constat.ok, "une commande inexistante dans une consigne doit faire echouer le controle"
+    assert "prouve-tout" in " ".join(constat.details), constat.details
+    assert not rapport.ok
+
+
+def test_un_document_qui_MONTRE_un_message_derreur_nest_pas_refute() -> None:
+    """L'autre moitie de la regle, et sans elle le controle se ferait desactiver.
+
+    Un document qui explique le produit cite forcement des commandes fausses (le message
+    d'erreur de `jio scna`). Le confondre avec une consigne ferait condamner les documents les
+    plus utiles. La difference se lit sur le chemin, pas sur le contenu.
+    """
+    from jio.verify.claims import verifier
+    from jio.verify.consignes import consigne
+
+    texte = "Le message ressemble a ceci :\n\n```sh\njio scna --exemple\n```\n"
+    en_document = verifier(texte)
+    en_consigne = verifier(texte, consigne=True)
+
+    assert not any(v.bloquant and not v.ok for v in en_document.verifications), (
+        "un document reste dans le regime de citation"
+    )
+    assert any(v.bloquant and not v.ok for v in en_consigne.verifications), (
+        "le meme texte lu comme une consigne doit etre refuse : c'est une instruction"
+    )
+    # Et la decision se prend sur le chemin.
+    from pathlib import Path
+
+    assert consigne(Path("/p/.hermes/skills/a/b/SKILL.md"), Path("/p"))
+    assert consigne(Path("/p/.opencode/agents/jio.md"), Path("/p"))
+    assert not consigne(Path("/p/README.md"), Path("/p"))
+    assert not consigne(Path("/p/docs/note.md"), Path("/p"))
