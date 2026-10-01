@@ -58,15 +58,25 @@ def test_le_cout_annonce_tient_dans_le_budget() -> None:
 
 
 def test_un_objectif_hors_sujet_recoit_une_ABSTENTION_expliquee() -> None:
-    """« Rien » doit etre une reponse explicite, avec la sortie de secours (`name`).
+    """« Rien » doit etre une reponse explicite — et l'inventaire, pas le vide.
 
     Un outil qui renverrait une liste vide laisserait l'agent conclure que le serveur est casse
     et charger la bibliotheque entiere « pour etre sur » — exactement l'echec qu'on evite.
+
+    Ce que la mesure d'usage a change : l'abstention renvoie aussi l'INVENTAIRE tier 0. Sans lui,
+    un agent qui ne connait pas la bibliotheque ne la decouvre jamais : cinq objectifs plausibles
+    sur six recevaient « aucune competence » et rien d'autre.
     """
     texte = _appeler({"objective": "Composer un menu de la semaine pour quatre personnes"})
-    assert "Rien a charger" in texte
+    assert "Aucune procedure ne S'IMPOSE" in texte
     assert "`name`" in texte
     assert "PROCEDURES DU DEPOT" not in texte
+    # L'inventaire : de quoi choisir soi-meme, sans payer les corps.
+    from jio.artifacts.definitions import SKILLS
+
+    for skill in SKILLS:
+        assert skill.name in texte, f"{skill.name} absent de l'abstention"
+    assert "INVENTAIRE TIER 0" in texte
 
 
 def test_sans_objectif_l_outil_reste_utile_et_inchange() -> None:

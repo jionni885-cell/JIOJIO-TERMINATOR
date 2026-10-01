@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1225 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1227 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1015,13 +1015,13 @@ visible :
 ```
   CHARGE AU DEMARRAGE — un outil n'en lit qu'UN (celui de son dialecte)
 
-    CLAUDE.md                          150 ligne(s)    1930-2654   jetons
-    AGENTS.md                          146 ligne(s)    1883-2589   jetons
-    .cursor/rules/jio.mdc              149 ligne(s)    1882-2588   jetons
-    .github/copilot-instructions.md    144 ligne(s)    1868-2569   jetons
-    GEMINI.md                          144 ligne(s)    1867-2568   jetons
+    CLAUDE.md                          149 ligne(s)    1918-2638   jetons
+    AGENTS.md                          145 ligne(s)    1871-2573   jetons
+    .cursor/rules/jio.mdc              148 ligne(s)    1870-2572   jetons
+    .github/copilot-instructions.md    143 ligne(s)    1857-2553   jetons
+    GEMINI.md                          143 ligne(s)    1856-2552   jetons
 
-    Cote d'une session REELLE : ~2162 a 2235 jetons selon l'outil, pas la somme.
+    Cote d'une session REELLE : ~2149 a 2221 jetons selon l'outil, pas la somme.
 
   DISPONIBLE A LA DEMANDE — competences
 ...
@@ -1061,10 +1061,10 @@ la seule question qui rend cette réserve utile : *pour cet objectif, lesquelles
 
   OBJECTIF  Ajouter un test qui échoue quand sum_even compte les nombres impairs
 
-  1. executable-proof  [verification]  score 5.5775  51 jetons
-     pourquoi : test (2.47), executable (1.30), proof (1.30)
-  2. prose-witnesses  [verification]  score 5.4426  53 jetons
-     pourquoi : prose (2.59), claims (1.30), documents (1.30)
+  1. executable-proof  [verification]  score 9.5119  51 jetons
+     pourquoi : test (4.73), proof (2.04), executable (1.94)
+  2. prose-witnesses  [verification]  score 9.3888  53 jetons
+     pourquoi : prose (2.84), document (1.67), claims (1.62)
 
 ...
 
@@ -1073,7 +1073,7 @@ la seule question qui rend cette réserve utile : *pour cet objectif, lesquelles
   bibliotheque abordable, pas sa taille.
 <!-- /sortie -->
 
-Quatre décisions, et aucune n'est un goût personnel — chacune a été **mesurée** sur un banc de
+Cinq décisions, et aucune n'est un goût personnel — chacune a été **mesurée** sur un banc de
 **39 objectifs de routage** annotés à la main (`jio skills --banc`), puis payée quand elle
 était fausse :
 
@@ -1081,11 +1081,15 @@ Quatre décisions, et aucune n'est un goût personnel — chacune a été **mesu
   partout, la saturation empêche une compétence bavarde de gagner par sa longueur, et la
   normalisation traite des compétences inégales. L'ablation `mots-clés bruts` chiffre ce que
   cela apporte — et c'est le témoin qui compte, pas la théorie.
-- **Le tiers 0 est indexé, jamais les corps.** Trouvé par la mesure : indexer les corps
-  faisait gagner `structured-failure` sur l'objectif ci-dessus, parce que son exemple de
-  sortie cite littéralement `sum_even` — du vocabulaire **du dépôt**, pas le sujet de la
-  compétence. Coût du défaut : 29 points de premier choix juste. Un exemple cite le dépôt ;
-  l'intention est dans le nom, les tags et la description.
+- **Deux champs, deux rôles : le tiers 0 décide, le corps classe.** Trouvé par la mesure :
+  verser les corps dans le **même** index faisait gagner `structured-failure` sur l'objectif
+  ci-dessus, parce que son exemple de sortie cite littéralement `sum_even` — du vocabulaire
+  **du dépôt**, pas le sujet de la compétence (coût du défaut : 29 points de premier choix
+  juste). On en avait conclu « ne jamais indexer le corps » — conclusion trop forte, corrigée
+  par une seconde mesure : pesé comme un **second champ** (`POIDS_CORPS`), le corps rend
+  3 cas sur 41 objectifs **jamais vus** (45,8 % → 58,3 %) sans rien coûter au banc ni aux
+  abstentions. La prose d'une compétence dit *quand* elle s'applique ; ses exemples disent
+  *où elle a été écrite*.
 - **Diversification MMR** : deux compétences quasi identiques occuperaient deux places du
   contexte pour une seule information. `lambda` arbitre pertinence et redondance, et quand
   l'ordre affiché n'est pas celui des scores, la commande le **dit**.
@@ -1099,7 +1103,7 @@ Le résultat, témoins compris, est publié par `jio skills --banc` :
 
 | stratégie | équilibre | premier choix juste | ce qu'elle dit |
 |---|---|---|---|
-| **routeur** (BM25 + MMR + abstention) | **0,968** | **87 %** | 8 abstentions justes sur 8, et 30 des 31 objectifs pertinents servis |
+| **routeur** (BM25F + MMR + abstention) | **0,984** | **87 %** | 8 abstentions justes sur 8, et 31 des 31 objectifs pertinents servis |
 | mots-clés bruts (ablation) | 0,623 | 77 % | ce que l'`idf`, la saturation et la pondération apportent : au témoin, ce n'est pas le score qui manque, c'est l'abstention |
 | alphabétique | 0,145 | 10 % | ce que vaut un choix qui ne regarde pas l'objectif |
 | tout charger | 0,500 | 10 % | rappel parfait **par construction** (6424 jetons) : le coût affiché à côté du rappel |
@@ -1125,7 +1129,7 @@ mais l'**écart aux témoins** — et le fait que le seuil déclaré soit celui 
 retrouve (`jio skills --seuil-balaye`, vérifié par un test : la constante et la mesure ne
 peuvent pas diverger en silence).
 
-### Et sur des objectifs **jamais vus**, le routeur tombe à 46 % — le chiffre est publié
+### Et sur des objectifs **jamais vus**, le routeur monte à 58 % — les deux chiffres sont publiés
 
 Le banc ci-dessus a *réglé* le routeur : il ne peut donc pas dire s'il **généralise**. Un second
 jeu a été écrit **avant** toute retouche des fiches, avec des formulations neuves (vocabulaire,
@@ -1134,9 +1138,11 @@ Le résultat
 
 ```
   banc du dépôt (39 objectifs de routage, celui du réglage) ... 87 %
-  jeu de contrôle (24 objectifs de contrôle, jamais vus) .... 46 %
-    dont anglais (la langue de travail de Hermes) .... 50 %
-    dont français ................................... 42 %
+  jeu de contrôle (24 objectifs de contrôle, jamais vus) .... 58 %
+    dont anglais (la langue de travail de Hermes) .... 58 %
+    dont français ................................... 58 %
+  second jeu de contrôle (41 objectifs, écrit avant la retouche) .. 50 %
+  les deux jeux jamais vus, regroupés (48 cas) ............. 54 %
 ```
 
 **L'écart entre les deux lignes est le résultat.** Afficher 87 % sans le second chiffre serait un
@@ -1144,22 +1150,32 @@ chiffre vrai qui trompe, et c'est exactement ce que ce dépôt s'interdit. `jio 
 renvoie désormais au jeu de contrôle, et `jio skills --controle` nomme chaque échec avec ce qui
 était attendu.
 
-La cause est identifiée : **les deux tiers des échecs sont des mots absents du pont bilingue**
-(« changed the assertion », « keeps coming back », « reusable procedure »). Le pont est une table
-de classes de synonymes de domaine ; la première version n'en couvrait qu'une partie. L'extension
-mesurée ici — synonymes de domaine ajoutés, dans les deux langues — fait passer le jeu de contrôle
-de **33 % à 46 %** (anglais 42 % → 50 %) **sans faire bouger le banc** (87,1 % avant, 87,1 %
-après) : c'est le contrôle anti-sur-ajustement.
+La cause a été identifiée par étapes, et chaque étape est mesurée :
+
+1. **Le pont bilingue ne couvrait qu'une partie du vocabulaire** (« changed the assertion »,
+   « keeps coming back », « reusable procedure » n'avaient aucun voisin). L'extension du lexique,
+   dans les deux langues, fait passer le contrôle de **33 % à 46 %** sans faire bouger le banc.
+2. **Les fiches ne contenaient que 1 à 3 phrases**, et elles sont en français alors que l'agent
+   travaille en anglais : un objectif formulé autrement n'avait presque aucun mot à rencontrer.
+   Le **corps** de chaque compétence — en anglais, et il dit *quand* elle s'applique — entre donc
+   dans l'index comme second champ pondéré. Contrôle : 46 % → **58 %**, banc 83,9 % → 87,1 %,
+   abstentions 17/17 inchangées.
 
 Ce qui reste hors de portée est déclaré : combler le reste demande de la **similarité
 sémantique**, donc des plongements — et aucun poids de modèle n'est téléchargeable depuis cette
-machine (`huggingface.co` injoignable, seuls PyPI et GitHub répondent). Deux pistes ont été
+machine (`huggingface.co` injoignable, seuls PyPI et GitHub répondent). Trois pistes ont été
 essayées et **écartées par la mesure**, plutôt que gardées parce qu'elles avaient l'air bonnes :
 
 | piste essayée | résultat | décision |
 |---|---|---|
 | fusion RRF (BM25 + trigrammes de caractères) | 100 % → **5 %** au régime identifiant, 87 % → 23 % au mélange | **écartée** : un second classement faible *dilue* le premier |
 | indexer le vocabulaire **procédural** des corps (mots alphabétiques à IDF élevée, littéraux exclus) | 46 % → **46 %** | **écartée** : aucun gain, plus de bruit dans l'index |
+| nourrir l'abstention avec le vocabulaire des **corps** | hors sujet acceptés : 8/8 et 4/4 → **6/8 et 2/4** | **écartée** : le corps servait de porte dérobée au classement ; l'abstention ne juge que le tier 0 |
+
+Le gain des 3 cas est une **direction, pas une preuve** : sur 41 objectifs jamais vus l'intervalle
+de confiance du gain est **[0 ; +14,6] points** — sa borne basse touche zéro. C'est écrit ici
+parce qu'un chiffre publié sans son intervalle serait exactement ce que ce dépôt s'interdit
+(`evidence/routeur-bm25f-075.{md,json}`).
 
 Ces deux lignes sont conservées ici pour ne pas refaire les essais : une brique qui n'a pas
 prouvé son utilité ne reste pas dans le dépôt, mais la trace de l'essai reste — sinon la même
@@ -1496,7 +1512,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1225 tests verts -> 1225 tests verts
+         - README.md ligne 15 : 1227 tests verts -> 1227 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

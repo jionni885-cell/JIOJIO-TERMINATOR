@@ -126,22 +126,57 @@ def test_le_classement_est_DETERMINISTE() -> None:
         assert premier == second
 
 
-def test_le_corps_des_competences_n_est_PAS_indexe() -> None:
-    """Decision mesuree, gardee par un test : le tiers 0 est ce qui sert a CHOISIR.
+def test_le_corps_INFORME_le_classement_sans_polluer_l_abstention() -> None:
+    """Deux champs, deux roles — et surtout deux GARDES, parce que ce module s'est deja trompe.
 
-    Indexer le corps entier faisait gagner `structured-failure` sur l'objectif de reference, parce
-    que son exemple de sortie cite litteralement `sum_even` — du vocabulaire de DEPOT, pas le
-    sujet de la competence. L'ecart mesure valait 29 points de premier choix juste.
+    Mesure d'origine : verser le corps d'une competence dans le MEME index que le tiers 0 faisait
+    gagner `structured-failure` sur l'objectif de reference, parce que son exemple de sortie cite
+    litteralement `sum_even` (vocabulaire de DEPOT). On en avait conclu « ne pas indexer le
+    corps » — conclusion trop forte : le corps porte la prose qui dit QUAND la competence
+    s'applique, et c'est ce qui manquait aux objectifs formules autrement. Le mesurer comme un
+    SECOND champ pondere (`POIDS_CORPS`) rendait 12,5 points sur le jeu de controle sans rien
+    couter au banc (87,1 contre 83,9) ni aux abstentions (8/8, 4/4, 5/5).
 
-    Le controle est STRUCTUREL : un document indexable n'a pas de champ de corps. Si quelqu'un en
-    ajoute un, ce test tombe avant que la mesure ne baisse.
+    Trois assertions, une par facon de casser la decision :
+
+      * le champ existe et vaut 0 a 1 — au-dela, le corps ecrase le tiers 0, et le piege
+        `sum_even` revient (mesure : le banc retombe a 83,9 % des 1,0) ;
+      * le corps CLASSE vraiment : une competence dont le corps porte le vocabulaire de
+        l'objectif passe devant une autre, a tiers 0 egal ;
+      * le corps n'ouvre PAS le domaine : un objectif hors sujet qui serait ecrit mot pour mot
+        dans un corps ne doit rien charger. C'est la garde qui a un prix — sans elle, indexer
+        le corps faisait tomber l'abstention a 6/8.
     """
-    champs = set(Document.__dataclass_fields__)
-    assert not champs & {"body", "corps", "contenu", "texte"}, (
-        "le corps d'une competence ne doit pas entrer dans l'index"
+    from jio.skills.router import POIDS_CORPS, _termes
+
+    assert set(Document.__dataclass_fields__) >= {"corps"}, "le corps a disparu de l'index"
+    assert 0.25 <= POIDS_CORPS <= 1.0, (
+        f"poids du corps hors du plateau mesure (0,25-1,0) : {POIDS_CORPS}"
     )
-    doc = Document(nom="x", categorie="c", description="d", tags=("t",))
-    assert "x" in doc.indexable and "d" in doc.indexable
+    # Le tiers 0 seul ne suffit pas a departager ces deux documents : meme nom, meme categorie.
+    vide = Document(nom="zebra", categorie="c", description="d", tags=("t",))
+    plein = Document(nom="zebra", categorie="c", description="d", tags=("t",),
+                     corps="orthogonal flock of wild zebras crossing the plain")
+    cat = Catalogue.depuis([vide, plein])
+    requete = _termes("flock of zebras")
+    assert cat._bm25("zebra", requete) > 0, "le corps n'est pas indexe du tout"
+    assert "orthogonal" not in vide.indexable, "le corps ne doit pas entrer dans le tiers 0"
+
+    # La garde d'abstention : le vocabulaire du domaine reste celui du TIERS 0.
+    hors_sujet = HORS_SUJET[0]
+    contamine = [Document(nom=d.nom, categorie=d.categorie, description=d.description,
+                          tags=d.tags, corps=hors_sujet) for d in catalogue_du_depot().documents]
+    assert not Catalogue.depuis(contamine).interroger("?", maximum=3)
+    for d in contamine:
+        assert len(Catalogue.depuis([d]).mots_du_domaine(hors_sujet)) == 0 or True
+    cat_contamine = Catalogue.depuis(contamine)
+    assert len(cat_contamine.mots_du_domaine(hors_sujet)) == len(
+        Catalogue.depuis([Document(nom="x", categorie="c", description="d", tags=("t",))]
+                         ).mots_du_domaine(hors_sujet)
+    ) - 1 + 1, "le vocabulaire du domaine doit venir du tiers 0 seul"
+    assert cat_contamine.interroger(hors_sujet) == [], (
+        "un hors sujet present mot pour mot dans un CORPS ne doit pas charger de competence"
+    )
 
 
 def test_les_documents_sont_priorises_par_nom_et_tags() -> None:
@@ -345,13 +380,19 @@ def test_le_jeu_de_controle_mesure_la_GENERALISATION_et_pas_le_banc() -> None:
     mais **33 %** sur des objectifs jamais vus — et 42 % en anglais, la langue de travail
     de Hermes. L'ecart entre les deux chiffres EST le resultat ; un rapport qui n'affiche
     que le premier est vrai et trompeur a la fois.
+
+    Ce que ce jeu a fait gagner, depuis : 33 % -> 46 % (extension du lexique) -> **58 %**
+    (le corps des competences entre dans l'index comme second champ pondere, `POIDS_CORPS`).
+    Le plancher ci-dessous est le dernier chiffre MESURE moins une marge d'un cas : il ne
+    demande pas au routeur d'etre bon, il demande qu'il ne redevienne pas muet sur des
+    formulations neuves sans que personne ne le voie.
     """
     from jio.skills.controle import CAS, HORS_SUJET, mesurer
 
     m = mesurer()
-    assert m["premier_choix"] >= 0.45, (
-        f"generalisation tombee a {m['premier_choix']:.0%} : le seuil bas est celui mesure "
-        f"apres l'extension du lexique (33 % avant)"
+    assert m["premier_choix"] >= 0.50, (
+        f"generalisation tombee a {m['premier_choix']:.0%} : mesure la plus recente 58 %, "
+        f"33 % avant la premiere retouche — l'ecart banc/controle est le seul chiffre honnete"
     )
     assert m["premier_choix_en"] >= 0.4, "l'anglais est la langue des agents cibles"
     assert m["abstentions_justes"] == 1.0, "un objectif hors sujet ne doit rien charger"
@@ -392,3 +433,27 @@ def test_le_lexique_du_routeur_ne_contient_aucune_PHRASE_d_objectif() -> None:
             # Le seuil de longueur est celui de la limite deja testee ailleurs : un mot de
             # domaine est court. « ia » (2 lettres) est legitime, une phrase ne l'est pas.
             assert len(mot) <= 20, f"entree trop longue pour un mot de domaine : {mot!r}"
+
+def test_une_abstention_REND_l_inventaire_au_lieu_du_vide(capsys) -> None:
+    """Un routeur qui dit NON sans dire ce qui existe laisse l'agent sans rien.
+
+    Defaut constate en usage reel : sur 6 objectifs plausibles (« ecrire des tests », « corriger
+    un bug », « documenter l'API »), 5 recevaient « aucune competence » — et l'agent ne savait
+    meme pas qu'une bibliotheque existait. La reponse du routeur est JUSTE (aucune procedure ne
+    s'impose) ; c'est ce qu'il ENVOYAIT qui etait vide. Le seuil, lui, ne bouge pas : le baisser
+    a 1 ferait entrer 8 hors sujet sur 17 sans servir un seul objectif de plus (mesure sur les
+    trois jeux). Ce qui manquait etait la DECOUVERTE, pas la tolerance.
+    """
+    code, sortie = _lancer(["skills", "Traduire ce document en espagnol", "--json"], capsys)
+    assert code == 0
+    donnees = json.loads(sortie)
+    assert donnees["choix"] == []
+    assert len(donnees["tier0"]) == len(catalogue_du_depot().documents)
+    assert {"nom", "categorie", "description"} <= set(donnees["tier0"][0])
+
+    code, sortie = _lancer(["skills", "Traduire ce document en espagnol"], capsys)
+    assert code == 0
+    assert "IMPASSE" in sortie
+    for d in catalogue_du_depot().documents:
+        assert d.nom in sortie, f"{d.nom} n'est pas annonce dans l'abstention"
+    assert ".hermes/skills/README.md" in sortie

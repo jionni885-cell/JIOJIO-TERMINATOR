@@ -122,10 +122,8 @@ Abstaining is a correct answer, and usually the cheapest one.
 ## Commandes
 
 ```
-jio start                  INTEGRE jio a tes outils : artefacts + cablage MCP + PREUVE du
-                           cablage, en une seule commande (aucune cle requise)
-jio clarify "<objectif>"   les 0 a 3 questions ESSENTIELLES a poser AVANT de travailler ;
-                           code 3 = demande a l'utilisateur avant de commencer
+jio start                  INTEGRE jio a tes outils : artefacts, cablage MCP, PREUVE du cablage
+jio clarify "<objectif>"   les 0 a 3 questions ESSENTIELLES AVANT de travailler (code 3)
 jio doctor                 etat du systeme, fournisseurs detectes
 jio bench --skill 0.30     mesure le gain du harness (S0 -> S3, controle a budget egal)
 jio audit <fichier>        audite un artefact ; derive des regles executables de lui-meme
@@ -133,8 +131,9 @@ jio run "<objectif>"       mission complete avec la boucle verifiee
 jio auto "<objectif>"      travaille SEUL : chaque etape porte sa preuve, un echec ARRETE
 jio run "<objectif>" --prose   mission de DOCUMENT : la boucle de preuve complete
                                s'applique a un texte (calculs, blocs, chemins cites)
-jio claims <document>      verifie les faits d'une prose : calculs annonces, blocs
-                           presentes comme Python, chemins cites (0 = conforme)
+jio claims <document>      verifie les faits d'une prose : calculs, blocs Python, chemins cites
+jio skills "<objectif>"    les 0 a 3 procedures a charger, et POURQUOI ; une abstention rend
+                           l'inventaire tier 0 (`.hermes/skills/README.md`)
 jio trace <journal>        rejoue et verifie un journal (chaine de hachage + exploits)
 jio mutants                NOS tests attrapent-ils NOS erreurs ? (mutation de CE depot)
 jio ablation --missions 10 quelle brique apporte quoi ? (on l'enleve et on compare,

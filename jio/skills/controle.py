@@ -17,18 +17,27 @@ sur des chiffres ajustes au banc, il ne remplace pas un banc externe.
 CE QU'IL A MESURE, et c'est le chiffre qui compte :
 
     banc du depot (39 objectifs, celui du reglage) ....... 87 %
-    jeu de controle (24 objectifs jamais vus) ............ 46 %
-      dont anglais (le mode de travail de Hermes) ........ 50 %
-      dont francais ..................................... 42 %
+    jeu de controle (24 objectifs jamais vus) ............ 58 %
+      dont anglais (le mode de travail de Hermes) ........ 58 %
+      dont francais ..................................... 58 %
 
 L'ecart entre les deux lignes EST le resultat : un routeur peut etre bon sur le banc qui l'a
-regle et deux fois moins bon sur une formulation neuve. Afficher 87 % sans le second chiffre
+regle et nettement moins bon sur une formulation neuve. Afficher 87 % sans le second chiffre
 serait un chiffre vrai qui trompe.
 
-CE QUI A ETE ESSAYE POUR LE COMBLER, ET ECARTE PAR LA MESURE : indexer le vocabulaire
-PROCEDURAL des corps (mots alphabetiques a IDF elevee, litteraux du depot exclus). Resultat :
-46 % -> 46 %, aucun gain, plus de bruit dans l'index. Le vocabulaire des corps reste donc
-hors de l'index, comme la mesure d'origine l'avait etabli.
+HISTORIQUE DE CET ECART, parce qu'il dit quelle retouche a servi :
+
+    46 %  etat livre avant la retouche BM25F (33 % a l'ecriture du jeu)
+    58 %  apres : le CORPS des competences est entre dans l'index comme SECOND champ pondere
+          (voir `router.POIDS_CORPS`), au lieu d'en etre exclu ou d'y etre verse brut.
+
+CE QUI A ETE ESSAYE POUR LE COMBLER, ET ECARTE PAR LA MESURE :
+  * indexer le vocabulaire PROCEDURAL filtre des corps (mots alphabetiques a IDF elevee,
+    litteraux du depot exclus) : 46 % -> 46 %, aucun gain, plus de bruit ;
+  * verser le corps entier dans le MEME index que le tiers 0 : le classement se degradait, les
+    exemples des corps citant le vocabulaire du depot ;
+  * ponderer les deux champs separement (BM25F) : c'est la seule variante qui a gagne, et
+    l'abstention n'a pas bouge d'un cas — le vocabulaire du domaine ne regarde que le tiers 0.
 """
 
 from __future__ import annotations

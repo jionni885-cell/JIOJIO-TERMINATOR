@@ -381,3 +381,32 @@ def test_l_outil_MCP_de_coherence_enonce_les_NEUF_controles(tmp_path: Path) -> N
     for controle in CONTROLES:
         nom = controle.__name__.removeprefix("_controle_")
         assert nom in texte, f"le rapport ne nomme pas le controle {nom}"
+
+
+def test_chaque_fichier_de_contexte_dit_COMMENT_choisir_une_competence() -> None:
+    """Une bibliotheque invisible ne sert a rien — et elle l'a ete.
+
+    Defaut constate en usage reel : les douze competences existaient, le fichier qui les enumere
+    aussi (`.hermes/skills/README.md`), mais AUCUN fichier d'instructions ne le disait. L'agent
+    qui lisait `AGENTS.md` n'apprenait pas qu'une bibliotheque existait, ni qu'une commande
+    repondait a « laquelle charger pour cet objectif ». Le harness etait donc paye (12 fichiers,
+    ~6 400 jetons en reserve) et jamais utilise.
+
+    Le test porte sur les CINQ dialectes de contexte : un agent qui lit `GEMINI.md` ou la regle
+    Cursor doit avoir la meme information que celui qui lit `AGENTS.md`. Le rappel tient en DEUX
+    lignes du bloc de commandes, parce que la limite de 150 lignes est un autre test de ce depot.
+    """
+    from jio.artifacts.emit import TARGETS, manifest
+
+    contextes = {
+        "agents": "AGENTS.md",
+        "claude": "CLAUDE.md",
+        "gemini": "GEMINI.md",
+        "cursor": ".cursor/rules/jio.mdc",
+        "copilot": ".github/copilot-instructions.md",
+    }
+    for cible, chemin in contextes.items():
+        assert cible in TARGETS, f"la cible de contexte {cible} a disparu"
+        texte = manifest((cible,))[chemin]
+        assert "jio skills" in texte, f"{chemin} ne dit pas comment choisir une competence"
+        assert ".hermes/skills/README.md" in texte, f"{chemin} ne dit pas OU est l'inventaire"

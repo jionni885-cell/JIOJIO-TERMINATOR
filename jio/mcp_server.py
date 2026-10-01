@@ -413,6 +413,14 @@ def _tool_skills(args: dict[str, Any]) -> str:
 
     L'agent n'a donc pas besoin de SAVOIR quelles procedures existent. Il a besoin de savoir
     poser la question, et c'est ce que la description de l'outil lui dit.
+
+    MESURE QUI A CORRIGE CETTE PHRASE. Un test d'usage reel — six objectifs plausibles, ecrits
+    comme un utilisateur les ecrit — a donne cinq abstentions. La phrase ci-dessus etait donc
+    fausse au moment ou elle comptait : quand le routeur dit NON, l'agent ne recoit rien, et s'il
+    ne connait pas la bibliotheque il ne la connaitra jamais. L'abstention reste (le seuil a raison,
+    la mesure est dans `router.SEUIL_CONCEPTS`), mais elle REND l'inventaire tier 0 : une ligne
+    par competence, de quoi choisir soi-meme. C'est le seul cas ou le routeur coute vraiment
+    quelque chose.
     """
     from .artifacts.definitions import SKILLS
 
@@ -423,10 +431,14 @@ def _tool_skills(args: dict[str, Any]) -> str:
         injection = bloc(objectif)
         if injection.vide:
             lignes = [
-                "Rien a charger pour cet objectif : moins de deux mots de domaine reconnus.",
-                "Le routeur prefere ne rien charger plutot qu'une procedure qui ne s'applique",
-                "pas. Si tu sais quelle procedure il te faut, nomme-la (`name`).",
+                "Aucune procedure ne S'IMPOSE pour cet objectif : moins de deux mots de domaine",
+                "reconnus. Le routeur prefere ne rien charger plutot qu'une procedure qui ne",
+                "s'applique pas — mais tu peux choisir toi-meme, l'inventaire tier 0 est ci-dessous.",
+                "Si tu sais quelle procedure il te faut, nomme-la (`name`).",
+                "",
+                "INVENTAIRE TIER 0 (nom, categorie, une ligne) :",
             ]
+            lignes += [f"- {s.name} [{s.category}] — {s.description}" for s in SKILLS]
             if injection.refusees:
                 lignes.append(
                     "Refuse(es) par l'audit du depot : "

@@ -17,6 +17,7 @@ from .banc import (
     mesurer,
 )
 from .router import (
+    POIDS_CORPS,
     SEUIL_CONCEPTS,
     Catalogue,
     Choix,
@@ -29,6 +30,7 @@ from .router import (
 
 __all__ = [
     "BANC",
+    "POIDS_CORPS",
     "SEUIL_CONCEPTS",
     "Catalogue",
     "Choix",

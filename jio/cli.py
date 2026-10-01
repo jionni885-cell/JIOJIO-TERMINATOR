@@ -4499,6 +4499,14 @@ def cmd_skills(args: argparse.Namespace) -> int:
                     for c in choix
                 ],
                 "cout_jetons": cout(choix),
+                # Une abstention n'est pas une absence de reponse : c'est « aucune procedure ne
+                # s'impose », et l'appelant automatise recoit l'inventaire pour decider lui-meme.
+                # Sans cela, un agent qui interroge le routeur ne saurait meme pas que des
+                # procedures existent : il travaille sans, et le harness ne sert a rien.
+                "tier0": [
+                    {"nom": d.nom, "categorie": d.categorie, "description": d.description}
+                    for d in catalogue_du_depot().documents
+                ],
             },
             ensure_ascii=False, indent=2,
         ))
@@ -4516,6 +4524,17 @@ def cmd_skills(args: argparse.Namespace) -> int:
         print("  l'occuper. Pour forcer une reponse, baissez le seuil :")
         print()
         print("      jio skills \"...\" --seuil 0")
+        print()
+        print("  CETTE ABSTENTION N'EST PAS UNE IMPASSE. L'inventaire tier 0 (nom + une")
+        print("  ligne), que l'agent peut lire pour decider lui-meme :")
+        print()
+        for d in catalogue_du_depot().documents:
+            print(f"      {d.nom}  [{d.categorie}]")
+        print()
+        print("  Le fichier qui les enumere est ecrit par `jio artifacts --target hermes")
+        print("  --write` : `.hermes/skills/README.md`. Un routeur qui dit NON sans dire")
+        print("  ce qui existe laisse l'agent sans rien — c'est le seul cas ou il coute")
+        print("  vraiment quelque chose.")
         print()
         return 0
 

@@ -23,12 +23,15 @@ refactoring :
    `mots-cles bruts` du banc chiffre ce que cela apporte : sans ces trois proprietes, le premier
    choix juste tombe de 87 % a 48 %.
 
-2. **On indexe le TIERS 0, pas les corps.** Mesure a l'origine : indexer le corps entier faisait
-   gagner a `structured-failure` l'objectif « Ajouter un test qui echoue quand `sum_even` compte
-   les impairs » — parce que son exemple de sortie cite litteralement `sum_even`. Un exemple cite
-   le vocabulaire du DEPOT, pas le sujet de la competence. Le tiers 0 (nom, categorie,
-   description, tags) est exactement l'enonce de l'intention ; le corps est ce qu'on INJECTE une
-   fois la competence choisie. Confondre les deux coutait 29 points de premier choix juste.
+2. **Deux champs, deux roles : le tiers 0 DECIDE, le corps CLASSE** (BM25F, Robertson &
+   Zaragoza). Mesure d'origine, gardee : mettre le corps dans le MEME index que le tiers 0
+   faisait gagner a `structured-failure` l'objectif « Ajouter un test qui echoue quand
+   `sum_even` compte les impairs », parce que son exemple de sortie cite litteralement
+   `sum_even` — un exemple cite le vocabulaire du DEPOT, pas le sujet. Peser les deux champs
+   separement repare ce defaut au lieu de renoncer au corps : le corps porte la prose qui dit
+   QUAND la competence s'applique (« Any time you are about to assert that something works, is
+   fixed, or is correct »), et c'est exactement ce qui manquait aux objectifs formules
+   autrement. Le poids est mesure, pas choisi (voir `POIDS_CORPS`).
 
 3. **Diversification MMR** (Carbonell & Goldstein) : deux competences quasi identiques occuperaient
    deux places pour une seule information. Le classement maximise
@@ -58,6 +61,7 @@ from dataclasses import dataclass, field
 
 __all__ = [
     "MOTS_VIDES",
+    "POIDS_CORPS",
     "SEUIL_CONCEPTS",
     "Catalogue",
     "Choix",
@@ -81,6 +85,27 @@ POIDS_RADICAL = 0.5
 #: Part de pertinence dans la diversification MMR.
 LAMBDA = 0.7
 
+#: Poids du CORPS dans le score : le tiers 0 pese 1, le corps pese cela (BM25F a deux champs).
+#:
+#: MESURE, et le plateau compte plus que le point. Trois jeux : le banc (celui du reglage), le
+#: jeu de controle A (24 objectifs jamais vus) et le jeu B (24 objectifs jamais vus, ecrit avant
+#: la retouche). Premier choix juste :
+#:
+#:   poids 0.00 (tiers 0 seul)  banc 83,9 %   controle A 45,8 %   jeu B 50,0 %
+#:   poids 0.25                 banc 87,1 %   controle A 54,2 %   jeu B 50,0 %
+#:   poids 0.75                 banc 87,1 %   controle A 58,3 %   jeu B 50,0 %   <- retenu
+#:   poids 1.00                 banc 83,9 %   controle A 58,3 %   jeu B 50,0 %
+#:
+#: Le banc est MIEUX avec le corps que sans (87,1 contre 83,9), ce qui etait la crainte
+#: contraire : le piege mesure a l'origine (le corps de `structured-failure` cite `sum_even`)
+#: apparait quand les deux champs partagent UN index, pas quand ils sont ponderes separement —
+#: l'objectif de reference garde `executable-proof` en tete a 0,25 comme a 1,0. Le corps reste
+#: dans le plateau 0,25-1,0 pour le banc et 0,75-1,0 pour le controle ; 0,75 est le point ou
+#: les deux courbes sont au mieux, et il n'est PAS un point isole : 0,5 donne les memes chiffres
+#: a un cas pres. Les abstentions, elles, ne bougent pas d'un cas (8/8, 4/4, 5/5) : le
+#: vocabulaire qui decide de l'abstention est celui du TIERS 0, jamais celui du corps.
+POIDS_CORPS = 0.75
+
 #: Nombre de MOTS de domaine distincts en dessous duquel le routeur s'abstient.
 #:
 #: MESURE, et la courbe compte autant que le point. Sur le banc annote (31 objectifs pertinents,
@@ -93,6 +118,12 @@ LAMBDA = 0.7
 #: perdre UN SEUL cas pertinent, et il tient encore a 25 sur 31 au cran suivant : la marge
 #: existe des deux cotes. Les huit cas hors sujet portent 0 ou 1 mot de domaine (« document »
 #: pour une traduction, « outil » pour une barre d'outils, aucun pour un menu de la semaine).
+#:
+#: VERIFIE sur deux jeux jamais vus (controle A et jeu B, 8 hors sujet de plus) : TOUS portent
+#: 0 ou 1 mot de domaine, et le seuil de 2 sert 44 objectifs sur 48. Le seuil de 1 ferait
+#: entrer 8 hors sujet sur 17 sans servir un seul objectif de plus : la couverture ne vient pas
+#: du seuil, elle vient du vocabulaire. C'est pourquoi une abstention ne laisse pas l'agent
+#: sans rien — voir `jio skills` : elle renvoie l'inventaire tier 0.
 SEUIL_CONCEPTS = 2
 
 #: Mots outils francais et anglais : presents dans presque tous les objectifs, donc ils ne
@@ -143,14 +174,20 @@ class Document:
     """Une competence, vue comme un document indexable.
 
     Le champ indexe est le TIERS 0 : nom, categorie, description, tags. Le corps n'est PAS
-    indexe — mesure faite, ses exemples citent le vocabulaire du depot et detournent le
-    classement. Il est ce qu'on injecte, pas ce qui sert a choisir.
+    indexe comme SECOND champ, avec un poids a lui (`POIDS_CORPS`) : sa prose dit quand la
+    competence s'applique, et c'est ce qui manquait aux objectifs formules autrement. Ses
+    exemples, en revanche, citent le vocabulaire du depot : les melanger au tiers 0 dans un seul
+    index detournait le classement, mesure a l'appui.
     """
 
     nom: str
     categorie: str
     description: str
     tags: tuple[str, ...]
+    #: Le corps de la competence. Il n'entre PAS dans `indexable` : il a son propre index, et
+    #: surtout il est absent de `_vocabulaire`, donc il ne peut pas faire passer un hors-sujet
+    #: pour un objectif du domaine.
+    corps: str = ""
 
     @property
     def indexable(self) -> str:
@@ -187,7 +224,17 @@ class Choix:
 
 @dataclass
 class Catalogue:
-    """L'index BM25 des competences, construit une fois et interroge autant de fois qu'on veut."""
+    """L'index BM25F a DEUX champs des competences, construit une fois et interroge sans limite.
+
+    Champ 1 (`indexable`) : nom, tags, description, categorie. C'est ce qui DECIDE — un objectif
+    qui ne partage rien avec lui n'a rien a faire ici, et c'est aussi lui qui definit le
+    vocabulaire du domaine (`_vocabulaire`).
+
+    Champ 2 (`corps`) : la procedure elle-meme. C'est ce qui CLASSE : sa prose dit quand la
+    competence s'applique. Il ne peut pas contaminer l'abstention, parce que le vocabulaire du
+    domaine ne regarde que le champ 1 (invariant verifie par un test : ajouter une competence au
+    corps d'une autre ne doit JAMAIS faire charger cette autre).
+    """
 
     documents: tuple[Document, ...]
     _termes: dict[str, Counter[str]] = field(default_factory=dict, repr=False)
@@ -196,6 +243,10 @@ class Catalogue:
     _idf: dict[str, float] = field(default_factory=dict, repr=False)
     _norme: dict[str, float] = field(default_factory=dict, repr=False)
     _vocabulaire: frozenset[str] = frozenset()
+    _termes_corps: dict[str, Counter[str]] = field(default_factory=dict, repr=False)
+    _longueur_corps: dict[str, float] = field(default_factory=dict, repr=False)
+    _moyenne_corps: float = 1.0
+    _idf_corps: dict[str, float] = field(default_factory=dict, repr=False)
 
     @classmethod
     def depuis(cls, documents: Sequence[Document]) -> Catalogue:
@@ -204,8 +255,14 @@ class Catalogue:
             termes = _termes(doc.indexable)
             cat._termes[doc.nom] = termes
             cat._longueur[doc.nom] = float(sum(termes.values()))
+            if doc.corps:
+                termes_corps = _termes(doc.corps)
+                cat._termes_corps[doc.nom] = termes_corps
+                cat._longueur_corps[doc.nom] = float(sum(termes_corps.values()))
         total = cat._longueur.values()
         cat._moyenne = (sum(total) / len(cat._longueur)) if cat._longueur else 1.0
+        total_corps = cat._longueur_corps.values()
+        cat._moyenne_corps = (sum(total_corps) / len(total_corps)) if cat._longueur_corps else 1.0
         n = len(cat.documents)
         presence: Counter[str] = Counter()
         for termes in cat._termes.values():
@@ -216,24 +273,53 @@ class Catalogue:
         cat._idf = {
             terme: math.log(1 + (n - df + 0.5) / (df + 0.5)) for terme, df in presence.items()
         }
+        presence_corps: Counter[str] = Counter()
+        for termes in cat._termes_corps.values():
+            presence_corps.update(termes.keys())
+        n_corps = len(cat._termes_corps) or 1
+        cat._idf_corps = {
+            terme: math.log(1 + (n_corps - df + 0.5) / (df + 0.5))
+            for terme, df in presence_corps.items()
+        }
         cat._norme = {nom: math.sqrt(sum(v * v for v in t.values())) or 1.0
                       for nom, t in cat._termes.items()}
+        # Le vocabulaire du domaine ne vient QUE du champ 1 : c'est la garde qui empeche une
+        # prose de competence de transformer un hors-sujet en objectif du domaine.
         cat._vocabulaire = frozenset(presence)
         return cat
 
     # -- calculs ------------------------------------------------------------ #
 
-    def _bm25(self, nom: str, requete: Counter[str]) -> float:
-        termes = self._termes[nom]
-        longueur = self._longueur[nom] or 1.0
+    @staticmethod
+    def _bm25_champ(
+        nom: str,
+        requete: Counter[str],
+        termes_index: dict[str, Counter[str]],
+        longueurs: dict[str, float],
+        moyenne: float,
+        idf: dict[str, float],
+    ) -> float:
+        termes = termes_index.get(nom)
+        if not termes:
+            return 0.0
+        longueur = longueurs[nom] or 1.0
         score = 0.0
         for terme, qtf in requete.items():
             tf = termes.get(terme)
             if not tf:
                 continue
-            denominateur = tf + K1 * (1 - B + B * longueur / (self._moyenne or 1.0))
-            score += self._idf.get(terme, 0.0) * (tf * (K1 + 1) / denominateur) * qtf
+            denominateur = tf + K1 * (1 - B + B * longueur / (moyenne or 1.0))
+            score += idf.get(terme, 0.0) * (tf * (K1 + 1) / denominateur) * qtf
         return score
+
+    def _bm25(self, nom: str, requete: Counter[str]) -> float:
+        """Le score des deux champs : le tiers 0 pese 1, le corps pese `POIDS_CORPS`."""
+        return self._bm25_champ(
+            nom, requete, self._termes, self._longueur, self._moyenne, self._idf
+        ) + POIDS_CORPS * self._bm25_champ(
+            nom, requete, self._termes_corps, self._longueur_corps, self._moyenne_corps,
+            self._idf_corps,
+        )
 
     def _cosinus(self, gauche: str, droite: str) -> float:
         a, b = self._termes[gauche], self._termes[droite]
@@ -244,20 +330,34 @@ class Catalogue:
         return produit / (self._norme[gauche] * self._norme[droite])
 
     def raisons(self, nom: str, requete: Counter[str], combien: int = 3) -> tuple[str, ...]:
-        """Les termes qui ont le plus pese, avec leur contribution — le POURQUOI du choix."""
-        termes = self._termes[nom]
-        apports = [
-            (terme, self._idf.get(terme, 0.0) * termes[terme] * qtf)
-            for terme, qtf in requete.items() if terme in termes
-        ]
-        apports.sort(key=lambda x: (-x[1], x[0]))
-        return tuple(f"{terme} ({valeur:.2f})" for terme, valeur in apports[:combien])
+        """Les termes qui ont le plus pese, avec leur contribution — le POURQUOI du choix.
+
+        Les deux champs sont cites, parce que le score vient des deux : un terme du corps est
+        annote `corps:` et compte pour `POIDS_CORPS`. Sans cela, un choix dont le score vient du
+        corps s'affichait SANS raison (« aucun terme commun ») alors qu'il en avait une — defaut
+        trouve par un test, pas par relecture.
+        """
+        apports: dict[str, float] = {}
+        tiers0, corps_champ = self._termes.get(nom, {}), self._termes_corps.get(nom, {})
+        for terme, qtf in requete.items():
+            apport = self._idf.get(terme, 0.0) * tiers0.get(terme, 0.0) * qtf
+            apport += POIDS_CORPS * self._idf_corps.get(terme, 0.0) * corps_champ.get(terme, 0.0) * qtf
+            if apport:
+                # Le terme est cite UNE fois, avec l'apport des deux champs additionne : deux
+                # lignes pour le meme mot feraient lire deux raisons la ou il n'y en a qu'une.
+                # Le prefixe `corps:` ne marque donc que ce qui ne vient QUE du corps.
+                marque = "" if tiers0.get(terme) else "corps:"
+                apports[f"{marque}{terme}"] = apport
+        classement = sorted(apports.items(), key=lambda x: (-x[1], x[0]))
+        return tuple(f"{terme} ({valeur:.2f})" for terme, valeur in classement[:combien])
 
     def mots_du_domaine(self, objectif: str) -> frozenset[str]:
         """Les mots de DOMAINE de l'objectif, ramenes a leur RADICAL.
 
         Un mot est du domaine s'il appartient a une classe du lexique (`lexique.CONCEPT`) ou
-        s'il figure dans le vocabulaire des competences (nom, tags, description, categorie).
+        s'il figure dans le vocabulaire du TIERS 0 des competences (nom, tags, description,
+        categorie) — jamais dans celui des corps : sinon n'importe quelle prose ferait entrer
+        n'importe quel hors-sujet dans le domaine (defaut mesure, garde par un test).
         Un mot etranger (« espagnol », « bouton », « semaine ») ne prouve rien : c'est
         exactement ce qu'on veut mesurer avant de charger une procedure.
 
@@ -363,7 +463,7 @@ def catalogue_du_depot() -> Catalogue:
 
         _CATALOGUE = Catalogue.depuis([
             Document(nom=s.name, categorie=s.category, description=s.description,
-                     tags=tuple(s.tags))
+                     tags=tuple(s.tags), corps=s.body)
             for s in SKILLS
         ])
     return _CATALOGUE
