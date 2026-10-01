@@ -365,6 +365,12 @@ def test_chiffres_et_coherence_rendent_le_MEME_verdict_sur_le_meme_document(
              # incoherent pour `jio chiffres` comme pour la porte. C'est ce test qui a mordu a
              # chaque naissance d'un chiffre surveille, et c'est son role.
              f"{mesures['cas_controle']} cas jamais vus, "
+             # Le DIXIEME est la table de vecteurs semantique : sa phrase engage une ressource
+             # LIVREE (0,88 Mo de donnees), donc un document qui l'ignore est incoherent pour la
+             # meme raison que les neuf autres. Le test a mordu a la naissance de chaque chiffre
+             # surveille, sans exception — c'est son role, et c'est ce qui empeche un motif
+             # d'entrer sans que rien ne le verifie.
+             f"{mesures['vecteurs']} radicaux, "
              f"premier choix juste dans {mesures['premier_choix']} %\n")
 
     perime = juste.replace(f"{mesures['tests']} tests", f"{mesures['tests'] + 7} tests", 1)

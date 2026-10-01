@@ -21,10 +21,14 @@ import pytest
 from jio.bench.ablation import (
     LEVIERS,
     ConsensusPremierAvis,
+    Comparaison,
     Issue,
     PanelSansRedTeam,
     PorteOuverte,
     ProverAveugle,
+    _activite_de_sens,
+    _ecarts,
+    _phrase_activite,
     appliquer,
     dissociations_requises,
     formater,
@@ -200,6 +204,36 @@ def _executeur_truque():
         )
 
     return executer, appels
+
+
+def _executeur_avec_activite(actif: bool, identique: bool = False):
+    """Un executeur dont les missions portent une empreinte d'activite.
+
+    `actif=False` : la brique enlevee ne change RIEN a ce qui est compte — le banc ne
+    l'exerce pas. `actif=True` : elle coupe un temoin execute, sans que le verdict bouge.
+    `identique=True` : seuls des compteurs de VOLUME changent (jetons, evenements) — ce que
+    l'instrument doit refuser de prendre pour de l'activite.
+    """
+
+    def executer(indice: int, graine: int, ablations: tuple[str, ...]) -> Issue:
+        sans = bool(ablations)
+        temoins = 4 if (not sans or not actif) else 3
+        activite: dict[str, int] = {"temoins": temoins, "usage:events": 100 + indice}
+        if identique:
+            # Volume seulement : la valeur depend du bras, pas d'un observable de sens.
+            activite["usage:events"] = 100 + indice + (1 if sans else 0)
+            activite["temoins"] = 4
+        return Issue(
+            juste=True,
+            livree=True,
+            reservee=False,
+            silencieuse=False,
+            abstention=False,
+            appels=1,
+            activite=tuple(sorted(activite.items())),
+        )
+
+    return executer
 
 
 def test_tous_les_bras_voient_le_meme_plan_de_missions() -> None:
@@ -386,3 +420,101 @@ def test_sans_callback_l_ablation_ne_LEVE_pas() -> None:
     """
     rapport = mesurer(_executeur_truque()[0], taches=2, graines=1, leviers=["preuve"])
     assert rapport.leviers
+
+
+# --------------------------------------------------------------------------- #
+# 5. L'activite : « le banc ne l'exerce pas » n'est pas « la brique ne sert a rien »
+# --------------------------------------------------------------------------- #
+
+
+def test_un_compteur_de_volume_n_est_pas_de_l_activite() -> None:
+    """Sans ce filtre, les douze leviers paraissent actifs et l'instrument se tait en parlant.
+
+    Mesure a l'origine : `usage:events` bougeait pour TOUTES les ablations (142 -> 104),
+    comme il bougerait pour n'importe quel changement de chemin de code.
+    """
+    empreinte = {"temoins": 4, "temoins_ok": 3, "votes": 5, "usage:events": 142, "sujet_caracteres": 630}
+    assert _activite_de_sens(empreinte) == (("temoins", 4), ("temoins_ok", 3), ("votes", 5))
+    # Le volume seul ne compte pas comme un ecart de sens.
+    assert _ecarts({"usage:events": 1}, {"usage:events": 2}) == (("usage:events", 1, 2),)
+    assert _activite_de_sens({"usage:events": 1}) == _activite_de_sens({"usage:events": 2})
+
+
+def test_les_ecarts_de_sens_passent_avant_les_compteurs_de_volume() -> None:
+    """L'apercu du rapport doit parler du travail, pas du trafic."""
+    ecarts = _ecarts({"usage:events": 900, "constat:mutation": 1}, {"usage:events": 10})
+    assert [cle for cle, _, _ in ecarts][0] == "constat:mutation"
+
+
+def test_activite_identique_dit_que_le_banc_n_exerce_pas_la_brique() -> None:
+    rapport = mesurer(
+        _executeur_avec_activite(actif=False), taches=2, graines=2, leviers=["porte"]
+    )
+    porte = rapport.leviers[0]
+    assert porte.missions_activite_differente == 0
+    assert porte.observations_avec > 0, "l'instrument doit avoir compte quelque chose"
+    texte = formater(rapport)
+    assert "ACTIVITE IDENTIQUE" in texte
+    assert "Le banc, tel qu'il est, ne la met donc pas a l'epreuve" in texte
+    # Le conseil de l'ancien rapport serait une fausse piste payee en heures.
+    assert "aucune puissance d'echantillon ne conclura" in texte
+    assert "il en faudrait au moins" not in texte.split("VERDICTS")[1]
+
+
+def test_du_volume_qui_bouge_ne_suffit_pas_a_declarer_la_brique_active() -> None:
+    rapport = mesurer(
+        _executeur_avec_activite(actif=False, identique=True),
+        taches=2,
+        graines=2,
+        leviers=["porte"],
+    )
+    porte = rapport.leviers[0]
+    assert porte.missions_activite_differente == 0
+    assert "compteurs de VOLUME bougent" in formater(rapport)
+
+
+def test_une_brique_qui_agit_sans_changer_le_verdict_est_dite_agissante() -> None:
+    rapport = mesurer(
+        _executeur_avec_activite(actif=True), taches=2, graines=2, leviers=["porte"]
+    )
+    porte = rapport.leviers[0]
+    assert porte.missions_activite_differente == 4
+    ecarts = {cle: (avec, sans) for cle, avec, sans in porte.ecarts_activite}
+    # Les comptes sont des TOTAUX de bras : 4 missions x 4 temoins contre 4 x 3.
+    assert ecarts["temoins"] == (16, 12)
+    texte = formater(rapport)
+    assert "la brique AGIT sur 4/4 mission(s)" in texte
+    assert "REDONDANTE" in texte, "aucune dissociation : le mot doit rester mesure"
+    # Et l'instrument publie les nombres, pas seulement la phrase.
+    donnees = rapport.en_dict()["leviers"][0]
+    assert donnees["missions_activite_differente"] == 4
+    assert donnees["observations_avec"] == donnees["observations_sans"] + 4
+    assert {"cle": "temoins", "complet": 16, "sans": 12} in donnees["ecarts_activite"]
+
+
+def test_l_instrument_se_tait_quand_il_n_a_rien_compte() -> None:
+    """« Je n'ai pas regarde » ne s'ecrit pas comme « il ne s'est rien passe »."""
+    vide = Comparaison(
+        nom="porte", quoi="q", sans="s", n=1, justes_avec=1, justes_sans=1, livrees_avec=1,
+        livrees_sans=1, reservees_avec=0, reservees_sans=0, silencieuses_avec=0,
+        silencieuses_sans=0, abstentions_avec=0, abstentions_sans=0, appels_avec=1.0,
+        appels_sans=1.0, b=0, c=0, p_exact=1.0, ic_bas=0.0, ic_haut=0.0, b_propre=0,
+        c_propre=0, p_propre=1.0,
+    )
+    assert _phrase_activite(vide) == ""
+
+
+def test_les_ecarts_qui_vont_contre_la_brique_sont_nommes() -> None:
+    """Une brique qui degrade la ou elle agit doit etre signalee, pas defendue."""
+    degrade = Comparaison(
+        nom="x", quoi="q", sans="s", n=10, justes_avec=8, justes_sans=9, livrees_avec=8,
+        livrees_sans=9, reservees_avec=0, reservees_sans=0, silencieuses_avec=0,
+        silencieuses_sans=0, abstentions_avec=0, abstentions_sans=0, appels_avec=1.0,
+        appels_sans=1.0, b=0, c=3, p_exact=0.25, ic_bas=0.0, ic_haut=0.0, b_propre=0,
+        c_propre=2, p_propre=0.5,
+        missions_activite_differente=3, observations_avec=20, observations_sans=22,
+        ecarts_activite=(("temoins", 20, 22),),
+    )
+    phrase = _phrase_activite(degrade)
+    assert "CONTRE elle" in phrase
+    assert "5 contre 0" in phrase

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 from ..audit.consensus import ConsensusOutcome
 from ..audit.panel import CriticReport, Persona
@@ -361,6 +361,18 @@ class Issue:
     abstention: bool
     appels: int
     duree_s: float = 0.0
+    #: Ce que la mission a FAIT, independamment de son resultat : (cle, compte) tries.
+    #:
+    #: C'est la reponse a un defaut mesure de ce rapport. Sur 12 leviers, 9 ressortaient
+    #: « NON DISTINGUABLE » — meme justesse, memes livraisons, meme nombre d'appels — et le
+    #: lecteur ne pouvait pas savoir si la brique n'avait SERVIs a rien ou si le banc ne
+    #: l'avait jamais mise a l'epreuve. Les deux phrases appellent des actions opposees :
+    #: dans un cas on retire du code, dans l'autre on change de banc. Les confondre, c'est
+    #: livrer un instrument qui ne peut pas se tromper, donc qui ne prouve rien.
+    #:
+    #: Un tuple trie, pas un dict : un dataclass fige doit rester hachable, et l'ordre
+    #: d'insertion d'un dict ne doit pas decider si deux bras sont egaux.
+    activite: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass
@@ -472,8 +484,18 @@ class Comparaison:
     b_propre: int
     c_propre: int
     p_propre: float
-    verdict: str
-    note: str
+    #: Appariement sur l'ACTIVITE : nombre de missions ou la brique enlevee change AU MOINS
+    #: un observable (temoins executes, votes, constats par agent, usage). Zero signifie
+    #: « le banc ne la met pas a l'epreuve », pas « la brique ne sert a rien ».
+    missions_activite_differente: int = 0
+    #: Total des observables comptes dans chaque bras — 0 veut dire NON MESURE, et alors
+    #: l'instrument se tait au lieu d'affirmer.
+    observations_avec: int = 0
+    observations_sans: int = 0
+    #: (cle, complet, sans) pour les seules cles qui changent : ce que le retrait coupe.
+    ecarts_activite: tuple[tuple[str, int, int], ...] = ()
+    verdict: str = ""
+    note: str = ""
 
     @property
     def refus_supplementaires(self) -> int:
@@ -654,6 +676,13 @@ class RapportAblation:
                     "c_propre": c.c_propre,
                     "p_propre": round(c.p_propre, 6),
                     "ic95_points": [round(100 * c.ic_bas, 1), round(100 * c.ic_haut, 1)],
+                    "missions_activite_differente": c.missions_activite_differente,
+                    "observations_avec": c.observations_avec,
+                    "observations_sans": c.observations_sans,
+                    "ecarts_activite": [
+                        {"cle": cle, "complet": avec, "sans": sans}
+                        for cle, avec, sans in c.ecarts_activite
+                    ],
                     "verdict": c.verdict,
                     "note": c.note,
                 }
@@ -661,6 +690,122 @@ class RapportAblation:
             ],
             "note": self.note,
         }
+
+
+def _somme_activite(issues: Sequence[Issue]) -> dict[str, int]:
+    """Le total de chaque observable sur un bras, cle par cle.
+
+    Une cle absente d'un bras et presente dans l'autre est un ecart autant qu'une valeur
+    differente : c'est meme le cas le plus parlant (la brique coupee, son constat disparait
+    entierement). On n'invente pas de cle a zero : on compare ce qui a ete compte.
+    """
+    total: dict[str, int] = {}
+    for issue in issues:
+        for cle, compte in issue.activite:
+            total[cle] = total.get(cle, 0) + compte
+    return total
+
+
+#: Les observables qui PORTENT UN SENS : ils disent ce que le systeme a verifie, vote,
+#: constate ou subi. Les autres (`usage:*`, `journal`, `sujet_caracteres`) sont des
+#: compteurs de VOLUME : ils bougent des qu'un chemin de code differe, y compris quand
+#: aucune decision ne change. Mesure a l'origine : sans cette distinction, les douze
+#: leviers paraissaient « actifs » sur 10 missions sur 10 — `usage:events` suffisait — et
+#: l'instrument restait muet tout en ayant l'air de parler.
+#:  * `integrite_etapes` compte les pas de journal REJOUES par le moniteur : retirer le
+#:    moniteur ne laisse pas « un peu moins de journal », il n'en rejoue plus un seul
+#:    (508 -> 0 mesures). Ce n'est donc pas du volume, c'est le travail de la brique.
+_SENS: frozenset[str] = frozenset(
+    {"temoins", "temoins_ok", "votes", "exploits", "integrite_etapes"}
+)
+
+
+def _a_du_sens(cle: str) -> bool:
+    """Cet observable dit-il quelque chose de la mission, ou seulement de son volume ?"""
+    return cle in _SENS or cle.startswith("constat:")
+
+
+def _activite_de_sens(activite: Mapping[str, int]) -> tuple[tuple[str, int], ...]:
+    """La part SIGNIFIANTE d'une empreinte d'activite, seule comparable d'un bras a l'autre."""
+    return tuple(sorted((c, v) for c, v in activite.items() if _a_du_sens(c)))
+
+
+def _ecarts(avec: Mapping[str, int], sans: Mapping[str, int]) -> tuple[tuple[str, int, int], ...]:
+    """Les cles dont le compte change, triees par ecart decroissant puis par nom.
+
+    Le tri est ce qui rend la note lisible ET stable : un dictionnaire parcouru dans un
+    ordre arbitraire ferait varier le texte d'un rapport a l'autre sans qu'une mesure
+    change, et un rapport qui bouge tout seul n'est pas une preuve.
+    """
+    def rang(c: str) -> tuple[int, int, str]:
+        return (0 if _a_du_sens(c) else 1, -(avec.get(c, 0) - sans.get(c, 0)), c)
+
+    cles = sorted(
+        {c for c in set(avec) | set(sans) if avec.get(c, 0) != sans.get(c, 0)},
+        key=rang,
+    )
+    return tuple((c, avec.get(c, 0), sans.get(c, 0)) for c in cles)
+
+
+def _phrase_activite(comp: Comparaison) -> str:
+    """Ce que l'ablation a CHANGE dans le travail, quand elle ne change pas le verdict.
+
+    Deux cas, et ils ne se valent pas :
+
+    * aucune mission ne differe : le banc ne met pas la brique a l'epreuve. Le dire est
+      decisif — `--missions 100` ne changerait rien, il faut un banc qui l'exerce ;
+    * des missions different : la brique AGIT, mais son action ne deplace ici ni la
+      justesse ni la livraison. C'est une redondance mesuree, pas une absence.
+
+    L'instrument se TAIT quand il n'a rien compte (observations a zero) : « je n'ai pas
+    regarde » et « il ne s'est rien passe » ne s'ecrivent pas pareil.
+    """
+    if comp.observations_avec == 0:
+        return ""
+    if not comp.missions_activite_differente:
+        volume = ", ".join(
+            f"{cle} {avec}->{sans}" for cle, avec, sans in comp.ecarts_activite[:2]
+        )
+        detail = (
+            f" Seuls des compteurs de VOLUME bougent ({volume}), et ils bougeraient pour "
+            "n'importe quel changement de chemin de code."
+            if volume
+            else " Aucun compteur ne bouge non plus."
+        )
+        return (
+            f"ACTIVITE IDENTIQUE sur les {comp.n} mission(s) : retirer cette brique ne "
+            "change aucun observable de sens (temoins executes, votes, constats, exploits)."
+            + detail
+            + " Le banc, tel qu'il est, ne la met donc pas a l'epreuve : elargir `--missions` "
+            "(memes taches, autres graines) ne peut rien y changer — il faut des missions ou "
+            "la brique ait quelque chose a faire, ou un autre mode."
+        )
+    apercu = ", ".join(
+        f"{cle} {avec}->{sans}" for cle, avec, sans in comp.ecarts_activite if _a_du_sens(cle)
+    ) or ", ".join(f"{cle} {avec}->{sans}" for cle, avec, sans in comp.ecarts_activite[:3])
+    tete = (
+        f"la brique AGIT sur {comp.missions_activite_differente}/{comp.n} mission(s) "
+        f"({apercu})."
+    )
+    pour = comp.b + comp.b_propre
+    contre = comp.c + comp.c_propre
+    if pour == 0 and contre == 0:
+        return (
+            tete + " Aucune dissociation ici : sur ces missions elle est REDONDANTE — les "
+            "autres briques tenaient deja la ligne — et non absente : retirer du code sur "
+            "cette base serait une conclusion tiree d'un banc qui ne l'a pas mise en "
+            "difficulte."
+        )
+    if pour >= contre:
+        return (
+            tete + f" Les ecarts observes vont dans SON sens ({pour} contre {contre}) : elle "
+            "travaille, et ce qui manque est un echantillon plus grand ou des missions plus "
+            "dures — pas une brique a retirer."
+        )
+    return (
+        tete + f" Les ecarts vont CONTRE elle ({contre} contre {pour}) : a interroger, car "
+        "une brique qui degrade la ou elle agit est un cout, pas une assurance."
+    )
 
 
 def mesurer(
@@ -731,6 +876,16 @@ def mesurer(
         )
         p = mcnemar_exact(b, c)
         bas, haut = _wald_apparie(b, c, len(plan))
+        activite_avec = _somme_activite(complet.issues)
+        activite_sans = _somme_activite(bras.issues)
+        # La comparaison porte sur les observables de SENS. Comparer l'empreinte entiere
+        # ferait dire « la brique agit » a toute ablation qui deplace un compteur interne,
+        # et un instrument qui repond oui a tout ne peut pas se tromper — donc ne prouve rien.
+        missions_activite = sum(
+            1
+            for a, s in zip(complet.issues, bras.issues)
+            if _activite_de_sens(dict(a.activite)) != _activite_de_sens(dict(s.activite))
+        )
         comparaison = Comparaison(
             nom=nom,
             quoi=definition.quoi,
@@ -756,11 +911,27 @@ def mesurer(
             b_propre=b_propre,
             c_propre=c_propre,
             p_propre=mcnemar_exact(b_propre, c_propre),
+            missions_activite_differente=missions_activite,
+            observations_avec=sum(activite_avec.values()),
+            observations_sans=sum(activite_sans.values()),
+            ecarts_activite=_ecarts(activite_avec, activite_sans),
             verdict="",
             note="",
         )
         verdict, note = _verdict(comparaison)
-        budget = _budget_de_mesure(comparaison)
+        # L'activite ne s'ajoute QU'AUX verdicts qui ne concluent pas : quand une preuve
+        # est etablie, la note dit deja quoi ; ailleurs, elle est la seule prise.
+        banc_muet = False
+        if verdict.startswith("NON"):
+            phrase = _phrase_activite(comparaison)
+            if phrase:
+                banc_muet = phrase.startswith("ACTIVITE IDENTIQUE")
+                note = f"{note} {phrase}" if note else phrase
+        # Un budget de mesure n'a de sens que si l'echantillon peut trancher. Quand
+        # l'activite est identique, elargir ne peut RIEN changer : l'ancienne note
+        # conseillait alors `--missions`, c'est-a-dire de payer des heures pour un
+        # resultat deja connu. La phrase d'activite remplace le budget, elle ne s'y ajoute pas.
+        budget = "" if banc_muet else _budget_de_mesure(comparaison)
         comparaisons.append(
             replace(
                 comparaison,
@@ -806,16 +977,26 @@ def formater(rapport: RapportAblation) -> str:
     )
     lignes.append("    C'est le seul chiffre qui doit valoir zero ; le reste se lit ensuite.")
     lignes.append("")
-    largeurs = (13, 15, 8, 8, 11, 6, 7)
+    largeurs = (13, 15, 8, 8, 11, 6, 7, 10)
     lignes.append(
         _ligne(
-            ("levier", "justes", "livrees", "reserve", "silencieuses", "abst.", "appels"),
+            (
+                "levier",
+                "justes",
+                "livrees",
+                "reserve",
+                "silencieuses",
+                "abst.",
+                "appels",
+                "activite",
+            ),
             largeurs,
         )
     )
     lignes.append(
         _ligne(
-            ("-" * 13, "-" * 15, "-" * 8, "-" * 8, "-" * 11, "-" * 6, "-" * 7), largeurs
+            tuple("-" * l for l in largeurs),
+            largeurs,
         )
     )
     entete = (
@@ -826,6 +1007,7 @@ def formater(rapport: RapportAblation) -> str:
         f"{complet.silencieuses}",
         f"{complet.abstentions}",
         f"{complet.appels:.1f}",
+        f"{sum(v for i in complet.issues for v in dict(i.activite).values())}",
     )
     lignes.append(_ligne(entete, largeurs))
     for c in rapport.leviers:
@@ -839,6 +1021,11 @@ def formater(rapport: RapportAblation) -> str:
                     f"{c.silencieuses_sans}",
                     f"{c.abstentions_sans}",
                     f"{c.appels_sans:.1f}",
+                    (
+                        f"{c.missions_activite_differente}/{c.n} m."
+                        if c.observations_avec
+                        else "-"
+                    ),
                 ),
                 largeurs,
             )
@@ -850,15 +1037,25 @@ def formater(rapport: RapportAblation) -> str:
     for c in rapport.leviers:
         lignes.append(f"    {c.nom:<13} {c.verdict:<18} {c.note}")
         if c.verdict == "NON DISTINGUABLE":
-            lignes.append(
-                f"                  aucune dissociation : il en faudrait au moins {besoin} "
-                "dans le meme sens"
-            )
-            lignes.append(
-                f"                  pour conclure (2/2^{besoin} = "
-                f"{100 * 2.0 / 2**besoin:.1f} %) — l'absence de preuve n'est pas la "
-                "preuve de l'absence."
-            )
+            if c.observations_avec and not c.missions_activite_differente:
+                # Le banc ne l'exerce pas : conseiller `--missions` serait une fausse
+                # piste payee en heures. Le calcul de puissance ne s'applique pas, il n'y a
+                # rien a echantillonner.
+                lignes.append(
+                    "                  le banc ne l'exerce pas : aucune puissance "
+                    "d'echantillon ne conclura, il faut une mission ou la brique ait "
+                    "quelque chose a faire."
+                )
+            else:
+                lignes.append(
+                    f"                  aucune dissociation : il en faudrait au moins {besoin} "
+                    "dans le meme sens"
+                )
+                lignes.append(
+                    f"                  pour conclure (2/2^{besoin} = "
+                    f"{100 * 2.0 / 2**besoin:.1f} %) — l'absence de preuve n'est pas la "
+                    "preuve de l'absence."
+                )
         elif c.verdict == "NON CONCLUANT":
             lignes.append(
                 f"                  l'ecart n'est pas tranche : il faudrait au moins "
@@ -894,10 +1091,34 @@ def formater(rapport: RapportAblation) -> str:
             )
     lignes.append("")
     lignes.append(
+        "    Colonne « activite » : missions ou le retrait change un observable DE SENS"
+    )
+    lignes.append(
+        "    (temoins executes, votes, constats par agent, exploits cherches, journal"
+    )
+    lignes.append(
+        "    rejoue) — plus sensible que le verdict. Les compteurs de VOLUME (jetons,"
+    )
+    lignes.append(
+        "    evenements, taille du sujet) en sont exclus : ils bougent des qu'un chemin de"
+    )
+    lignes.append(
+        "    code differe, meme quand rien ne change. D'ou trois lectures : le banc ne"
+    )
+    lignes.append(
+        "    l'exerce pas · elle agit sans rien deplacer · elle agit et l'ecart penche."
+    )
+    lignes.append(
         "    Un levier « NON DISTINGUABLE » n'est pas un levier inutile : c'est un levier"
     )
     lignes.append(
-        "    dont l'effet n'a pas ete vu a cette taille. `--missions` elargit l'echantillon ;"
+        "    dont l'effet n'a pas ete vu a cette taille. `--missions` elargit l'echantillon,"
+    )
+    lignes.append(
+        "    mais SEULEMENT la ou la colonne « activite » montre que la brique agit : la ou"
+    )
+    lignes.append(
+        "    elle est identique, l'echantillon ne peut rien dire, il faut d'autres missions."
     )
     lignes.append("    chaque ligne de verdict dit ce qu'il faudrait pour trancher.")
     if rapport.note:

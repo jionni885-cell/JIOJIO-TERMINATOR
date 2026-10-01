@@ -434,7 +434,7 @@ def _tool_skills(args: dict[str, Any]) -> str:
             from .skills.router import proches
 
             # Cinq : voir `router.proches` — la liste n'est pas une injection de corps, et la
-            # mesure (recall@5 = 67 % contre 58 % a trois) justifie les quinze jetons de plus.
+            # mesure (recall@5 = 71 % contre 58 % a trois) justifie les quinze jetons de plus.
             liste = proches(objectif, maximum=5)
             q = qualite_de_la_liste()
             lignes = [
@@ -449,10 +449,19 @@ def _tool_skills(args: dict[str, Any]) -> str:
                     "LES PLUS PROCHES, classees — ce n'est PAS une decision, c'est une liste :",
                 ]
                 lignes += [
-                    f"- {c.nom} [{c.categorie}] score {c.score} — "
-                    f"{', '.join(c.raisons) if c.raisons else 'aucun terme commun'}"
+                    f"- {c.nom} [{c.categorie}] score {c.score}"
+                    + ("" if c.proximite is None else f" · ressemblance {c.proximite:.2f}")
+                    + f" — {', '.join(c.raisons) if c.raisons else 'aucun terme commun'}"
                     for c in liste
                 ]
+                marquees = sum(1 for c in liste if c.proximite is None)
+                if marquees < len(liste):
+                    lignes.append(
+                        f"{marquees} element(s) marque(s) par le lexique, "
+                        f"{len(liste) - marquees} ajoute(s) par RESSEMBLANCE (la ligne "
+                        f"« aucun mot commun » dit lesquels) : la ressemblance ordonne des "
+                        f"trous, elle ne charge aucune procedure."
+                    )
                 lignes += [
                     f"Mesure : quand la porte se ferme, la premiere de cette liste est la bonne "
                     f"{q['justes']:.0f} fois sur {q['cas']:.0f} ({q['taux']:.0%}), contre "

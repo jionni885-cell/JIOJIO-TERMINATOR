@@ -195,7 +195,7 @@ def mesurer_tous() -> dict[str, float]:
     return reunis
 
 
-def qualite_de_la_liste() -> dict[str, float]:
+def qualite_de_la_liste() -> dict[str, object]:
     """Quand la porte se ferme, ce qu'elle rend vaut-il mieux que le hasard ?
 
     La question du routeur ne s'arrete pas a « charger ou non » : quand il ne charge rien, il
@@ -210,6 +210,7 @@ def qualite_de_la_liste() -> dict[str, float]:
     from .router import catalogue_du_depot, proches
 
     justes = total = 0
+    rappel = {1: 0, 3: 0, 5: 0, 12: 0}
     for jeu in JEUX:
         for texte, attendu, _ in jeu.cas:
             if _premier(texte) is not None:
@@ -218,6 +219,12 @@ def qualite_de_la_liste() -> dict[str, float]:
             liste = proches(texte, maximum=3)
             if liste and liste[0].nom == attendu:
                 justes += 1
+            # Le rappel par longueur : « la bonne reponse est-elle VISIBLE ? » a 1, 3, 5 et 12
+            # elements. Un seul nombre ne suffit pas a choisir la longueur rendue — c'est ce
+            # tableau qui a fixe 5, et c'est lui qui dira si une autre valeur vaut mieux.
+            longue = [c.nom for c in proches(texte, maximum=12)]
+            for combien in rappel:
+                rappel[combien] += int(attendu in longue[:combien])
     hasard = 1.0 / max(1, len(catalogue_du_depot().documents))
     return {
         "justes": float(justes),
@@ -225,6 +232,7 @@ def qualite_de_la_liste() -> dict[str, float]:
         "taux": (justes / total) if total else 0.0,
         "hasard": hasard,
         "facteur": ((justes / total) / hasard) if total and hasard else 0.0,
+        "rappel": {k: (v / total if total else 0.0) for k, v in rappel.items()},  # type: ignore[dict-item]
     }
 
 
@@ -250,6 +258,14 @@ def resume_tous() -> str:
         f"{q['justes']:.0f}/{q['cas']:.0f} fois ({q['taux']:.0%}), contre {q['hasard']:.0%} "
         f"au hasard — la liste vaut donc {q['facteur']:.1f} fois le hasard, et c'est ce qui "
         f"est rendu a la place du vide"
+    )
+    r = q["rappel"]
+    assert isinstance(r, dict)
+    lignes.append(
+        "    ET LA BONNE REPONSE EST VISIBLE : "
+        + " · ".join(f"dans les {k} premiers {r[k]:.0%}" for k in (1, 3, 5, 12))
+        + " — c'est ce tableau qui fixe la longueur rendue (5), et la derniere colonne qui "
+          "verifie qu'elle n'est jamais absente de la liste complete"
     )
     return "\n".join(lignes)
 

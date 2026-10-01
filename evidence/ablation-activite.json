@@ -1,0 +1,518 @@
+{
+  "n_missions": 10,
+  "taches": 5,
+  "graines": 2,
+  "complet": {
+    "justes": 10,
+    "livrees": 8,
+    "reservees": 2,
+    "silencieuses": 0,
+    "abstentions": 0,
+    "appels": 3.3
+  },
+  "leviers": [
+    {
+      "nom": "preuve",
+      "sans": "tout ce qui est soumis est declare prouve (temoin vide, aucune execution)",
+      "justes_avec": 10,
+      "justes_sans": 5,
+      "livrees_avec": 8,
+      "livrees_sans": 0,
+      "reservees_avec": 2,
+      "reservees_sans": 10,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.3,
+      "appels_sans": 3.0,
+      "b": 5,
+      "c": 0,
+      "p_exact": 0.0625,
+      "b_propre": 8,
+      "c_propre": 0,
+      "p_propre": 0.007812,
+      "ic95_points": [
+        19.0,
+        81.0
+      ],
+      "missions_activite_differente": 10,
+      "observations_avec": 33272,
+      "observations_sans": 27589,
+      "ecarts_activite": [
+        {
+          "cle": "integrite_etapes",
+          "complet": 508,
+          "sans": 126
+        },
+        {
+          "cle": "temoins",
+          "complet": 44,
+          "sans": 10
+        },
+        {
+          "cle": "temoins_ok",
+          "complet": 44,
+          "sans": 10
+        },
+        {
+          "cle": "constat:redteam",
+          "complet": 0,
+          "sans": 1
+        },
+        {
+          "cle": "constat:mutation",
+          "complet": 2,
+          "sans": 10
+        },
+        {
+          "cle": "usage:prompt_tokens",
+          "complet": 27888,
+          "sans": 23916
+        },
+        {
+          "cle": "usage:events",
+          "complet": 716,
+          "sans": 166
+        },
+        {
+          "cle": "sujet_caracteres",
+          "complet": 2298,
+          "sans": 1877
+        },
+        {
+          "cle": "usage:completion_tokens",
+          "complet": 1687,
+          "sans": 1382
+        },
+        {
+          "cle": "usage:calls",
+          "complet": 33,
+          "sans": 30
+        },
+        {
+          "cle": "constats",
+          "complet": 2,
+          "sans": 11
+        }
+      ],
+      "verdict": "PREUVE (livraison propre)",
+      "note": "8 mission(s) ne sont plus livrees SANS reserve contre 0 (McNemar exact p = 0.0078) : la brique ne rend pas le resultat plus juste, elle le rend livrable. observe : 5 dans un sens, 0 dans l'autre ; il en faudrait au moins 6 dans le MEME sens pour conclure."
+    },
+    {
+      "nom": "red-team",
+      "sans": "le meme nombre de critiques, mais tous complaisants",
+      "justes_avec": 10,
+      "justes_sans": 10,
+      "livrees_avec": 8,
+      "livrees_sans": 0,
+      "reservees_avec": 2,
+      "reservees_sans": 10,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.3,
+      "appels_sans": 10.5,
+      "b": 0,
+      "c": 0,
+      "p_exact": 1.0,
+      "b_propre": 8,
+      "c_propre": 0,
+      "p_propre": 0.007812,
+      "ic95_points": [
+        0.0,
+        0.0
+      ],
+      "missions_activite_differente": 10,
+      "observations_avec": 33272,
+      "observations_sans": 100990,
+      "ecarts_activite": [
+        {
+          "cle": "constat:oscillation",
+          "complet": 0,
+          "sans": 5
+        },
+        {
+          "cle": "constat:consensus",
+          "complet": 0,
+          "sans": 26
+        },
+        {
+          "cle": "integrite_etapes",
+          "complet": 508,
+          "sans": 803
+        },
+        {
+          "cle": "constats",
+          "complet": 2,
+          "sans": 33
+        },
+        {
+          "cle": "usage:calls",
+          "complet": 33,
+          "sans": 105
+        },
+        {
+          "cle": "usage:events",
+          "complet": 716,
+          "sans": 1011
+        },
+        {
+          "cle": "usage:completion_tokens",
+          "complet": 1687,
+          "sans": 4640
+        },
+        {
+          "cle": "usage:prompt_tokens",
+          "complet": 27888,
+          "sans": 91929
+        }
+      ],
+      "verdict": "PREUVE (livraison propre)",
+      "note": "8 mission(s) ne sont plus livrees SANS reserve contre 0 (McNemar exact p = 0.0078) : la brique ne rend pas le resultat plus juste, elle le rend livrable. aucune dissociation observee ; au moins 6 dissociations dans le meme sens seraient necessaires pour que ce test conclue."
+    },
+    {
+      "nom": "consensus",
+      "sans": "le premier avis decide, sans quorum ni supermajorite",
+      "justes_avec": 10,
+      "justes_sans": 10,
+      "livrees_avec": 8,
+      "livrees_sans": 0,
+      "reservees_avec": 2,
+      "reservees_sans": 10,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.3,
+      "appels_sans": 3.3,
+      "b": 0,
+      "c": 0,
+      "p_exact": 1.0,
+      "b_propre": 8,
+      "c_propre": 0,
+      "p_propre": 0.007812,
+      "ic95_points": [
+        0.0,
+        0.0
+      ],
+      "missions_activite_differente": 0,
+      "observations_avec": 33272,
+      "observations_sans": 33272,
+      "ecarts_activite": [],
+      "verdict": "PREUVE (livraison propre)",
+      "note": "8 mission(s) ne sont plus livrees SANS reserve contre 0 (McNemar exact p = 0.0078) : la brique ne rend pas le resultat plus juste, elle le rend livrable. aucune dissociation observee ; au moins 6 dissociations dans le meme sens seraient necessaires pour que ce test conclue."
+    },
+    {
+      "nom": "porte",
+      "sans": "toute confiance est acceptee",
+      "justes_avec": 10,
+      "justes_sans": 10,
+      "livrees_avec": 8,
+      "livrees_sans": 8,
+      "reservees_avec": 2,
+      "reservees_sans": 2,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.3,
+      "appels_sans": 3.3,
+      "b": 0,
+      "c": 0,
+      "p_exact": 1.0,
+      "b_propre": 0,
+      "c_propre": 0,
+      "p_propre": 1.0,
+      "ic95_points": [
+        0.0,
+        0.0
+      ],
+      "missions_activite_differente": 0,
+      "observations_avec": 33272,
+      "observations_sans": 33272,
+      "ecarts_activite": [],
+      "verdict": "NON DISTINGUABLE",
+      "note": "aucune dissociation sur 10 mission(s) appariee(s), ni sur la justesse ni sur la livraison propre ; effet mesure dans [+0% ; +0%]. ACTIVITE IDENTIQUE sur les 10 mission(s) : retirer cette brique ne change aucun observable de sens (temoins executes, votes, constats, exploits). Aucun compteur ne bouge non plus. Le banc ne la met donc pas a l'epreuve — elargir `--missions` ne peut rien y changer, il faut des missions ou la brique a quelque chose a faire."
+    },
+    {
+      "nom": "integrite",
+      "sans": "aucun exploit n'est cherche",
+      "justes_avec": 10,
+      "justes_sans": 10,
+      "livrees_avec": 8,
+      "livrees_sans": 8,
+      "reservees_avec": 2,
+      "reservees_sans": 2,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.3,
+      "appels_sans": 3.3,
+      "b": 0,
+      "c": 0,
+      "p_exact": 1.0,
+      "b_propre": 0,
+      "c_propre": 0,
+      "p_propre": 1.0,
+      "ic95_points": [
+        0.0,
+        0.0
+      ],
+      "missions_activite_differente": 10,
+      "observations_avec": 33272,
+      "observations_sans": 32764,
+      "ecarts_activite": [
+        {
+          "cle": "integrite_etapes",
+          "complet": 508,
+          "sans": 0
+        }
+      ],
+      "verdict": "NON DISTINGUABLE",
+      "note": "aucune dissociation sur 10 mission(s) appariee(s), ni sur la justesse ni sur la livraison propre ; effet mesure dans [+0% ; +0%]. la brique AGIT sur 10/10 mission(s) (integrite_etapes 508->0). Aucune dissociation ici : sur ces missions elle est REDONDANTE — les autres briques tenaient deja la ligne — et non absente : retirer du code sur cette base serait une conclusion tiree d'un banc qui ne l'a pas mise en difficulte. aucune dissociation observee ; au moins 6 dissociations dans le meme sens seraient necessaires pour que ce test conclue."
+    },
+    {
+      "nom": "mutation",
+      "sans": "les regles ne sont jamais mises a l'epreuve d'un mutant",
+      "justes_avec": 10,
+      "justes_sans": 10,
+      "livrees_avec": 8,
+      "livrees_sans": 10,
+      "reservees_avec": 2,
+      "reservees_sans": 0,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.3,
+      "appels_sans": 3.3,
+      "b": 0,
+      "c": 0,
+      "p_exact": 1.0,
+      "b_propre": 0,
+      "c_propre": 2,
+      "p_propre": 0.5,
+      "ic95_points": [
+        0.0,
+        0.0
+      ],
+      "missions_activite_differente": 2,
+      "observations_avec": 33272,
+      "observations_sans": 33090,
+      "ecarts_activite": [
+        {
+          "cle": "constat:mutation",
+          "complet": 2,
+          "sans": 0
+        },
+        {
+          "cle": "usage:events",
+          "complet": 716,
+          "sans": 538
+        },
+        {
+          "cle": "constats",
+          "complet": 2,
+          "sans": 0
+        }
+      ],
+      "verdict": "NON CONCLUANT",
+      "note": "justesse : 0 dissociation(s) d'un cote, 0 de l'autre ; livraison propre : 0 contre 2 (p = 0.500). la brique AGIT sur 2/10 mission(s) (constat:mutation 2->0). Les ecarts vont CONTRE elle (2 contre 0) : a interroger, car une brique qui degrade la ou elle agit est un cout, pas une assurance. aucune dissociation observee ; au moins 6 dissociations dans le meme sens seraient necessaires pour que ce test conclue."
+    },
+    {
+      "nom": "auto-coherence",
+      "sans": "la documentation de l'artefact n'est plus lue",
+      "justes_avec": 10,
+      "justes_sans": 10,
+      "livrees_avec": 8,
+      "livrees_sans": 8,
+      "reservees_avec": 2,
+      "reservees_sans": 2,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.3,
+      "appels_sans": 3.3,
+      "b": 0,
+      "c": 0,
+      "p_exact": 1.0,
+      "b_propre": 0,
+      "c_propre": 0,
+      "p_propre": 1.0,
+      "ic95_points": [
+        0.0,
+        0.0
+      ],
+      "missions_activite_differente": 10,
+      "observations_avec": 33272,
+      "observations_sans": 33252,
+      "ecarts_activite": [
+        {
+          "cle": "integrite_etapes",
+          "complet": 508,
+          "sans": 498
+        },
+        {
+          "cle": "usage:events",
+          "complet": 716,
+          "sans": 706
+        }
+      ],
+      "verdict": "NON DISTINGUABLE",
+      "note": "aucune dissociation sur 10 mission(s) appariee(s), ni sur la justesse ni sur la livraison propre ; effet mesure dans [+0% ; +0%]. la brique AGIT sur 10/10 mission(s) (integrite_etapes 508->498). Aucune dissociation ici : sur ces missions elle est REDONDANTE — les autres briques tenaient deja la ligne — et non absente : retirer du code sur cette base serait une conclusion tiree d'un banc qui ne l'a pas mise en difficulte. aucune dissociation observee ; au moins 6 dissociations dans le meme sens seraient necessaires pour que ce test conclue."
+    },
+    {
+      "nom": "differentiel",
+      "sans": "les candidats sont departages sans comparaison explicite",
+      "justes_avec": 10,
+      "justes_sans": 10,
+      "livrees_avec": 8,
+      "livrees_sans": 8,
+      "reservees_avec": 2,
+      "reservees_sans": 2,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.3,
+      "appels_sans": 3.3,
+      "b": 0,
+      "c": 0,
+      "p_exact": 1.0,
+      "b_propre": 0,
+      "c_propre": 0,
+      "p_propre": 1.0,
+      "ic95_points": [
+        0.0,
+        0.0
+      ],
+      "missions_activite_differente": 0,
+      "observations_avec": 33272,
+      "observations_sans": 33272,
+      "ecarts_activite": [],
+      "verdict": "NON DISTINGUABLE",
+      "note": "aucune dissociation sur 10 mission(s) appariee(s), ni sur la justesse ni sur la livraison propre ; effet mesure dans [+0% ; +0%]. ACTIVITE IDENTIQUE sur les 10 mission(s) : retirer cette brique ne change aucun observable de sens (temoins executes, votes, constats, exploits). Aucun compteur ne bouge non plus. Le banc ne la met donc pas a l'epreuve — elargir `--missions` ne peut rien y changer, il faut des missions ou la brique a quelque chose a faire."
+    },
+    {
+      "nom": "temoins",
+      "sans": "aucune traduction : sans oracle, le moteur ne peut plus rien prouver",
+      "justes_avec": 10,
+      "justes_sans": 10,
+      "livrees_avec": 8,
+      "livrees_sans": 8,
+      "reservees_avec": 2,
+      "reservees_sans": 2,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.3,
+      "appels_sans": 3.3,
+      "b": 0,
+      "c": 0,
+      "p_exact": 1.0,
+      "b_propre": 0,
+      "c_propre": 0,
+      "p_propre": 1.0,
+      "ic95_points": [
+        0.0,
+        0.0
+      ],
+      "missions_activite_differente": 0,
+      "observations_avec": 33272,
+      "observations_sans": 33272,
+      "ecarts_activite": [],
+      "verdict": "NON DISTINGUABLE",
+      "note": "aucune dissociation sur 10 mission(s) appariee(s), ni sur la justesse ni sur la livraison propre ; effet mesure dans [+0% ; +0%]. ACTIVITE IDENTIQUE sur les 10 mission(s) : retirer cette brique ne change aucun observable de sens (temoins executes, votes, constats, exploits). Aucun compteur ne bouge non plus. Le banc ne la met donc pas a l'epreuve — elargir `--missions` ne peut rien y changer, il faut des missions ou la brique a quelque chose a faire."
+    },
+    {
+      "nom": "memoire",
+      "sans": "le rappel est supprime",
+      "justes_avec": 10,
+      "justes_sans": 10,
+      "livrees_avec": 8,
+      "livrees_sans": 8,
+      "reservees_avec": 2,
+      "reservees_sans": 2,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.3,
+      "appels_sans": 3.3,
+      "b": 0,
+      "c": 0,
+      "p_exact": 1.0,
+      "b_propre": 0,
+      "c_propre": 0,
+      "p_propre": 1.0,
+      "ic95_points": [
+        0.0,
+        0.0
+      ],
+      "missions_activite_differente": 0,
+      "observations_avec": 33272,
+      "observations_sans": 33272,
+      "ecarts_activite": [],
+      "verdict": "NON DISTINGUABLE",
+      "note": "aucune dissociation sur 10 mission(s) appariee(s), ni sur la justesse ni sur la livraison propre ; effet mesure dans [+0% ; +0%]. ACTIVITE IDENTIQUE sur les 10 mission(s) : retirer cette brique ne change aucun observable de sens (temoins executes, votes, constats, exploits). Aucun compteur ne bouge non plus. Le banc ne la met donc pas a l'epreuve — elargir `--missions` ne peut rien y changer, il faut des missions ou la brique a quelque chose a faire."
+    },
+    {
+      "nom": "bibliotheque",
+      "sans": "rien n'est retenu d'une mission a l'autre",
+      "justes_avec": 10,
+      "justes_sans": 10,
+      "livrees_avec": 8,
+      "livrees_sans": 8,
+      "reservees_avec": 2,
+      "reservees_sans": 2,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.3,
+      "appels_sans": 3.3,
+      "b": 0,
+      "c": 0,
+      "p_exact": 1.0,
+      "b_propre": 0,
+      "c_propre": 0,
+      "p_propre": 1.0,
+      "ic95_points": [
+        0.0,
+        0.0
+      ],
+      "missions_activite_differente": 0,
+      "observations_avec": 33272,
+      "observations_sans": 33272,
+      "ecarts_activite": [],
+      "verdict": "NON DISTINGUABLE",
+      "note": "aucune dissociation sur 10 mission(s) appariee(s), ni sur la justesse ni sur la livraison propre ; effet mesure dans [+0% ; +0%]. ACTIVITE IDENTIQUE sur les 10 mission(s) : retirer cette brique ne change aucun observable de sens (temoins executes, votes, constats, exploits). Aucun compteur ne bouge non plus. Le banc ne la met donc pas a l'epreuve — elargir `--missions` ne peut rien y changer, il faut des missions ou la brique a quelque chose a faire."
+    },
+    {
+      "nom": "routeur",
+      "sans": "le budget de verification n'est plus adapte",
+      "justes_avec": 10,
+      "justes_sans": 10,
+      "livrees_avec": 8,
+      "livrees_sans": 8,
+      "reservees_avec": 2,
+      "reservees_sans": 2,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.3,
+      "appels_sans": 3.3,
+      "b": 0,
+      "c": 0,
+      "p_exact": 1.0,
+      "b_propre": 0,
+      "c_propre": 0,
+      "p_propre": 1.0,
+      "ic95_points": [
+        0.0,
+        0.0
+      ],
+      "missions_activite_differente": 0,
+      "observations_avec": 33272,
+      "observations_sans": 33272,
+      "ecarts_activite": [],
+      "verdict": "NON DISTINGUABLE",
+      "note": "aucune dissociation sur 10 mission(s) appariee(s), ni sur la justesse ni sur la livraison propre ; effet mesure dans [+0% ; +0%]. ACTIVITE IDENTIQUE sur les 10 mission(s) : retirer cette brique ne change aucun observable de sens (temoins executes, votes, constats, exploits). Aucun compteur ne bouge non plus. Le banc ne la met donc pas a l'epreuve — elargir `--missions` ne peut rien y changer, il faut des missions ou la brique a quelque chose a faire."
+    }
+  ],
+  "note": ""
+}

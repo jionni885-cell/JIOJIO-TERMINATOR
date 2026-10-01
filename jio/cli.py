@@ -4155,6 +4155,46 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _empreinte_activite(rapport: object) -> tuple[tuple[str, int], ...]:
+    """Les observables d'une mission, tries — ce que le retrait d'une brique peut couper.
+
+    Six familles, toutes presentes dans le rapport de mission : le nombre de TEMOINS
+    executes et passes, les VOTES du panel, les CONSTATS par agent (c'est le seul endroit
+    ou « mutation », « auto-coherence », « differentiel », « temoins » et « integrite »
+    laissent une trace quand le modele simule se trompe), l'INTEGRITE, l'usage du modele et
+    la taille du sujet livre.
+
+    Ce n'est pas un traceur : rien n'est ajoute au moteur, on lit ce qu'il produit deja.
+    Un instrument qui modifie ce qu'il mesure mesure autre chose.
+    """
+    temoins = tuple(getattr(rapport, "witnesses", ()) or ())
+    votes = tuple(getattr(rapport, "votes", ()) or ())
+    constats = tuple(getattr(rapport, "findings", ()) or ())
+    integrite = getattr(rapport, "integrity", None)
+    usage = dict(getattr(rapport, "usage", {}) or {})
+    sujet = str(getattr(rapport, "subject", "") or "")
+    compte: dict[str, int] = {
+        "temoins": len(temoins),
+        "temoins_ok": sum(1 for w in temoins if getattr(w, "ok", False)),
+        "votes": len(votes),
+        "constats": len(constats),
+        "exploits": len(getattr(integrite, "exploits", ()) or ()),
+        # Nommee pour ce qu'elle est : le nombre de pas de journal que le moniteur
+        # d'integrite a REJOUES — c'est le travail de la brique, pas un compteur de volume.
+        "integrite_etapes": int(getattr(integrite, "steps", 0) or 0),
+        "sujet_caracteres": len(sujet),
+    }
+    for c in constats:
+        agent = str(getattr(c, "agent", "") or "?")
+        compte[f"constat:{agent}"] = compte.get(f"constat:{agent}", 0) + 1
+    for cle, valeur in usage.items():
+        try:
+            compte[f"usage:{cle}"] = int(valeur)
+        except (TypeError, ValueError):
+            continue
+    return tuple(sorted(compte.items()))
+
+
 def cmd_ablation(args: argparse.Namespace) -> int:
     """Mesure ce que chaque brique du harness apporte REELLEMENT.
 
@@ -4240,6 +4280,12 @@ def cmd_ablation(args: argparse.Namespace) -> int:
             abstention=rapport.status is MissionStatus.ABSTAINED,
             appels=int(rapport.usage.get("calls", 0)) or 1,
             duree_s=duree,
+            # Ce que la mission a FAIT, lu dans le rapport de mission — pas devine et pas
+            # instrumente : chaque cle existe deja, et une cle absente d'un bras est un
+            # ecart en soi. Un levier peut alors etre declare « le banc ne l'exerce pas »
+            # (aucune observation ne bouge) au lieu du « on ne sait pas » qui confondait
+            # une brique morte avec un banc qui ne la sollicite jamais.
+            activite=_empreinte_activite(rapport),
         )
 
     print(BANNER)
@@ -4533,9 +4579,16 @@ def cmd_skills(args: argparse.Namespace) -> int:
                 # `proches` est la liste CLASSEE, et elle n'est pas une decision : quand la porte
                 # se ferme, son premier element est le bon dans 42 % des cas mesures (contre 8 %
                 # au hasard) — assez pour aider, pas assez pour trancher a la place de l'agent.
+                #
+                # `proximite` n'est remplie que pour les elements AJOUTES par le classement
+                # semantique (voir `router.proches`) : `null` veut dire « pas mesuree », jamais
+                # « nulle », et l'echelle n'est pas celle de `score` — BM25F n'a pas d'unite,
+                # le cosinus va de -1 a 1. Les melanger dans un seul champ serait la faute que
+                # ce depot refuse : deux nombres, deux sens, deux noms.
                 "proches": [
                     {"nom": c.nom, "categorie": c.categorie, "score": c.score,
-                     "raisons": list(c.raisons), "cout_jetons": c.cout_jetons}
+                     "raisons": list(c.raisons), "cout_jetons": c.cout_jetons,
+                     "proximite": c.proximite}
                     for c in proches(objectif, maximum=5)
                 ],
                 "tier0": [
@@ -4568,7 +4621,7 @@ def cmd_skills(args: argparse.Namespace) -> int:
 
         # CINQ et non `args.maximum` : la liste n'est pas une injection (elle ne fait pas
         # entrer de corps dans le contexte), et la mesure dit que 5 elements font passer
-        # « la bonne competence est visible » de 58 % a 67 %. Le plafond reste : au-dela, on
+        # « la bonne competence est visible » de 58 % a 71 %. Le plafond reste : au-dela, on
         # refait l'inventaire complet, qui n'est pas classe.
         liste = proches(objectif, maximum=5)
         q = qualite_de_la_liste()
@@ -4577,10 +4630,21 @@ def cmd_skills(args: argparse.Namespace) -> int:
             print(f"  decision (mesure : la premiere est la bonne {q['justes']:.0f} fois sur "
                   f"{q['cas']:.0f} quand la porte se ferme,")
             print(f"  contre {q['hasard']:.0%} au hasard) :")
+            marquees = sum(1 for c in liste if c.proximite is None)
+            if marquees < len(liste):
+                print()
+                print(f"  {marquees} element(s) MARQUE(S) par le lexique (score BM25F), "
+                      f"{len(liste) - marquees} AJOUTE(S) par RESSEMBLANCE")
+                print("  (la ligne « aucun mot commun » dit lesquels — et la ressemblance ne")
+                print("   decide rien : elle ordonne des trous, elle ne charge aucune procedure)")
             print()
             for rang, c in enumerate(liste, start=1):
-                print(f"      {rang}. {c.nom}  [{c.categorie}]  score {c.score}  "
-                      f"{c.cout_jetons} jetons")
+                # Deux echelles, deux affichages : un score BM25F (`score`, sans unite) et une
+                # ressemblance (`proximite`, 0..1). Un element ajoute par la ressemblance a
+                # `score 0.0` ET une proximite : c'est ce qui le distingue d'un element marque.
+                detail = (f"score {c.score}" if c.proximite is None
+                          else f"score {c.score} · ressemblance {c.proximite:.2f}")
+                print(f"      {rang}. {c.nom}  [{c.categorie}]  {detail}  {c.cout_jetons} jetons")
                 print(f"         pourquoi : {', '.join(c.raisons) if c.raisons else 'aucun terme'}")
             print()
         print("  CETTE ABSTENTION N'EST PAS UNE IMPASSE : la liste ci-dessus (classee, donc")

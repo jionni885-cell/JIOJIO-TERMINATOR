@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1240 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1253 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1219,8 +1219,8 @@ que cette liste vaut est mesuré, sur les **24 objectifs du domaine que la porte
 | --- | ---: | --- | ---: |
 | premier élément | 10/24 = **42 %** | [24 % ; 61 %] | 5,0× |
 | trois premiers | 14/24 = **58 %** | [39 % ; 76 %] | 7,0× |
-| cinq premiers (rendus) | 16/24 = **67 %** | [47 % ; 82 %] | 8,0× |
-| inventaire complet, non classé | 21/24 = 87,5 % | [69 % ; 96 %] | 10,5× |
+| cinq premiers (rendus) | 17/24 = **71 %** | [50 % ; 85 %] | 8,5× |
+| liste complète (12, complétée par ressemblance) | 24/24 = **100 %** | [86 % ; 100 %] | 12× |
 
 Cinq éléments, et pas davantage : trois à cinq fait gagner 9 points de « la bonne réponse est
 visible » pour une quinzaine de jetons (des noms et des scores, jamais des corps) ; au-delà, on
@@ -1231,6 +1231,38 @@ s'applique, et la confiance à lui accorder est écrite à côté
 `jio skills "<objectif>" --seuil 0` pour forcer un classement, et `jio skills --nom <compétence>`
 pour charger le **texte complet** d'une procédure reconnue dans la liste. Un nom inconnu est
 refusé en **énumérant les noms valides**.
+
+### Ce qui manquait n'était pas un réglage, c'était une ressource
+
+Les 24 objectifs refusés ne partagent **aucun mot** avec les fiches : « prove the fix by running
+it » ne contient ni « executer », ni « preuve », ni « verification ». Aucune porte lexicale ne
+peut les voir, et c'est ce qui plafonnait tout. Le dépôt embarque donc une **table de similarité
+sémantique** — **11000 radicaux**, 100 dimensions, 0,88 Mo — construite par
+`scripts/construire-vecteurs.py` à partir du paquet npm `wink-embeddings-sg-100d` (MIT), lui-même
+dérivé des vecteurs **GloVe** de Stanford (PDDL, domaine public). Pourquoi cette source : le noyau
+de ce dépôt n'a **aucune dépendance**, et les modèles de phrase habituels (PyTorch /
+`sentence-transformers`) demandent un accès réseau qui n'existe pas ici — `huggingface.co` est
+injoignable depuis cette machine, `registry.npmjs.org` non. Le format est relu par un chargeur
+écrit à la main (`jio/skills/vecteurs.py`), sans `pickle` : un fichier de données qui exécute du
+code n'est pas une donnée.
+
+La table sert à **une** chose, et deux autres usages ont été mesurés puis écartés
+(`evidence/vecteurs-semantiques.md`) :
+
+| usage | verdict | mesure |
+| --- | --- | --- |
+| une **porte** sémantique (charger ou non) | **impossible** | un hors sujet atteint 0,998 de ressemblance quand un objectif du domaine refusé plafonne à 0,806 : les deux populations se recouvrent |
+| **réordonner** toute la liste (fusion RRF) | **écarté** | gagne jusqu'à +3 au cinquième rang mais fait tomber le premier élément de 10 à 9 sur les refusés et de 27 à 22 sur le banc |
+| **compléter** une liste trop courte | **retenu — domination stricte** | @5 16→17, @12 21→24 sur les refusés ; @12 107→112 sur les 113 ; banc **inchangé** |
+
+Concrètement : `seuil=0` ne rend que les compétences **marquées** par BM25F, donc 5 des 24 listes
+n'avaient que 1 à 3 éléments **alors que l'en-tête en annonçait cinq**. La ressemblance ne touche
+pas la tête : elle ordonne les places laissées vides. Un élément ajouté porte `score 0.0`, une
+`proximité` (0..1, une **autre** échelle, d'où un autre nom) et la raison « aucun mot commun —
+voisin X~Y » ; la CLI et le MCP annoncent le partage (« N marqué(s) par le lexique, M ajouté(s) par
+ressemblance »). Le bruit reste possible sur un hors sujet — mesuré, **étiqueté, pas caché**, et
+un tri par contraste a été essayé pour l'écarter : il ne sépare pas davantage (0,090 contre 0,101).
+Si la table disparaît, `proximité` vaut `null` et la liste redevient exactement celle d'avant.
 
 Avant d'en arriver là, deux campagnes ont conclu au **plateau**, et c'est écrit pour ne pas les
 refaire : six portes d'abstention candidates (prose des corps dans la preuve, lexique *et* autre
@@ -1578,7 +1610,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1240 tests verts -> 1240 tests verts
+         - README.md ligne 15 : 1253 tests verts -> 1253 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2855,14 +2887,24 @@ question que celle posée.
 $ python -m jio ablation --missions 10
   ABLATION DU HARNESS  ·  10 mission(s) appariee(s)  ·  12 levier(s)
     moteur complet : 10/10 justes  ·  8 livree(s)  ·  0 SILENCIEUSE(S)  ·  3.3 appel(s)/mission
-    levier        justes          livrees  reserve  silencieuse abst.  appels
-    (complet)     10/10           8        2        0           0      3.3
-    preuve        5/10            0        10       0           0      3.0
-    red-team      10/10           0        10       0           0      10.5
-    consensus     10/10           0        10       0           0      3.3
-    mutation      10/10           10       0        0           0      3.3
+    levier        justes          livrees  reserve  silencieuse abst.  appels  activite
+    (complet)     10/10           8        2        0           0      3.3     33272
+    preuve        5/10            0        10       0           0      3.0     10/10 m.
+    red-team      10/10           0        10       0           0      10.5    10/10 m.
+    consensus     10/10           0        10       0           0      3.3     0/10 m.
+    porte         10/10           8        2        0           0      3.3     0/10 m.
+    integrite     10/10           8        2        0           0      3.3     10/10 m.
+    mutation      10/10           10       0        0           0      3.3     2/10 m.
+    auto-coherence 10/10          8        2        0           0      3.3     10/10 m.
     ...
 ```
+
+La dernière colonne a été ajoutée après avoir constaté un défaut de l'instrument lui-même : sur
+douze leviers, neuf ressortaient « NON DISTINGUABLE », tous avec exactement le même profil. Le
+lecteur ne pouvait pas savoir si la brique **n'avait servi à rien** ou si le banc **ne l'avait
+jamais mise à l'épreuve** — deux phrases qui appellent des actions opposées : dans un cas on
+retire du code, dans l'autre on change de banc. Un instrument qui ne peut pas se tromper ne
+prouve rien.
 
 ### Deux métriques, parce qu'une seule ne suffit pas
 
@@ -2893,15 +2935,48 @@ livraisons propres (p = 0,5, non tranché). Le rapport écrit noir sur blanc *«
 de livraison : elle vérifie qu'une règle **peut échouer**, sans quoi un test qui n'échoue jamais
 vaudrait un quitus.
 
-### Huit leviers non distingués, et ce que ça veut dire
+### « Non distingué » avait deux causes, et elles n'appellent pas la même action
 
-À compétence 0,35, la mission simulée est le plus souvent réussie dès les premiers tours : les
-briques ne sont donc **pas exercées**, et huit leviers ne se distinguent pas. Ce n'est pas une
-preuve d'inutilité, et le rapport refuse de l'écrire : il donne les dissociations observées
-(zéro), l'intervalle de l'effet et le seuil exact — **six dissociations unidirectionnelles**
-pour que McNemar conclue (2/2⁶ = 3,1 %). `--missions` élargit l'échantillon, `--skill` durcit
-la mission, `--sans-oracle` retire les tests fournis (c'est le seul réglage où le levier
-`temoins` est mesurable), et `--json` rend le tout lisible par une machine.
+Un verdict nul peut venir d'une brique morte ou d'un banc qui ne la sollicite jamais. Tant
+qu'on ne les sépare pas, `--missions 100` est un pari payé en heures. L'instrument compte donc
+**ce que la mission a fait**, pour chaque bras, sur les seuls observables qui portent un sens :
+témoins exécutés et passés, votes du panel, constats par agent, exploits cherchés, pas de
+journal rejoués. Les compteurs de **volume** (`usage:*`, taille du sujet) en sont exclus — sans
+ce filtre, `usage:events` bougeait pour **les douze leviers** (142 → 104), c'est-à-dire qu'il
+bougerait pour n'importe quel changement de chemin de code, et l'instrument aurait répondu
+« oui, elle agit » à tout le monde.
+
+Mesuré à 10 missions, compétence 0,35, témoins fournis par le banc :
+
+```
+    exercés par le banc .....  preuve 10/10 · red-team 10/10 · integrite 10/10
+                               auto-coherence 10/10 · mutation 2/10
+    PAS exercés .............  consensus · porte · differentiel · temoins · memoire
+                               bibliotheque · routeur        (0/10 chacun)
+```
+
+`integrite` est le cas qui a corrigé la première version de ce compteur : la brique ne change
+aucun verdict, mais retirer le moniteur fait passer le journal rejoué de **508 pas à zéro** —
+elle **travaille**, et le banc n'a simplement jamais d'exploit à lui donner. Le rapport écrit
+maintenant les trois lectures, et pas seulement les deux premières :
+
+1. **le banc ne l'exerce pas** — rien à échantillonner : « aucune puissance d'échantillon ne
+   conclura, il faut une mission où la brique ait quelque chose à faire ». C'est le cas de
+   `temoins` ici, et c'est normal : le banc fournit ses propres tests, donc la traduction en
+   témoins n'a rien à traduire (c'est le seul réglage où ce levier est mesurable, et
+   `--sans-oracle` existe pour ça) ;
+2. **elle agit sans rien déplacer** — le retrait coupe des témoins ou des constats sans changer
+   un seul verdict : redondance **mesurée**, que le rapport nomme et ne défend pas ;
+3. **elle agit et l'écart penche** — les dissociations vont dans son sens (7 contre 0 pour
+   `preuve` à quatre missions) : ce qui manque est un échantillon plus grand, pas une brique à
+   retirer.
+
+Une brique qui dégraderait **là où elle agit** est écrite comme telle — « à interroger, car une
+brique qui dégrade là où elle agit est un coût, pas une assurance ». Et l'instrument se **tait**
+quand il n'a rien compté : « je n'ai pas regardé » ne s'écrit pas comme « il ne s'est rien
+passé ». `--missions` élargit l'échantillon (il ne sert à rien dans le cas 1, et le rapport ne
+le conseille plus alors), `--skill` durcit la mission, `--json` rend le tout lisible par une
+machine — les écarts d'activité y sont publiés clé par clé.
 
 Le même essai à compétence 0,15 (`--skill 0.15`) coûte **6,0 appels par mission au lieu de
 3,3** : une mission plus dure consomme plus de boucle, et `red-team` reste la brique dont le

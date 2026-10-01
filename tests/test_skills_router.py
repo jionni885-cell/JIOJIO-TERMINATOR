@@ -44,7 +44,7 @@ from jio.skills import (
     mesurer,
 )
 from jio.skills.lexique import CLASSES, PONT, concept
-from jio.skills.router import LAMBDA, Document, jetons, stem
+from jio.skills.router import LAMBDA, Document, jetons, proches, stem
 
 #: Un objectif du banc, ecrit comme un utilisateur l'ecrirait. Il contient `sum_even`, qui est du
 #: vocabulaire de DEPOT : c'est precisement le piege qui avait fait gagner `structured-failure`
@@ -699,3 +699,145 @@ def test_l_outil_MCP_rend_la_meme_liste_que_la_CLI() -> None:
     assert "LES PLUS PROCHES" in texte
     assert "score" in texte
     assert "INVENTAIRE TIER 0" in texte
+
+
+# --------------------------------------------------------------------------- #
+# La liste classee, completee par la RESSEMBLANCE (table de vecteurs)
+# --------------------------------------------------------------------------- #
+
+
+def test_la_liste_rendue_a_LA_LONGUEUR_ANNONCEE() -> None:
+    """« LES PLUS PROCHES (5) » doit rendre cinq elements — sinon l'outil ment sur sa sortie.
+
+    Defaut reel, mesure : sur les 24 objectifs du domaine que la porte refuse, 5 listes
+    n'avaient que 1 a 3 elements (`seuil=0` ne rend que les competences MARQUEES par BM25F),
+    alors que l'en-tete en annoncait 5. Ce que la completion ajoute est NOMME : score BM25F
+    nul et `proximite` mesuree, avec la raison « aucun mot commun » — jamais confondu avec un
+    element marque.
+    """
+    from jio.skills.router import choisir
+
+    # Ce cas du banc ne partage presque rien avec le lexique du depot : c'est exactement la
+    # situation ou la liste rendue est plus courte que l'en-tete ne l'annonce.
+    objectif = "Convertir les images PNG en JPEG"
+    marquees = choisir(objectif, maximum=5, seuil=0)
+    assert len(marquees) < 5, "ce cas doit etre court, sinon le test ne prouve rien"
+
+    liste = proches(objectif, maximum=5)
+    assert len(liste) == 5, f"liste courte alors que l'en-tete annonce 5 : {len(liste)}"
+    assert [c.nom for c in liste[: len(marquees)]] == [c.nom for c in marquees], (
+        "la completion ne doit pas toucher la tete"
+    )
+    for ajoute in liste[len(marquees):]:
+        assert ajoute.score == 0.0, "un element ajoute n'a pas de score BM25F"
+        assert ajoute.proximite is not None, "un element ajoute porte une ressemblance mesuree"
+        assert any("aucun mot commun" in r for r in ajoute.raisons), ajoute.raisons
+
+
+def test_la_COMPLETION_ne_deplace_jamais_un_element_marque() -> None:
+    """La domination, verifiee sur toute la population : la tete est IDENTIQUE a BM25F.
+
+    C'est la condition qui a fait ecarter la fusion RRF (reordonner toute la liste faisait
+    tomber le premier element juste de 10 a 9 sur 24, et de 27 a 22 sur le banc). Ici, la
+    liste complete ne peut pas degrader une metrique : elle ne fait qu'ajouter a la fin.
+    """
+    from jio.skills.controle import JEUX
+    from jio.skills.router import choisir
+
+    for jeu in JEUX:
+        for texte, _, _ in jeu.cas:
+            marquees = [c.nom for c in choisir(texte, maximum=12, seuil=0)]
+            assert [c.nom for c in proches(texte, maximum=12)][: len(marquees)] == marquees
+
+
+def test_sans_table_le_routeur_rend_EXACTEMENT_la_liste_d_avant(monkeypatch) -> None:
+    """Une ressource absente ne doit rien casser : le repli est le comportement d'avant.
+
+    Le fichier de vecteurs est une donnee embarquee, donc supprimable par une copie partielle,
+    un clone superficiel ou un `git lfs` mal configure. Le routeur doit alors rendre sa liste
+    BM25F — plus courte, non completee — et `proximite` doit rester `None` pour que l'absence
+    se LISE au lieu de se deviner.
+    """
+    from jio.skills import vecteurs
+
+    monkeypatch.setattr(vecteurs, "_CHARGEE", True)
+    monkeypatch.setattr(vecteurs, "_TABLE", None)
+    objectif = "Convertir les images PNG en JPEG"
+    liste = proches(objectif, maximum=5)
+    assert all(c.proximite is None for c in liste)
+    assert len(liste) < 5, "sans table, la liste garde sa longueur d'origine"
+
+
+def test_un_fichier_de_vecteurs_ABIME_est_refuse_sans_exception(tmp_path) -> None:
+    """Le fichier de vecteurs est du contenu NON FIABLE : il se relit, il ne s'execute pas.
+
+    Quatre formes d'abus, toutes rendues `None` : en-tete inconnu, troncature, dimensions
+    absurdes, longueur de mot absurde. Sans ces bornes, un fichier hostile ferait reserver des
+    gigaoctets (ou lever) dans l'outil qui le lit.
+    """
+    import gzip
+    import json
+    import struct
+
+    from jio.skills.vecteurs import MAGIC, charger
+
+    faux = tmp_path / "faux.bin.gz"
+    faux.write_bytes(gzip.compress(b"PAS-JIO" + b"\x00" * 64))
+    assert charger(faux) is None, "en-tete inconnu"
+
+    faux.write_bytes(gzip.compress(MAGIC))
+    assert charger(faux) is None, "fichier tronque avant l'en-tete"
+
+    entete = json.dumps({"dims": 100, "mots": 10}).encode()
+    faux.write_bytes(gzip.compress(MAGIC + struct.pack("<I", len(entete)) + entete))
+    assert charger(faux) is None, "aucune donnee derriere l'en-tete"
+
+    entete = json.dumps({"dims": 100_000, "mots": 10}).encode()
+    faux.write_bytes(gzip.compress(MAGIC + struct.pack("<I", len(entete)) + entete + b"\x00" * 40))
+    assert charger(faux) is None, "dimensions absurdes : bornees avant usage"
+
+    entete = json.dumps({"dims": 100, "mots": 2}).encode()
+    corps = struct.pack("<H", 9) + b"court" + b"\x00" * 100
+    faux.write_bytes(gzip.compress(MAGIC + struct.pack("<I", len(entete)) + entete + corps))
+    assert charger(faux) is None, "longueur de mot incoherente"
+
+
+def test_la_table_embarquee_MESURE_du_sens() -> None:
+    """Le controle de la ressource : des mots proches doivent etre plus proches que des mots loins.
+
+    Sans ce test, une table tronquee ou permutee rendrait des ressemblances aleatoires, et
+    l'ordre de la liste complete serait du hasard — exactement ce que la completion pretend
+    remplacer. Les valeurs attendues sont larges (>0.4 contre <0.1), donc le test ne casse pas
+    a la premiere mise a jour du paquet source.
+    """
+    from jio.skills.router import stem
+    from jio.skills.vecteurs import table_du_depot
+
+    table = table_du_depot()
+    assert table is not None, "la table doit etre livree avec le depot"
+    assert len(table.mots) >= 8000 and table.dims == 100
+
+    def cos(a: str, b: str) -> float:
+        va, vb = table.mots[stem(a)], table.mots[stem(b)]
+        return table.cosinus(va, vb)
+
+    assert cos("test", "verification") > 0.40
+    assert cos("proof", "evidence") > 0.55
+    assert cos("test", "river") < 0.15
+    assert cos("test", "verification") > cos("test", "river") + 0.30
+
+
+def test_la_bonne_competence_n_est_JAMAIS_absente_de_la_liste_complete() -> None:
+    """La propriete que la completion achete : 24/24, contre 21/24 sans elle.
+
+    C'est le chiffre qui justifie la table : quand le routeur refuse un objectif du domaine, la
+    competence qu'un humain chargerait est TOUJOURS dans la liste complete — l'agent qui demande
+    plus de cinq elements ne peut plus tomber sur une liste ou la bonne reponse manque.
+    """
+    from jio.skills.controle import JEUX
+    from jio.skills.router import choisir, proches
+
+    refuses = [(t, a) for j in JEUX for t, a, _ in j.cas if not choisir(t, maximum=3)]
+    assert refuses, "la population de mesure ne doit pas etre vide"
+    absents = [t for t, a in refuses if a not in [c.nom for c in proches(t, maximum=12)]]
+    assert not absents, f"competence absente de la liste complete : {absents[:2]}"

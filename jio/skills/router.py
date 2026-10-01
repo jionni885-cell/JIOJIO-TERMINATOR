@@ -221,6 +221,10 @@ class Choix:
     score: float
     raisons: tuple[str, ...]
     cout_jetons: int
+    #: Ressemblance SEMANTIQUE au sens strict (cosinus, 0..1) quand la table de vecteurs est
+    #: disponible. `None` veut dire « pas mesuree », jamais « nulle » : les deux se confondraient
+    #: dans un affichage qui compare des nombres.
+    proximite: float | None = None
 
 
 @dataclass
@@ -352,6 +356,41 @@ class Catalogue:
         classement = sorted(apports.items(), key=lambda x: (-x[1], x[0]))
         return tuple(f"{terme} ({valeur:.2f})" for terme, valeur in classement[:combien])
 
+    @property
+    def idf(self) -> dict[str, float]:
+        """`idf` du champ 1, en copie : l'appelant lit l'index, il ne le modifie pas.
+
+        Le module de similarite semantique en a besoin pour ponderer ses appariements, et le
+        laisser lire `_idf` de l'exterieur ferait de l'interne une API de fait — qu'un
+        refactoring casse sans preavis.
+        """
+        return dict(self._idf)
+
+    def termes_de(self, nom: str) -> Counter[str]:
+        """Les termes ponderes des DEUX champs d'une competence (tiers 0 + corps).
+
+        C'est ce que la similarite semantique vectorise : le tiers 0 DECIDE et le corps CLASSE,
+        comme pour BM25F — un mot-cle choisi dans le seul tiers 0 passerait a cote des procedures
+        dont la prose dit quand elles s'appliquent.
+        """
+        return Counter(self._termes.get(nom, {})) + Counter(self._termes_corps.get(nom, {}))
+
+    def classement(self, objectif: str) -> list[tuple[str, float]]:
+        """Les competences CLASSEES par BM25F, sans porte et SANS diversification MMR.
+
+        `interroger` melange deux choses : le score, et la diversification qui evite de charger
+        deux procedures redondantes. Pour FUSIONNER un classement avec un autre (RRF), il faut le
+        classement nu : une liste deja diversifiee ne represente plus le score, et la fusion
+        comparerait des rangs qui ne veulent pas dire la meme chose.
+        """
+        if not self.documents:
+            return []
+        requete = _requete(objectif)
+        if not requete:
+            return []
+        scores = {doc.nom: self._bm25(doc.nom, requete) for doc in self.documents}
+        return [(nom, scores[nom]) for nom in sorted(scores, key=lambda n: (-scores[n], n))]
+
     def mots_du_domaine(self, objectif: str) -> frozenset[str]:
         """Les mots de DOMAINE de l'objectif, ramenes a leur RADICAL.
 
@@ -442,6 +481,26 @@ class Catalogue:
         ]
 
 
+def _requete(objectif: str) -> Counter[str]:
+    """La requete ponderee d'un objectif : mots ecrits (poids 1) et leurs voisins du pont.
+
+    Extraite pour que `proches()` puisse redemander les MEMES raisons que le classement normal :
+    deux calculs paralleles de la meme requete finiraient par ne plus dire la meme chose.
+    """
+    base = _termes(objectif)
+    requete = Counter(base)
+    if not base:
+        return requete
+    from .lexique import POIDS_VOISIN, PONT
+
+    ecrits = set(base)
+    for mot in jetons(objectif):
+        for voisin in PONT.get(mot, ()):
+            if voisin not in ecrits:
+                requete[voisin] = max(requete.get(voisin, 0.0), POIDS_VOISIN)
+    return requete
+
+
 def cout(choix: Sequence[Choix]) -> int:
     """Le cout d'injection d'une selection : ce que l'agent paiera reellement."""
     return sum(c.cout_jetons for c in choix)
@@ -503,8 +562,66 @@ def proches(objectif: str, *, maximum: int = 3) -> list[Choix]:
 
     Le score est celui du classement normal — l'echelle n'a pas d'unite, donc elle n'est pas
     comparable d'un objectif a l'autre ; elle ordonne, elle ne note pas.
+
+    LA TETE NE BOUGE PAS, LA QUEUE SE COMPLETE. Une table de vecteurs de mots (GloVe, cf.
+    `vecteurs.py`) permet de classer les competences meme sans un mot commun. Deux facons de s'en
+    servir ont ete MESUREES, et une seule est retenue :
+
+      * REORDONNER toute la liste par fusion RRF — ecarte. Sur les 24 objectifs refuses, le
+        premier element juste tombe de 10 a 9, et sur le banc de 27 a 22 : la fusion gagne deux
+        places au milieu et perd la tete, qui est ce qu'un agent lit d'abord ;
+      * COMPLETER la liste quand elle est plus COURTE que `maximum` — retenu. Le classement
+        BM25F+MMR est garde tel quel, y compris son ordre ; la similarite ne sert qu'a ordonner
+        les places laissees vides. Mesure sur les 24 objectifs refuses : `@5` 16 -> 17,
+        `@12` 21 -> **24** (la bonne competence n'est plus jamais absente de la liste complete) ;
+        sur les 113 cas : `@12` 107 -> 112. Et AUCUNE metrique ne baisse, ni ici ni sur le banc
+        (mesure, `evidence/vecteurs-semantiques.md`) : c'est une domination, pas un compromis.
+
+    Pourquoi la liste est courte : `seuil=0` ne rend que les competences MARQUEES par BM25F. Sur
+    les 24 refuses, 19 listes ont leurs 5 elements, mais 5 n'en ont que 1 a 3 — et l'en-tete
+    annoncait quand meme « LES PLUS PROCHES (5) ». La completion repare les deux : la liste a la
+    longueur annoncee, et ce qui la remplit est classe par ressemblance plutot que par alphabet
+    (un inventaire non classe vaut le hasard — c'est deja dit plus haut).
+
+    Si la table est absente ou illisible, la fonction rend EXACTEMENT la liste d'avant, et
+    `proximite` reste `None` : le repli ne se devine pas, il se lit.
     """
-    return choisir(objectif, maximum=maximum, seuil=0)
+    catalogue = catalogue_du_depot()
+    retenus = choisir(objectif, maximum=maximum, seuil=0)
+    if len(retenus) >= maximum:
+        return retenus
+
+    from .vecteurs import appariement, classement_semantique, mots_cles, raisons_semantiques
+    from .vecteurs import table_du_depot
+
+    table = table_du_depot()
+    if table is None:
+        return retenus
+
+    cles = {doc.nom: mots_cles(catalogue, doc.nom, table) for doc in catalogue.documents}
+    deja = {c.nom for c in retenus}
+    ordre = [nom for nom in classement_semantique(catalogue, objectif, table, cles)
+             if nom not in deja]
+    par_nom = {doc.nom: doc for doc in catalogue.documents}
+    proximites = appariement(catalogue, objectif, cles, table)
+    for nom in ordre[: maximum - len(retenus)]:
+        doc = par_nom[nom]
+        voisins = raisons_semantiques(nom, objectif, table, cles[nom])
+        retenus.append(
+            Choix(
+                nom=nom,
+                categorie=doc.categorie,
+                # Zero, et ce n'est pas une note : BM25F n'a marque AUCUN mot commun. La
+                # ressemblance, elle, est mesuree — elle a son propre champ, pour qu'aucun
+                # affichage ne confonde les deux echelles.
+                score=0.0,
+                raisons=(f"aucun mot commun — {', '.join(voisins)}" if voisins
+                         else "aucun mot commun, aucune ressemblance mesuree",),
+                cout_jetons=doc.cout_jetons,
+                proximite=round(proximites.get(nom, 0.0), 4),
+            )
+        )
+    return retenus
 
 
 def choisir(

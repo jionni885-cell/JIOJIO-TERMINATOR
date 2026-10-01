@@ -1091,7 +1091,10 @@ titre "26. Chaque brique du harness apporte-t-elle quelque chose ?"
 # 1 si le moteur COMPLET a livre une erreur silencieuse : c'est alors un vrai defaut, et
 # l'etape doit echouer — mais en ayant PARLE d'abord (sinon l'echec est muet, defaut deja
 # rencontre a l'etape 25).
-ABLATION_LEVIERS="${JIO_ABLATION_LEVIERS:-preuve,red-team,consensus}"
+# Les trois leviers PROUVES, plus un levier que ce banc n'exerce pas (`porte`) : sans lui,
+# l'etape ne prouverait pas que l'instrument sait dire « le banc ne l'exerce pas » — et une
+# preuve qui ne peut pas se tromper ne prouve rien.
+ABLATION_LEVIERS="${JIO_ABLATION_LEVIERS:-preuve,red-team,consensus,porte}"
 ABLATION_MISSIONS="${JIO_ABLATION_MISSIONS:-8}"
 if [ -d .venv ] || command -v python3 >/dev/null 2>&1; then
     CODE_ABLATION=0
@@ -1100,8 +1103,11 @@ if [ -d .venv ] || command -v python3 >/dev/null 2>&1; then
     printf '%s\n' "$SORTIE_ABLATION" | sed -n '/ABLATION DU HARNESS/,/appel(s)\/mission/p'
     printf '%s\n' "$SORTIE_ABLATION" | sed -n '/VERDICTS/,$p' | head -9
     echo "    lecture : une brique dont l'ablation ne change RIEN n'est pas declaree inutile"
-    echo "    ici — elle est declaree NON DISTINGUABLE a cette taille d'echantillon, avec le"
-    echo "    nombre de dissociations qu'il faudrait pour trancher."
+    echo "    ici — elle est declaree NON DISTINGUABLE, avec le nombre de dissociations qu'il"
+    echo "    faudrait pour trancher. La colonne « activite » separe les deux causes d'un"
+    echo "    verdict nul : « le banc ne l'exerce pas » (aucun observable de sens ne bouge) et"
+    echo "    « elle agit sans rien deplacer » (redondance mesuree). Les compteurs de volume"
+    echo "    en sont exclus : ils bougent des qu'un chemin de code differe."
     # Le code de sortie de `jio ablation` vaut 1 si le moteur COMPLET a livre une erreur sans
     # reserve : c'est alors un vrai defaut du harness, et l'etape doit echouer. On imprime
     # d'abord (sinon l'echec serait muet, defaut deja rencontre a l'etape 25).
@@ -1115,11 +1121,53 @@ if [ -d .venv ] || command -v python3 >/dev/null 2>&1; then
     if printf '%s\n' "$SORTIE_ABLATION" | grep -q "PREUVE ("; then
         echo "    -> au moins un levier a fait perdre quelque chose de MESURE a l'ablation."
     else
-        echo "    -> aucun levier prouve a cette taille : elargir --missions avant de conclure."
+        echo "    -> aucun levier prouve a cette taille. Elargir --missions n'aiderait que la"
+        echo "    ou l'instruction ci-dessus dit « elle agit » : la ou l'activite est identique,"
+        echo "    la mesure n'a rien a echantillonner."
     fi
+    # Le nouvel instrument doit PARLER, et pas seulement quand tout va bien :
+    #   * la COLONNE « activite » doit etre dans le tableau (sinon l'instrument est debranche) ;
+    #   * tout verdict qui NE CONCLUT PAS doit porter la phrase qui separe « le banc ne
+    #     l'exerce pas » de « elle agit sans rien deplacer ».
+    # Un instrument qui ne peut pas dire « je n'ai rien vu » ne peut pas se tromper — donc ne
+    # prouve rien. L'exiger seulement sur les verdicts nuls evite d'inventer une phrase la ou
+    # une preuve a deja parle.
+    if ! printf '%s\n' "$SORTIE_ABLATION" | grep -q "^    levier .*activite"; then
+        echo "    ECHEC : la colonne « activite » a disparu du tableau." >&2
+        exit 1
+    fi
+    PHRASES_ACTIVITE=$(printf '%s\n' "$SORTIE_ABLATION" | grep -c "ACTIVITE IDENTIQUE\|la brique AGIT")
+    VERDICTS_NULS=$(printf '%s\n' "$SORTIE_ABLATION" | grep -c "NON DISTINGUABLE\|NON CONCLUANT")
+    if [ "$VERDICTS_NULS" -gt 0 ] && [ "$PHRASES_ACTIVITE" -eq 0 ]; then
+        echo "    ECHEC : un verdict ne conclut pas et l'instrument d'activite reste muet." >&2
+        exit 1
+    fi
+    echo "    -> l'instrument d'activite a parle : $PHRASES_ACTIVITE levier(s) classe(s) « le banc ne l'exerce pas » ou « elle agit sans rien deplacer »."
 else
     sauter "26. Chaque brique du harness apporte-t-elle quelque chose ?" \
         "aucun interpreteur Python utilisable ici"
+fi
+
+# -- 27 ---------------------------------------------------------------------- #
+# La SIMILARITE SEMANTIQUE. Ce que la table de vecteurs change, et ce qu'elle ne change
+# pas. L'etape imprime les trois usages MESURES (porte, reordonnancement, completion) : le
+# resultat negatif fait partie de la preuve, sans quoi la meme idee serait retentee dans six
+# mois par quelqu'un qui n'aurait vu que la brique retenue.
+if [ -n "$PYTHON" ] && "$PYTHON" -c "import jio.skills.vecteurs" 2>/dev/null; then
+    titre "27. La similarite semantique : porte impossible, tete intacte, queue completee"
+    SORTIE_VECTEURS=$("$PYTHON" scripts/mesure-vecteurs.py 2>&1) || true
+    printf '%s\n' "$SORTIE_VECTEURS" | sed -n '/^table/,$p' | head -20
+    echo "    lecture : la porte reste LEXICALE (les deux populations se recouvrent), la"
+    echo "    reorganisation complete de la liste est ECARTEE (elle perd la tete au profit du"
+    echo "    milieu), et la completion est RETENUE : aucune metrique ne baisse, et la bonne"
+    echo "    competence n'est plus jamais absente de la liste complete."
+    if ! printf '%s\n' "$SORTIE_VECTEURS" | grep -q "3_completer_la_liste"; then
+        echo "    ECHEC : la mesure n'a pas rendu les trois usages." >&2
+        exit 1
+    fi
+else
+    sauter "27. La similarite semantique : porte impossible, tete intacte, queue completee" \
+        "module `jio.skills.vecteurs` indisponible"
 fi
 
 titre "Termine"

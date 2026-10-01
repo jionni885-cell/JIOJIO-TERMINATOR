@@ -190,6 +190,15 @@ CHIFFRES: tuple[Chiffre, ...] = (
     # Le motif est insensible a la casse parce que la phrase vit en milieu de paragraphe
     # (« Premier choix juste dans 77 % des cas ») : un chiffre juste mais non surveille a cause
     # d'une majuscule serait exactement le defaut que ce module supprime.
+    # La TAILLE de la table de vecteurs, dernier chiffre entre : la phrase du README qui la
+    # publie (« 11 000 radicaux ») engage la ressource livree, donc elle se surveille comme les
+    # autres. Le mot « radicaux » et non « mots » : la table est indexee par RADICAL, et un motif
+    # plus large attraperait n'importe quel compte de mots du document.
+    Chiffre(
+        nom="vecteurs",
+        motif=r"(\d+) radicaux",
+        description="la table de vecteurs embarquee (jio/skills/vecteurs/)",
+    ),
     Chiffre(
         nom="premier_choix",
         motif=r"[Pp]remier choix juste dans (\d+) %",
@@ -258,7 +267,20 @@ def mesurer(racine: Path | str) -> dict[str, int]:
         # publie, mais une phrase par jeu ferait huit motifs de plus pour un gain nul.
         "cas_controle": sum(len(jeu.cas) for jeu in JEUX),
         "objectifs_controle_clarify": len(CAS_CLARIFY),
+        "vecteurs": _taille_table_vecteurs(),
     }
+
+
+def _taille_table_vecteurs() -> int:
+    """Le nombre de radicaux de la table livree, ou 0 si elle est absente.
+
+    Zero et non une exception : `jio chiffres` doit pouvoir DIRE qu'il n'y a plus de table
+    (et le README sera alors signale en ecart) plutot que de tomber.
+    """
+    from .skills.vecteurs import table_du_depot
+
+    table = table_du_depot()
+    return len(table.mots) if table else 0
 
 
 def _compter_tests(racine: Path) -> int:
