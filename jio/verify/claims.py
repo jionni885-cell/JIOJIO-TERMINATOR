@@ -125,6 +125,12 @@ _CALCUL_DROITE = re.compile(
     # rapport annoncait « 1 calcul trop long pour etre evalue » — une LACUNE INVENTEE.
     # Une lacune fausse est pire qu'aucune : elle apprend a ignorer les vraies.
     r"(?!\s*[" + _CLASSE_OPERATEURS + r"]\s*-?\d)"
+    # L'UNITE annoncee. Un pourcentage n'est pas un nombre comme un autre : « 21/24 = 88 % »
+    # annonce 88 POUR CENT, soit 0,88, pas 88. Sans ce groupe, l'outil comparait 0,875 a 88
+    # et declarait FAUX un arrondi juste — un faux temoin, la pire espece de temoin : il
+    # apprend a ignorer les vraies accusations. Le groupe reste optionnel : « = 42 » marche
+    # comme avant.
+    r"(?P<unite>\s*%)?"
 )
 
 #: Une chaine d'operateurs : `1 + 2`, `3 x 4`, `100/4`. La repetition est BORNEE
@@ -396,12 +402,13 @@ def _extraction_detail(texte: str) -> tuple[tuple[Affirmation, ...], int, int]:
                 non_evaluees += 1
             continue
         depart = debut_ligne + ligne_texte.rfind(gauche)
+        unite = (calcul.group("unite") or "").strip()
         trouvailles.append(
             Affirmation(
                 genre=Genre.ARITHMETIQUE,
-                extrait=f"{gauche} = {calcul.group('droite')}",
+                extrait=f"{gauche} = {calcul.group('droite')}{' %' if unite else ''}",
                 position=depart,
-                detail=f"{gauche}|{calcul.group('droite')}",
+                detail=f"{gauche}|{calcul.group('droite')}|{'pourcent' if unite else ''}",
                 # `_est_cite` compare des offsets SUR LA LIGNE : passer une position
                 # absolue faisait perdre le marquage « cite », et le calcul faux cite
                 # par un document qui en PARLE redevenait bloquant.
@@ -520,7 +527,12 @@ def _verifier_une(
 ) -> Verification | None:
     """Verifie une affirmation. Rend None quand elle n'est PAS verifiable."""
     if affirmation.genre is Genre.ARITHMETIQUE:
-        gauche, droite = affirmation.detail.split("|")
+        # `detail` portait deux champs avant que l'unite existe : on tolere encore la
+        # forme ancienne (un detail construit ailleurs, ou une archive relue) plutot que
+        # de lever une exception sur une donnee du passe.
+        morceaux = affirmation.detail.split("|")
+        gauche, droite = morceaux[0], morceaux[1]
+        pourcent = len(morceaux) > 2 and morceaux[2] == "pourcent"
         try:
             attendu = _nombre(droite)
             obtenu = _evalue_calcul(gauche)
@@ -532,7 +544,21 @@ def _verifier_une(
             return None
         if obtenu is None:
             return None
-        ok = abs(obtenu - attendu) < 1e-9
+        # CE QUI EST EXACT, ET A QUELLE PRECISION. Un pourcentage s'ecrit arrondi :
+        # « 21/24 = 88 % » annonce 88 pour cent et vaut 87,5 — ecart 0,5, soit exactement
+        # l'arrondi a l'entier annonce. Refuser cet ecart etait une ACCUSATION FAUSSE, et
+        # une accusation fausse use la confiance qu'on met dans les vraies. La tolerance
+        # est donc l'arrondi a la precision ECRITE (0,5 x 10^-decimales) et rien de plus :
+        # « 21/24 = 99 % » (ecart 11,5) reste refuse, et sans `%` la comparaison reste
+        # stricte au 1e-9, comme avant. Le pourcentage multiplie la valeur par 100 : c'est
+        # ce que « pour cent » veut dire, pas une indulgence.
+        if pourcent:
+            attendu, obtenu = attendu, obtenu * 100
+            decimales = len(droite.replace(",", ".").partition(".")[2])
+            tolerance = 0.5 * 10 ** (-decimales) + 1e-9
+        else:
+            tolerance = 1e-9
+        ok = abs(obtenu - attendu) <= tolerance
         if affirmation.cite:
             # Une CITATION : le document parle d'un calcul, il ne l'affirme pas. Un
             # texte qui explique les erreurs d'arithmetique en cite forcement.
@@ -540,7 +566,8 @@ def _verifier_une(
                 affirmation=affirmation, ok=ok, bloquant=False,
                 message=(
                     f"calcul CITE (entre backticks) : « {affirmation.extrait} » — "
-                    f"{gauche.strip()} vaut {obtenu:g}, le texte cite {attendu:g}. "
+                    f"{gauche.strip()} vaut {obtenu:g}{' %' if pourcent else ''}, "
+                    f"le texte cite {attendu:g}{' %' if pourcent else ''}. "
                     "Une citation se signale, elle ne condamne pas le document."
                 ),
             )
@@ -550,7 +577,13 @@ def _verifier_une(
             bloquant=True,
             message=(
                 f"calcul EXACT : « {affirmation.extrait} » — {gauche.strip()} vaut "
-                f"{obtenu:g}, le texte annonce {attendu:g}"
+                f"{obtenu:g}{' %' if pourcent else ''}, le texte annonce "
+                f"{attendu:g}{' %' if pourcent else ''}"
+                + (
+                    f" (arrondi a la precision ecrite : tolerance {tolerance:g})"
+                    if pourcent and tolerance > 1e-9
+                    else ""
+                )
             ),
         )
 

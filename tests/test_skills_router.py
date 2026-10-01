@@ -619,3 +619,83 @@ def test_la_commande_controle_ne_MONTRE_pas_le_detail_par_defaut(capsys) -> None
     assert code == 0
     assert "RATE" in detail
     assert "jeu C" in detail
+
+
+def test_la_liste_des_plus_proches_est_rendue_quand_la_porte_se_ferme(capsys) -> None:
+    """Un « non » qui s'accompagne d'une liste classee vaut mieux qu'un « non » nu.
+
+    Mesure qui a fait naitre cette fonction : sur les 24 objectifs du domaine que la porte refuse
+    (les quatre jeux reunis), le premier de la liste classee est le BON 10 fois (42 %), contre
+    8 % au hasard — 12 competences, une seule reponse. La bonne competece est dans les trois
+    premieres 14 fois (58 %), dans les cinq premieres 16 fois (67 %).
+
+    Le test verifie trois proprietes, et la troisieme est celle qui protege l'agent :
+      * la liste est NON VIDE et classee par score decroissant ;
+      * elle est plafonnee — une liste de douze refait le probleme qu'elle resout ;
+      * le DEBUT de la liste ne depend pas de sa longueur : « montre-moi 3 » et « montre-moi 5 »
+        donnent les memes trois premiers, sinon l'agent qui compare deux sorties ne saurait plus
+        laquelle croire.
+    """
+    from jio.skills.controle import JEUX
+    from jio.skills.router import proches
+
+    objectif = next(t for j in JEUX for t, _, _ in j.cas if not choisir(t, maximum=3))
+    assert choisir(objectif, maximum=3) == [], "ce test suppose un objectif refuse par la porte"
+
+    liste = proches(objectif, maximum=5)
+    assert liste, "une abstention doit rendre une liste, pas du vide"
+    scores = [c.score for c in liste]
+    assert scores == sorted(scores, reverse=True), "la liste doit etre classee"
+    assert all(c.raisons for c in liste), "chaque element dit pourquoi il est la"
+
+    trois = [c.nom for c in proches(objectif, maximum=3)]
+    cinq = [c.nom for c in proches(objectif, maximum=5)]
+    assert trois == cinq[:3], "le debut de la liste ne doit pas dependre de sa longueur"
+
+    # Et ce que l'appelant recoit : la liste, nommee comme une liste (jamais comme une decision).
+    code, sortie = _lancer(["skills", objectif], capsys)
+    assert code == 0
+    assert "AUCUNE COMPETENCE A CHARGER" in sortie
+    assert "LES PLUS PROCHES" in sortie
+    assert liste[0].nom in sortie
+    assert "au hasard" in sortie, "la confiance a accorder a la liste doit etre DITE"
+
+    code, sortie = _lancer(["skills", objectif, "--json"], capsys)
+    donnees = json.loads(sortie)
+    assert donnees["choix"] == [], "la porte reste fermee : la liste n'est pas un chargement"
+    assert [p["nom"] for p in donnees["proches"]] == cinq
+    assert len(donnees["tier0"]) == len(catalogue_du_depot().documents)
+
+
+def test_la_qualite_de_la_liste_est_MESUREE_et_publiee() -> None:
+    """Le chiffre qui justifie d'afficher une liste doit etre mesurable, donc verifiable.
+
+    Il porte sur les objectifs du domaine refuses par la porte : c'est la seule population ou la
+    question se pose. Un plancher est verifie plutot qu'une valeur exacte — une retouche qui
+    AMELIORE la liste ne doit pas casser la suite, une retouche qui la degrade doit la casser.
+    """
+    from jio.skills.controle import JEUX, qualite_de_la_liste
+
+    q = qualite_de_la_liste()
+    refus = sum(1 for j in JEUX for t, _, _ in j.cas if not choisir(t, maximum=3))
+    assert q["cas"] == refus, "la population mesuree doit etre celle des objectifs refuses"
+    assert q["cas"] >= 20, "trop peu de cas pour publier un taux"
+    assert q["taux"] >= 0.33, (
+        f"la liste classee est tombee a {q['taux']:.0%} contre 42 % mesures : elle ne vaut plus "
+        f"le detour, et c'est ce test qui doit le dire"
+    )
+    assert q["facteur"] >= 3.0, "la liste doit valoir nettement mieux que le hasard"
+    assert 0 < q["hasard"] < 0.2
+
+
+def test_l_outil_MCP_rend_la_meme_liste_que_la_CLI() -> None:
+    """Deux interfaces, une seule reponse : l'agent qui passe par MCP ne doit pas etre moins bien
+    servi que celui qui passe par le shell."""
+    from jio.mcp_server import _tool_skills
+
+    objectif = "corriger un bug de division par zero dans la remise"
+    assert choisir(objectif, maximum=3) == []
+    texte = _tool_skills({"objective": objectif})
+    assert "LES PLUS PROCHES" in texte
+    assert "score" in texte
+    assert "INVENTAIRE TIER 0" in texte

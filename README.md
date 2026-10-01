@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1236 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1240 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -862,7 +862,7 @@ sans affirmation       code != 0 — rien a verifier n'est pas un quitus, et c'e
 Rejouable : `bash scripts/evidence.sh`, étape **20**, « La PROSE » (corpus versionné dans
 `evidence/claims/`).
 
-### Quatre bugs, tous du même genre : une vérification qui ne vérifiait rien
+### Cinq bugs, tous du même genre : une vérification qui ne vérifiait rien
 
 `verifier()` rendait une liste **vide** alors que `extraction()` trouvait bien les deux
 calculs du document. Un vérificateur qui ne trouve rien ne dit pas « tout va bien » : il
@@ -874,11 +874,20 @@ dit qu'il n'a rien regardé — et personne ne peut faire la différence de l'ex
 | Tout calcul en fin de phrase échappait | regard final `(?![\w.])` : un nombre suivi d'un **point** était refusé, donc exactement la façon dont un rapport écrit ses calculs | `(?![\w])(?!\.\d)` — refuser un chiffre qui suit, pas une ponctuation |
 | Aucune expression n'était acceptée | `ast.walk` visite **aussi les nœuds d'opérateur** (`ast.Add`, `ast.Mult`) : aucune catégorie autorisée ne les acceptait, donc *toute* expression était refusée | descente explicite de l'arbre, **le contrôle et le calcul dans la même fonction** |
 | `eval()` sur du contenu non fiable | — | supprimé : le calcul est fait sur les seuls nœuds admis |
+| Un **pourcentage arrondi juste** était déclaré faux | le signe `%` n'était pas lu : `21/24 = 88 %` comparait `0,875` à `88` | `%` lu comme unité (valeur × 100) et tolérance = **l'arrondi à la précision écrite**, jamais plus : `21/24 = 99 %` reste refusé, et sans `%` la comparaison reste stricte au 1e-9 |
 
 Le troisième est le plus instructif : la fonction de contrôle était **toujours fausse**,
 et comme elle était écrite à part du calcul, rien ne le signalait. Contrôle et calcul
-partagent maintenant un seul passage — un test couvre chacun des quatre bugs
+partagent maintenant un seul passage — un test couvre chacun des cinq bugs
 (`tests/test_claims.py`).
+
+Le cinquième a été trouvé **en publiant une mesure** : la table des 24 objectifs refusés
+ci-dessous écrit `21/24 = 88 %`, un arrondi à l'entier, et la porte a répondu « calcul
+EXACT faux » — puisque `88 %` valait 88 et non 0,88. C'est un **faux témoin**, la pire
+espèce : un outil qui accuse à tort apprend à ignorer les vraies accusations, et celui-là
+aurait fait réécrire des phrases justes. Le correctif ne relâche rien d'autre : `%`
+multiplie par 100 (c'est ce que « pour cent » veut dire), la tolérance est exactement
+l'arrondi à la précision annoncée, et un calcul sans unité reste jugé au 1e-9.
 
 ---
 
@@ -1202,6 +1211,37 @@ Le gain des 3 cas est une **direction, pas une preuve** : sur 48 objectifs jamai
 de confiance du gain est **[0 ; +14,6] points** — sa borne basse touche zéro. C'est écrit ici
 parce qu'un chiffre publié sans son intervalle serait exactement ce que ce dépôt s'interdit
 (`evidence/routeur-bm25f-075.{md,json}`).
+
+Et quand aucune procédure ne s'impose, l'abstention **rend une liste classée**, pas du vide. Ce
+que cette liste vaut est mesuré, sur les **24 objectifs du domaine que la porte refuse** :
+
+| liste rendue | bonne compétence | IC95 | rapport au hasard (1 sur 12) |
+| --- | ---: | --- | ---: |
+| premier élément | 10/24 = **42 %** | [24 % ; 61 %] | 5,0× |
+| trois premiers | 14/24 = **58 %** | [39 % ; 76 %] | 7,0× |
+| cinq premiers (rendus) | 16/24 = **67 %** | [47 % ; 82 %] | 8,0× |
+| inventaire complet, non classé | 21/24 = 87,5 % | [69 % ; 96 %] | 10,5× |
+
+Cinq éléments, et pas davantage : trois à cinq fait gagner 9 points de « la bonne réponse est
+visible » pour une quinzaine de jetons (des noms et des scores, jamais des corps) ; au-delà, on
+retombe sur l'inventaire complet, qui n'est pas classé — et un inventaire non classé vaut le
+hasard. La liste est **classée, jamais appliquée** : le routeur ne prétend pas qu'une procédure
+s'applique, et la confiance à lui accorder est écrite à côté
+(`evidence/routeur-liste-abstention`). Deux sorties de secours restent nommées, dans cet ordre :
+`jio skills "<objectif>" --seuil 0` pour forcer un classement, et `jio skills --nom <compétence>`
+pour charger le **texte complet** d'une procédure reconnue dans la liste. Un nom inconnu est
+refusé en **énumérant les noms valides**.
+
+Avant d'en arriver là, deux campagnes ont conclu au **plateau**, et c'est écrit pour ne pas les
+refaire : six portes d'abstention candidates (prose des corps dans la preuve, lexique *et* autre
+source, pondération, idf fort…) donnent des chiffres **identiques ou pires** — les objectifs
+refusés ne partagent *aucun* mot avec le corpus (« prove the fix by running it »), donc aucun
+enrichissement de vocabulaire ne peut les sauver ; une seconde porte par le **lexique** charge
+3 hors-sujet sur 8 **du banc**, et elle est écartée sur le banc même ; une seconde porte par le
+**score** serait sélectionnée sur les jeux de contrôle, donc refusée par protocole ; douze
+variantes de classement (BM25F canonique, poids du corps 0,5→2,0, idf fusionné, répétition des
+champs courts 1→5) plafonnent à **+2 cas sur 113** et toutes dégradent le banc. Le critère
+d'acceptation — améliorer les quatre jeux **sans** dégrader le banc — avait été déclaré avant.
 
 Ces deux lignes sont conservées ici pour ne pas refaire les essais : une brique qui n'a pas
 prouvé son utilité ne reste pas dans le dépôt, mais la trace de l'essai reste — sinon la même
@@ -1538,7 +1578,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1236 tests verts -> 1236 tests verts
+         - README.md ligne 15 : 1240 tests verts -> 1240 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

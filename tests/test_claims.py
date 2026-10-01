@@ -591,3 +591,41 @@ def test_le_hook_accepte_plusieurs_fichiers_et_le_pire_gagne(tmp_path: pathlib.P
     # Hors mode hook, un document muet parmi d'autres reste signale (code 3) : la
     # distinction n'est pas perdue, elle est seulement desactivee pour un commit.
     assert _jio("claims", str(sain), str(muet)).returncode == 3
+
+
+def test_un_pourcentage_ARRONDI_n_est_pas_une_fausse_affirmation() -> None:
+    """Le temoin a raconte un faux pourcentage juste : c'est un FAUX TEMOIN.
+
+    Trouve en publiant une mesure dans le README de ce depot : `21/24 = 88 %` — un
+    arrondi a l'entier, donc une phrase juste — etait declare « calcul EXACT » faux,
+    parce que l'outil comparait 0,875 a 88 (le signe `%` n'etait pas lu). Un temoin
+    qui accuse a tort coute plus cher que pas de temoin : il apprend a ignorer les
+    vraies accusations. Le signe `%` multiplie donc la valeur par 100, et l'ecart
+    tolere est EXACTEMENT l'arrondi a la precision ecrite — 0,5 x 10^-decimales.
+
+    Ce que ce test verrouille dans les deux sens : un arrondi juste passe, un faux
+    nombre reste refuse, et sans `%` rien n'est adouci.
+    """
+    for juste in ("21/24 = 88 %",       # 87,5 arrondi a l'entier : juste
+                  "21/24 = 87,5 %",     # la valeur exacte : juste
+                  "1/12 = 8 %",         # 8,33 -> 8 : juste
+                  "2/3 = 67 %",         # 66,67 -> 67 : juste
+                  "1/4 = 25 %"):        # juste par construction
+        rapport = verifier(f"Mesure : {juste}.\n", racine=None)
+        assert rapport.refutees == 0, f"{juste} est juste, or : {rapport.resume()}"
+
+    # Le faux reste faux, et l'ecart n'est pas une excuse : 87,5 % ne s'arrondit pas a 99.
+    faux = verifier("Mesure : 21/24 = 99 %.\n", racine=None)
+    assert faux.bloquantes, "un pourcentage faux doit rester bloque"
+    assert "tolerance" in faux.bloquantes[0].message
+
+    # Le piege que la lecture du `%` doit fermer dans l'AUTRE sens : un resultat sans
+    # unite annonce comme un pourcentage. 200/4 vaut 50, pas 50 % — sans la
+    # multiplication, on comparerait 50 a 50 et on validerait une phrase fausse.
+    trompeur = verifier("Mesure : 200/4 = 50 %.\n", racine=None)
+    assert trompeur.bloquantes, "50 % vaut 0,5 : cette phrase est fausse"
+
+    # Et l'ancien comportement est INTACT la ou il etait bon : sans signe `%`, la
+    # comparaison reste stricte au 1e-9. 0,875 n'est pas 88.
+    strict = verifier("Mesure : 21/24 = 88.\n", racine=None)
+    assert strict.bloquantes, "sans unite, aucune indulgence"

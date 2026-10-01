@@ -195,6 +195,39 @@ def mesurer_tous() -> dict[str, float]:
     return reunis
 
 
+def qualite_de_la_liste() -> dict[str, float]:
+    """Quand la porte se ferme, ce qu'elle rend vaut-il mieux que le hasard ?
+
+    La question du routeur ne s'arrete pas a « charger ou non » : quand il ne charge rien, il
+    REND quelque chose, et ce quelque chose est mesurable. Sur les objectifs du domaine qu'il
+    refuse, le premier de la liste classee est le bon dans une part des cas tres superieure au
+    hasard (12 competences = 1 sur 12) : c'est ce chiffre qui justifie d'afficher la liste au
+    lieu du vide — et c'est aussi lui qui fixe la confiance a lui accorder.
+
+    Ce chiffre inclut le jeu D, dont seuls les TAUX GLOBAUX ont ete regardes : le detail de son
+    classement n'a jamais ete ouvert a la main, ce qui est la propriete annoncee par ce jeu.
+    """
+    from .router import catalogue_du_depot, proches
+
+    justes = total = 0
+    for jeu in JEUX:
+        for texte, attendu, _ in jeu.cas:
+            if _premier(texte) is not None:
+                continue                      # servi : la question ne se pose pas
+            total += 1
+            liste = proches(texte, maximum=3)
+            if liste and liste[0].nom == attendu:
+                justes += 1
+    hasard = 1.0 / max(1, len(catalogue_du_depot().documents))
+    return {
+        "justes": float(justes),
+        "cas": float(total),
+        "taux": (justes / total) if total else 0.0,
+        "hasard": hasard,
+        "facteur": ((justes / total) / hasard) if total and hasard else 0.0,
+    }
+
+
 def resume_tous() -> str:
     """Le tableau des trois jeux, puis la ligne agregee. Ce qu'un rapport doit montrer."""
     lignes = []
@@ -210,6 +243,13 @@ def resume_tous() -> str:
     lignes.append(
         f"    {'TOTAL':>3} {t['premier_choix']:>5.1%} sur {int(t['cas'])} cas jamais vus · "
         f"abstention juste {t['abstentions_justes']:.0%} sur {int(t['hors_sujet'])} hors sujet"
+    )
+    q = qualite_de_la_liste()
+    lignes.append(
+        f"    QUAND LA PORTE SE FERME : la premiere de la liste classee est la bonne "
+        f"{q['justes']:.0f}/{q['cas']:.0f} fois ({q['taux']:.0%}), contre {q['hasard']:.0%} "
+        f"au hasard — la liste vaut donc {q['facteur']:.1f} fois le hasard, et c'est ce qui "
+        f"est rendu a la place du vide"
     )
     return "\n".join(lignes)
 

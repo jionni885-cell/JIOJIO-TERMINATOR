@@ -25,6 +25,7 @@ from .router import (
     choisir,
     cout,
     jetons,
+    proches,
     stem,
 )
 
@@ -44,5 +45,6 @@ __all__ = [
     "jetons",
     "meilleur_seuil",
     "mesurer",
+    "proches",
     "stem",
 ]

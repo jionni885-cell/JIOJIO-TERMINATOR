@@ -430,14 +430,35 @@ def _tool_skills(args: dict[str, Any]) -> str:
 
         injection = bloc(objectif)
         if injection.vide:
+            from .skills.controle import qualite_de_la_liste
+            from .skills.router import proches
+
+            # Cinq : voir `router.proches` — la liste n'est pas une injection de corps, et la
+            # mesure (recall@5 = 67 % contre 58 % a trois) justifie les quinze jetons de plus.
+            liste = proches(objectif, maximum=5)
+            q = qualite_de_la_liste()
             lignes = [
                 "Aucune procedure ne S'IMPOSE pour cet objectif : moins de deux mots de domaine",
                 "reconnus. Le routeur prefere ne rien charger plutot qu'une procedure qui ne",
-                "s'applique pas — mais tu peux choisir toi-meme, l'inventaire tier 0 est ci-dessous.",
+                "s'applique pas — mais tu peux choisir toi-meme.",
                 "Si tu sais quelle procedure il te faut, nomme-la (`name`).",
-                "",
-                "INVENTAIRE TIER 0 (nom, categorie, une ligne) :",
             ]
+            if liste:
+                lignes += [
+                    "",
+                    "LES PLUS PROCHES, classees — ce n'est PAS une decision, c'est une liste :",
+                ]
+                lignes += [
+                    f"- {c.nom} [{c.categorie}] score {c.score} — "
+                    f"{', '.join(c.raisons) if c.raisons else 'aucun terme commun'}"
+                    for c in liste
+                ]
+                lignes += [
+                    f"Mesure : quand la porte se ferme, la premiere de cette liste est la bonne "
+                    f"{q['justes']:.0f} fois sur {q['cas']:.0f} ({q['taux']:.0%}), contre "
+                    f"{q['hasard']:.0%} au hasard. A toi de juger.",
+                ]
+            lignes += ["", "INVENTAIRE TIER 0 (nom, categorie, une ligne) :"]
             lignes += [f"- {s.name} [{s.category}] — {s.description}" for s in SKILLS]
             if injection.refusees:
                 lignes.append(

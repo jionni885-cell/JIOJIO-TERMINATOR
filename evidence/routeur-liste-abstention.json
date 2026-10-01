@@ -1,0 +1,57 @@
+{
+  "horodatage": "2026-10-01 15:31:21 +0000",
+  "genre": "liste rendue quand le routeur s'abstient",
+  "commit": "fd0b6f3",
+  "population": "24 objectifs du domaine refuses par la porte, sur 113 cas jamais vus",
+  "rappel_dans_la_liste": {
+    "1": {
+      "justes": 10,
+      "cas": 24,
+      "taux": 0.4167,
+      "ic95": [
+        0.2447,
+        0.6117
+      ]
+    },
+    "2": {
+      "justes": 11,
+      "cas": 24,
+      "taux": 0.4583,
+      "ic95": [
+        0.2789,
+        0.6493
+      ]
+    },
+    "3": {
+      "justes": 14,
+      "cas": 24,
+      "taux": 0.5833,
+      "ic95": [
+        0.3883,
+        0.7553
+      ]
+    },
+    "5": {
+      "justes": 16,
+      "cas": 24,
+      "taux": 0.6667,
+      "ic95": [
+        0.4671,
+        0.8203
+      ]
+    },
+    "12": {
+      "justes": 21,
+      "cas": 24,
+      "taux": 0.875,
+      "ic95": [
+        0.69,
+        0.9566
+      ]
+    }
+  },
+  "hasard": 0.0833,
+  "facteur_sur_le_hasard": 5.0,
+  "note": "La porte et le classement n'ont PAS ete touches : 6 portes candidates et 12 variantes de classement ont ete mesurees puis ecartees, toutes egales ou inferieures. Ce qui change est ce que le routeur REND quand il dit non.",
+  "reproductible_par": "jio skills --controle ; scripts/diagnostic-routeur.py liste ; scripts/experience-routeur.py ; scripts/experience-classement.py"
+}

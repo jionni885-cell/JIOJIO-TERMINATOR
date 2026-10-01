@@ -68,6 +68,7 @@ __all__ = [
     "Document",
     "catalogue_du_depot",
     "choisir",
+    "proches",
     "cout",
     "jetons",
     "stem",
@@ -467,6 +468,43 @@ def catalogue_du_depot() -> Catalogue:
             for s in SKILLS
         ])
     return _CATALOGUE
+
+
+def proches(objectif: str, *, maximum: int = 3) -> list[Choix]:
+    """Les competences les plus proches, SANS la porte d'abstention : la liste a RENDRE.
+
+    C'est la reponse a la seule question que le routeur doit encore resoudre quand il dit NON.
+    Mesure qui a fait naitre cette fonction, sur les 24 objectifs du domaine que la porte refuse
+    parmi les 113 cas jamais vus : le PREMIER de cette liste est le bon 10 fois (42 %), contre
+    8 % au hasard (1 sur 12). Autrement dit, « aucune procedure ne s'impose » et « voici les
+    trois plus proches, classees » ne portent pas la meme information — et la seconde aide
+    l'agent, alors que la premiere le laisse seul.
+
+    La bonne competence est-elle DANS la liste ? Mesure sur les 24 objectifs refuses (les quatre
+    jeux reunis), en tirant la liste a des longueurs differentes :
+
+        recall@1 .. 10/24 (42 %)      recall@3 .. 14/24 (58 %)
+        recall@5 .. 16/24 (67 %)      recall@12 . 21/24 (88 %)
+
+    C'est cette ligne qui fixe la longueur : passer de trois a cinq elements fait gagner neuf
+    points de « la bonne reponse est visible » pour une quinzaine de jetons de plus (des noms et
+    des scores, jamais des corps). Au-dela, on retombe sur l'inventaire complet — non classe et
+    donc a 8 % pour un premier choix. Et le debut de la liste ne depend PAS de sa longueur
+    (mesure : 24/24 prefixes identiques), donc l'agent qui compare deux sorties ne se demande pas
+    laquelle croire.
+
+    Deux garde-fous, et ils tiennent a la maniere de s'en servir :
+
+      * la liste est CLASSEE, jamais appliquee : le routeur ne pretend pas qu'une procedure
+        s'applique, il montre ce qu'il a trouve de moins eloigne. L'appelant qui la presente
+        comme un choix est celui qui se trompe, et la documentation le dit ;
+      * elle est plafonnee a `maximum` : une liste de douze refait le probleme qu'elle resout
+        (elle rend le contexte lourd et la decision impossible).
+
+    Le score est celui du classement normal — l'echelle n'a pas d'unite, donc elle n'est pas
+    comparable d'un objectif a l'autre ; elle ordonne, elle ne note pas.
+    """
+    return choisir(objectif, maximum=maximum, seuil=0)
 
 
 def choisir(

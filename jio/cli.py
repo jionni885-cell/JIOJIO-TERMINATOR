@@ -4408,6 +4408,7 @@ def cmd_skills(args: argparse.Namespace) -> int:
         comparer,
         cout,
         mesurer,
+        proches,
     )
     from .skills.banc import BANC
 
@@ -4528,6 +4529,15 @@ def cmd_skills(args: argparse.Namespace) -> int:
                 # s'impose », et l'appelant automatise recoit l'inventaire pour decider lui-meme.
                 # Sans cela, un agent qui interroge le routeur ne saurait meme pas que des
                 # procedures existent : il travaille sans, et le harness ne sert a rien.
+                #
+                # `proches` est la liste CLASSEE, et elle n'est pas une decision : quand la porte
+                # se ferme, son premier element est le bon dans 42 % des cas mesures (contre 8 %
+                # au hasard) — assez pour aider, pas assez pour trancher a la place de l'agent.
+                "proches": [
+                    {"nom": c.nom, "categorie": c.categorie, "score": c.score,
+                     "raisons": list(c.raisons), "cout_jetons": c.cout_jetons}
+                    for c in proches(objectif, maximum=5)
+                ],
                 "tier0": [
                     {"nom": d.nom, "categorie": d.categorie, "description": d.description}
                     for d in catalogue_du_depot().documents
@@ -4551,10 +4561,33 @@ def cmd_skills(args: argparse.Namespace) -> int:
         print("      jio skills \"...\" --seuil 0          force un classement (le routeur peut")
         print("                                        alors charger ce qui ne s'applique pas)")
         print("      jio skills --nom <competence>     charge le texte d'une procedure que")
-        print("                                        l'inventaire ci-dessous vous a fait")
+        print("                                        les listes ci-dessous ont fait reconnaitre")
         print()
-        print("  CETTE ABSTENTION N'EST PAS UNE IMPASSE. L'inventaire tier 0 (nom + une")
-        print("  ligne), que l'agent peut lire pour decider lui-meme :")
+        from .skills.controle import qualite_de_la_liste
+        from .skills.router import proches
+
+        # CINQ et non `args.maximum` : la liste n'est pas une injection (elle ne fait pas
+        # entrer de corps dans le contexte), et la mesure dit que 5 elements font passer
+        # « la bonne competence est visible » de 58 % a 67 %. Le plafond reste : au-dela, on
+        # refait l'inventaire complet, qui n'est pas classe.
+        liste = proches(objectif, maximum=5)
+        q = qualite_de_la_liste()
+        if liste:
+            print("  LES PLUS PROCHES, classees — presentees comme telles, jamais comme une")
+            print(f"  decision (mesure : la premiere est la bonne {q['justes']:.0f} fois sur "
+                  f"{q['cas']:.0f} quand la porte se ferme,")
+            print(f"  contre {q['hasard']:.0%} au hasard) :")
+            print()
+            for rang, c in enumerate(liste, start=1):
+                print(f"      {rang}. {c.nom}  [{c.categorie}]  score {c.score}  "
+                      f"{c.cout_jetons} jetons")
+                print(f"         pourquoi : {', '.join(c.raisons) if c.raisons else 'aucun terme'}")
+            print()
+        print("  CETTE ABSTENTION N'EST PAS UNE IMPASSE : la liste ci-dessus (classee, donc")
+        print("  utilisable) et l'inventaire ci-dessous (complet, donc sans ordre) donnent de")
+        print("  quoi decider. Ce que le routeur refuse, c'est de decider A VOTRE PLACE.")
+        print()
+        print("  ET L'INVENTAIRE COMPLET (tier 0, une ligne par competence) :")
         print()
         for d in catalogue_du_depot().documents:
             print(f"      {d.nom}  [{d.categorie}]")
