@@ -3,7 +3,7 @@
 Une brique de selection qui n'est pas mesuree est une intuition avec une signature. Ce banc
 annote a la main des objectifs REELS avec la competence qui devrait etre chargee, puis compare :
 
-  * le **routeur** (BM25 + MMR + abstention) ;
+  * le **routeur** (BM25F a deux champs + MMR + abstention) ;
   * `tout` — charger les douze competences. C'est l'etat de fait quand rien ne choisit : le
     rappel est parfait par construction, et c'est justement pour cela que le COUT doit etre
     affiche a cote. Un rappel de 1,0 paye 6424 jetons ne vaut pas 0,92 paye 800 ;
@@ -406,7 +406,7 @@ def comparer(*, maximum: int = 3, banc: Sequence[ObjectifAnnote] = BANC) -> list
     resultats: list[tuple[str, str, float]] = []
 
     for nom, decideur in (
-        ("routeur (BM25 + MMR)", None),
+        ("routeur (BM25F + MMR)", None),
         ("mots-cles bruts", _mots_cles),
         ("alphabetique", _alphabetique),
         ("tout charger", _tout),

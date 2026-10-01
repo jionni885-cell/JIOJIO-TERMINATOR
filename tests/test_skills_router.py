@@ -211,9 +211,9 @@ def test_le_routeur_bat_ses_temoins() -> None:
     le vrai juge : c'est l'ablation.
     """
     resultats = {nom: equilibre for nom, _, equilibre in comparer()}
-    routeur = resultats["routeur (BM25 + MMR)"]
+    routeur = resultats["routeur (BM25F + MMR)"]
     for temoin, equilibre in resultats.items():
-        if temoin != "routeur (BM25 + MMR)":
+        if temoin != "routeur (BM25F + MMR)":
             assert routeur > equilibre, f"le routeur ne bat pas {temoin}"
     # `tout charger` a un rappel parfait par construction : s'il gagne, c'est que le routeur ne
     # sert a rien. Il ne doit pas gagner.
@@ -351,7 +351,7 @@ def test_la_commande_skills_publie_ses_mesures(capsys) -> None:
     """Le banc et le seuil s'affichent a la demande : le routeur ne demande pas d'etre cru."""
     code, sortie = _lancer(["skills", "--banc"], capsys)
     assert code == 0
-    assert "routeur (BM25 + MMR)" in sortie
+    assert "routeur (BM25F + MMR)" in sortie
     assert "mots-cles bruts" in sortie
     assert "alphabetique" in sortie
     assert "LIMITE de l'affirmation" in sortie
