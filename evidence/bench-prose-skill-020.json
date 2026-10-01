@@ -1,0 +1,47 @@
+{
+  "horodatage": "2026-10-01 13:04:03 +0000",
+  "genre": "prose",
+  "modele": "simule",
+  "note_modele": "documents simules ; la VERIFICATION de leurs affirmations, elle, est reelle",
+  "competence_simulee": 0.35,
+  "tirages": 5,
+  "taches": 1,
+  "tours_max": 4,
+  "commit": "0608fcd",
+  "duree_s": 14.1,
+  "bras": [
+    {
+      "competence": 0.0,
+      "justes": 0,
+      "essais": 5,
+      "taux": 0.0,
+      "ic95": [
+        0.0,
+        0.4345
+      ],
+      "aveugle": 0.0,
+      "aveugle_best_of": 0.0,
+      "silencieuses": 0,
+      "sous_reserve": 5,
+      "abstentions": 0,
+      "appels": 9.6
+    },
+    {
+      "competence": 0.35,
+      "justes": 5,
+      "essais": 5,
+      "taux": 1.0,
+      "ic95": [
+        0.5655,
+        1.0
+      ],
+      "aveugle": 0.0,
+      "aveugle_best_of": 1.0,
+      "silencieuses": 0,
+      "sous_reserve": 0,
+      "abstentions": 0,
+      "appels": 3.6
+    }
+  ],
+  "erreurs_silencieuses": 0
+}
