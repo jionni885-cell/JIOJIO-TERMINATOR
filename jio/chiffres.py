@@ -79,6 +79,14 @@ class Chiffre:
     #: pour une annonce de la bibliotheque d'agents : un faux positif dans un controle de
     #: documentation, c'est-a-dire un bug du controle lui-meme.
     ancre: bool = True
+    #: Motif qui doit AUSSI apparaitre sur la ligne pour que le nombre soit celui qu'on croit.
+    #: Une liste d'exceptions (« pas si c'est suivi de jamais vus ») est une course sans fin :
+    #: chaque nouvelle phrase parlant d'un autre nombre demande une exception de plus, et
+    #: l'oubli ne se voit pas — il produit exactement ce que ce module doit empecher, un
+    #: chiffre JUSTE reecrit en chiffre faux. Un contexte POSITIF retourne le probleme :
+    #: un nombre n'est surveille que dans la phrase qui parle de sa grandeur, et une phrase
+    #: qu'on n'a pas prevue est simplement laissee tranquille.
+    contexte: str = ""
 
     def annonce(self, texte: str) -> bool:
         """Le document annonce-t-il ce chiffre, sous la forme surveillee ?
@@ -94,8 +102,11 @@ class Chiffre:
         """
         hors_controle, _ = zones_hors_controle(texte)
         motif = re.compile(self.motif)
+        contexte = re.compile(self.contexte) if self.contexte else None
         for indice, ligne in enumerate(texte.splitlines(), start=1):
             if indice in hors_controle:
+                continue
+            if contexte and not contexte.search(ligne):
                 continue
             if motif.search(ligne):
                 return True
@@ -126,7 +137,18 @@ CHIFFRES: tuple[Chiffre, ...] = (
     # phrase du README, elle, annoncait toujours 38.
     Chiffre(
         nom="objectifs",
-        motif=r"(\d+) objectifs(?! de routage| de contr| du jeu de contr| d'un projet| hors sujet| pertinents)",
+        # Les exceptions sont des CONTEXTES ou le nombre parle d'autre chose que du banc de la
+        # porte. « jamais vus » manquait : `--appliquer` a reecrit « 48 objectifs jamais vus »
+        # (les deux jeux de controle du routeur) en « 41 objectifs jamais vus » (la taille du
+        # banc de clarification) — un chiffre JUSTE transforme en chiffre faux par l'outil cense
+        # les proteger. Un motif large se paie toujours quelque part : ici, il faut nommer
+        # chaque contexte qui parle d'un autre nombre.
+        motif=r"(\d+) objectifs(?! de routage| de contr| du jeu de contr| d'un projet| hors sujet"
+              r"| pertinents| jamais vus| du banc| d'essai)",
+        # La phrase qui parle du banc de la porte : c'est la SEULE ou ce nombre a un sens.
+        # « 24 objectifs jamais vus », « 24 objectifs, ecrit avant la retouche » parlent du
+        # routeur de competences et ne doivent pas etre touches.
+        contexte=r"faux positif|faux n[ée]gatif|--mesure|objectifs r[ée]els",
         description="le banc d'objectifs de la porte de clarification (jio/bench/objectifs.py)",
     ),
     # Le routeur de competences publie lui aussi deux nombres dans le README : la taille de son
@@ -277,9 +299,12 @@ def ecarts(texte: str, mesures: dict[str, int]) -> list[Ecart]:
             # n'est pas mesure pour de vrai fait echouer la suite.
             continue
         motif = re.compile(chiffre.motif)
+        contexte = re.compile(chiffre.contexte) if chiffre.contexte else None
         vu_quelque_part = False
         for indice, ligne in enumerate(lignes, start=1):
             if indice in hors_controle:
+                continue
+            if contexte and not contexte.search(ligne):
                 continue
             for correspondance in motif.finditer(ligne):
                 vu_quelque_part = True
@@ -368,6 +393,10 @@ def reparer(
     lignes = original.splitlines(keepends=True)
     hors_controle, raisons = zones_hors_controle(original)
     remplacements = 0
+    # Chaque reecriture est NOMMEE dans le rapport (ligne, avant -> apres). Un compte global ne
+    # permet pas de distinguer une correction juste d'un chiffre juste transforme en faux : ce
+    # defaut est arrive, et il n'a ete vu qu'en relisant le texte a la main.
+    corrections: list[str] = []
     for chiffre in CHIFFRES:
         if chiffre.nom not in mesures:
             # Meme regle que dans `ecarts` : ce qu'on ne mesure pas, on ne le reecrit pas.
@@ -375,9 +404,12 @@ def reparer(
             # controle ne regarde pas — exactement le trou que le test suivant interdit.
             continue
         motif = re.compile(chiffre.motif)
+        contexte = re.compile(chiffre.contexte) if chiffre.contexte else None
         attendue = mesures[chiffre.nom]
         for indice, ligne in enumerate(lignes):
             if (indice + 1) in hors_controle:
+                continue
+            if contexte and not contexte.search(ligne):
                 continue
             if not motif.search(ligne):
                 continue
@@ -397,7 +429,10 @@ def reparer(
             if nouvelle != ligne:
                 avant = [m.group(0) for m in motif.finditer(ligne)]
                 apres = [m.group(0) for m in motif.finditer(nouvelle)]
-                remplacements += sum(1 for a, b in zip(avant, apres) if a != b)
+                for a, b in zip(avant, apres):
+                    if a != b:
+                        remplacements += 1
+                        corrections.append(f"ligne {indice + 1} : {a} -> {b}")
                 lignes[indice] = nouvelle
 
     attendus = sum(1 for ecart in trouves if ecart.reparable)
@@ -435,6 +470,11 @@ def reparer(
         f"{remplacements} chiffre(s) corrige(s) dans {chemin.name} · "
         f"sauvegarde : {sauvegarde.name}"
     )
+    if corrections:
+        montres = corrections[:8]
+        message += "\n    " + "\n    ".join(montres)
+        if len(corrections) > len(montres):
+            message += f"\n    ... et {len(corrections) - len(montres)} autre(s)"
     if raisons:
         message += f" · {len(raisons)} zone(s) hors controle, declaree(s) : " + " | ".join(raisons)
     if signalements:

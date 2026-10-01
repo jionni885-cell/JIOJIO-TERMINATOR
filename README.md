@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1227 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1232 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -124,6 +124,16 @@ Deux autres commandes ont été passées au même banc, avec le même résultat 
   alors que le même constat côté portail était déclaré hors de portée. Un document qui n'annonce
   aucun chiffre surveillé ne participe pas au contrôle : les deux commandes le disent maintenant
   de la même façon — deux mesures de la même chose ne peuvent pas rendre deux verdicts opposés.
+- **`jio chiffres --appliquer` a réécrit des chiffres JUSTES en chiffres faux.** Le motif du banc
+  de la porte de clarification attrapait tout « N objectifs » qui n'était pas suivi d'une
+  exception connue : il a donc remplacé « 24 objectifs jamais vus » (les deux jeux de contrôle
+  du routeur) par « 41 » (la taille de ce banc-là), dans le README, automatiquement, et sans que
+  le contrôle le voie — puisque 41 était bien la valeur mesurée de l'*autre* grandeur. Une liste
+  d'exceptions est une course sans fin : le troisième cas oublié ne se voit pas. Le remède
+  retourne le problème — chaque chiffre surveillé déclare un **contexte positif** (la phrase qui
+  parle de SA grandeur), et une phrase non prévue est simplement laissée tranquille. Le rapport
+  de `--appliquer` nomme désormais **chaque** réécriture (ligne, avant → après) : un compte
+  global ne permettait pas de distinguer une correction d'une dégradation.
 - **`jio artifacts --write`**, la réparation *recommandée* par le portail, en laissait deux
   derrière elle : elle écrivait la forme canonique pendant que le contrôle exigeait la commande
   résolue (`python3` contre l'interpréteur qui a JIO). L'utilisateur réparait, se voyait reprocher
@@ -1087,7 +1097,7 @@ Cinq décisions, et aucune n'est un goût personnel — chacune a été **mesur�
   **du dépôt**, pas le sujet de la compétence (coût du défaut : 29 points de premier choix
   juste). On en avait conclu « ne jamais indexer le corps » — conclusion trop forte, corrigée
   par une seconde mesure : pesé comme un **second champ** (`POIDS_CORPS`), le corps rend
-  3 cas sur 41 objectifs **jamais vus** (45,8 % → 58,3 %) sans rien coûter au banc ni aux
+  3 cas sur 24 objectifs **jamais vus** (45,8 % → 58,3 %) sans rien coûter au banc ni aux
   abstentions. La prose d'une compétence dit *quand* elle s'applique ; ses exemples disent
   *où elle a été écrite*.
 - **Diversification MMR** : deux compétences quasi identiques occuperaient deux places du
@@ -1141,7 +1151,7 @@ Le résultat
   jeu de contrôle (24 objectifs de contrôle, jamais vus) .... 58 %
     dont anglais (la langue de travail de Hermes) .... 58 %
     dont français ................................... 58 %
-  second jeu de contrôle (41 objectifs, écrit avant la retouche) .. 50 %
+  second jeu de contrôle (24 objectifs, écrit avant la retouche) .. 50 %
   les deux jeux jamais vus, regroupés (48 cas) ............. 54 %
 ```
 
@@ -1172,7 +1182,7 @@ essayées et **écartées par la mesure**, plutôt que gardées parce qu'elles a
 | indexer le vocabulaire **procédural** des corps (mots alphabétiques à IDF élevée, littéraux exclus) | 46 % → **46 %** | **écartée** : aucun gain, plus de bruit dans l'index |
 | nourrir l'abstention avec le vocabulaire des **corps** | hors sujet acceptés : 8/8 et 4/4 → **6/8 et 2/4** | **écartée** : le corps servait de porte dérobée au classement ; l'abstention ne juge que le tier 0 |
 
-Le gain des 3 cas est une **direction, pas une preuve** : sur 41 objectifs jamais vus l'intervalle
+Le gain des 3 cas est une **direction, pas une preuve** : sur 48 objectifs jamais vus l'intervalle
 de confiance du gain est **[0 ; +14,6] points** — sa borne basse touche zéro. C'est écrit ici
 parce qu'un chiffre publié sans son intervalle serait exactement ce que ce dépôt s'interdit
 (`evidence/routeur-bm25f-075.{md,json}`).
@@ -1512,7 +1522,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1227 tests verts -> 1227 tests verts
+         - README.md ligne 15 : 1232 tests verts -> 1232 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

@@ -457,3 +457,43 @@ def test_une_abstention_REND_l_inventaire_au_lieu_du_vide(capsys) -> None:
     for d in catalogue_du_depot().documents:
         assert d.nom in sortie, f"{d.nom} n'est pas annonce dans l'abstention"
     assert ".hermes/skills/README.md" in sortie
+
+
+def test_charger_une_procedure_PAR_SON_NOM(capsys) -> None:
+    """La boucle « inventaire -> choix -> texte » doit se fermer, aussi au shell.
+
+    Defaut constate apres avoir repare l'abstention : le serveur MCP savait charger une procedure
+    par son nom, la CLI NON. Un agent qui travaille au shell voyait donc l'inventaire tier 0,
+    reconnaissait la procedure qui lui faut, et ne pouvait pas l'obtenir — la boucle s'arretait au
+    milieu. Le nom inconnu est refuse en ENUMERANT les noms valides : un refus qui n'enumere pas
+    oblige a deviner.
+    """
+    from jio.artifacts.definitions import SKILLS
+
+    code, sortie = _lancer(["skills", "--nom", "executable-proof"], capsys)
+    assert code == 0
+    assert "PROCEDURE  executable-proof" in sortie
+    # Le TEXTE COMPLET, pas seulement la fiche : c'est ce qu'on injecte a l'agent.
+    corps = next(s.body for s in SKILLS if s.name == "executable-proof")
+    premiere_phrase = corps.strip().splitlines()[0]
+    assert premiere_phrase in sortie, "le corps n'est pas rendu"
+
+    code, sortie = _lancer(["skills", "--nom", "executabel-proof"], capsys)
+    assert code == 1, "un nom inconnu doit sortir en erreur, pas en succes"
+    assert "INCONNUE" in sortie
+    for skill in SKILLS:
+        assert skill.name in sortie, "le refus doit enumerer les noms valides"
+
+
+def test_la_CLI_et_le_MCP_rendent_LE_MEME_texte_par_nom() -> None:
+    """Deux interfaces, une seule source : sinon l'une des deux servira un autre programme.
+
+    C'est le meme genre de defaut que la description MCP annoncant « seven checks » alors que la
+    porte en executait neuf : le texte a deux endroits diverge toujours, et c'est celui qu'on ne
+    relit pas qui vieillit.
+    """
+    from jio.artifacts.definitions import SKILLS
+    from jio.mcp_server import _tool_skills
+
+    attendu = next(s.body for s in SKILLS if s.name == "prose-witnesses")
+    assert _tool_skills({"name": "prose-witnesses"}).strip() == attendu.strip()

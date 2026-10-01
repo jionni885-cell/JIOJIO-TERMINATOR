@@ -4109,6 +4109,10 @@ def build_parser() -> argparse.ArgumentParser:
                          "est la generalisation reelle")
     sk.add_argument("--seuil-balaye", action="store_true",
                     help="le seuil contre ses consequences : rappel et abstentions justes")
+    sk.add_argument("--nom", default="",
+                    help="charger UNE competence par son nom (le texte complet), sans passer par "
+                         "le classement : c'est la sortie de secours quand le routeur s'abstient "
+                         "et que l'agent a reconnu la procedure dans l'inventaire tier 0")
     sk.add_argument("--json", action="store_true", help="verdict lisible par une machine")
     sk.set_defaults(func=cmd_skills)
 
@@ -4465,6 +4469,10 @@ def cmd_skills(args: argparse.Namespace) -> int:
         print()
         return 0
 
+    demande = (getattr(args, "nom", "") or "").strip()
+    if demande:
+        return _skills_par_nom(demande, json_sortie=bool(getattr(args, "json", False)))
+
     objectif = " ".join(getattr(args, "objectif", []) or []).strip()
     if not objectif:
         print()
@@ -4521,9 +4529,12 @@ def cmd_skills(args: argparse.Namespace) -> int:
         print(f"  Moins de {seuil} concept(s) de domaine reconnu(s) dans l'objectif : rien ne")
         print("  garantit qu'une competence s'applique ici. Charger une procedure hors sujet")
         print("  coute plus cher que ne rien charger — elle detourne le travail en plus de")
-        print("  l'occuper. Pour forcer une reponse, baissez le seuil :")
+        print("  l'occuper. Deux sorties de secours, dans cet ordre :")
         print()
-        print("      jio skills \"...\" --seuil 0")
+        print("      jio skills \"...\" --seuil 0          force un classement (le routeur peut")
+        print("                                        alors charger ce qui ne s'applique pas)")
+        print("      jio skills --nom <competence>     charge le texte d'une procedure que")
+        print("                                        l'inventaire ci-dessous vous a fait")
         print()
         print("  CETTE ABSTENTION N'EST PAS UNE IMPASSE. L'inventaire tier 0 (nom + une")
         print("  ligne), que l'agent peut lire pour decider lui-meme :")
@@ -4555,6 +4566,56 @@ def cmd_skills(args: argparse.Namespace) -> int:
     print("  bibliotheque abordable, pas sa taille.")
     print()
     return 0
+
+
+def _skills_par_nom(demande: str, *, json_sortie: bool = False) -> int:
+    """Charger une procedure NOMMEE : la sortie de secours du routeur, cote CLI.
+
+    Pourquoi cette option existe. Le serveur MCP savait deja charger par nom ; la CLI non. Un
+    agent qui travaille au shell — Hermes, opencode — pouvait donc voir l'inventaire tier 0 que
+    le routeur rend a l'abstention, reconnaitre la procedure qui lui faut, et... ne pas pouvoir
+    l'obtenir. La boucle « inventaire -> choix -> texte » s'arretait au milieu.
+
+    Elle ne contourne PAS l'abstention : elle la suppose. L'agent qui nomme une procedure a lu
+    l'inventaire et decide ; le routeur, lui, continue de dire « aucune ne s'impose » quand rien
+    ne s'impose. Le nom inconnu est refuse avec la liste des noms valides — un refus qui n'énumère
+    pas ce qui existe oblige a deviner.
+    """
+    from .artifacts.definitions import SKILLS
+
+    for skill in SKILLS:
+        if skill.name == demande:
+            if json_sortie:
+                import json as _json
+
+                _charge_utile(_json.dumps(
+                    {"nom": skill.name, "categorie": skill.category,
+                     "description": skill.description, "tags": list(skill.tags),
+                     "texte": skill.body},
+                    ensure_ascii=False, indent=2,
+                ))
+                return 0
+            print()
+            print(f"  PROCEDURE  {skill.name}  [{skill.category}]")
+            print(f"  {skill.description}")
+            print()
+            # Le corps est imprime BRUT : c'est le texte que l'agent va lire et appliquer,
+            # l'indenter de deux espaces ne ferait qu'ajouter du bruit a copier.
+            print(skill.body.rstrip())
+            print()
+            return 0
+
+    noms = ", ".join(s.name for s in SKILLS)
+    print()
+    print(f"  COMPETENCE INCONNUE : {demande}")
+    print()
+    print("  Les noms valides sont :")
+    for skill in SKILLS:
+        print(f"      {skill.name}  [{skill.category}]")
+    print()
+    print(f"  ({noms})")
+    print()
+    return 1
 
 
 def cmd_sorties(args: argparse.Namespace) -> int:

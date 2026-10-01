@@ -349,8 +349,12 @@ def test_chiffres_et_coherence_rendent_le_MEME_verdict_sur_le_meme_document(
     # Ce test a echoue le jour ou le SEPTieme chiffre est ne (le jeu de controle du routeur) :
     # c'est exactement son role — un document qui n'en parle pas doit etre signale, meme quand
     # c'est un document fabrique ici.
+    # Le chiffre du banc de la porte n'est surveille QUE dans sa phrase (« 0 faux positif ») :
+    # un contexte positif remplace la liste d'exceptions, qui laissait passer un nombre juste
+    # reecrit en nombre faux (defaut constate, garde par un test dedie). Le document fabrique
+    # doit donc l'annoncer sous la forme surveillee, comme le README.
     juste = (f"{mesures['tests']} tests verts, les {mesures['competences']} compétences, "
-             f"les {mesures['agents']} agents, {mesures['objectifs']} objectifs, "
+             f"les {mesures['agents']} agents, {mesures['objectifs']} objectifs, 0 faux positif, "
              f"{mesures['objectifs_routage']} objectifs de routage, "
              f"{mesures['objectifs_controle']} objectifs de contrôle, "
              # Le HUITIEME est ne en meme temps que le jeu de controle de la porte de
@@ -373,3 +377,54 @@ def test_chiffres_et_coherence_rendent_le_MEME_verdict_sur_le_meme_document(
             f"desaccord sur {contenu!r} : `jio chiffres` code={code}, "
             f"coherence nombres ok={constat.ok} ({constat.resume[:80]})"
         )
+
+
+def test_un_nombre_suivi_de_JAMAIS_VUS_n_est_pas_un_chiffre_du_banc(tmp_path: Path) -> None:
+    """Defaut constate : `--appliquer` a transforme un chiffre JUSTE en chiffre FAUX.
+
+    La phrase « sur 48 objectifs jamais vus » parle des deux jeux de controle du routeur
+    (24 + 24). Le motif du banc de clarification, lui, attrape tout « NN objectifs » qui n'est
+    pas suivi d'une exception connue — « jamais vus » n'en faisait pas partie. Resultat : le
+    README a été reecrit en « 41 objectifs jamais vus », une affirmation fausse ecrite
+    AUTOMATIQUEMENT par l'outil charge de proteger les affirmations. Le motif doit donc nommer
+    ce contexte, et ce test empeche de le perdre au prochain elargissement.
+    """
+    cible = tmp_path / "doc.md"
+    # Le document DECLARE le chiffre surveille (sinon son absence est un ecart legitime) : la
+    # phrase du banc de la porte, puis celle du routeur, qui parle d'un AUTRE nombre.
+    cible.write_text(
+        "**41 objectifs, 0 faux positif.** Et sur 48 objectifs jamais vus, le gain est de 3 cas.\n",
+        encoding="utf-8",
+    )
+    code, restants, message = reparer(cible, {"objectifs": 41}, ecrire=True)
+    assert code == 0, message
+    assert not restants
+    texte = cible.read_text(encoding="utf-8")
+    assert "48 objectifs jamais vus" in texte, "un chiffre juste a ete reecrit en chiffre faux"
+    assert not (tmp_path / "doc.md.avant-jio").exists(), "rien ne devait etre ecrit"
+
+
+def test_le_rapport_NOMME_chaque_reecriture(tmp_path: Path) -> None:
+    """Un compte global ne permet pas de distinguer une correction d'une degradation.
+
+    Le defaut precedent (un chiffre juste devenu faux) n'a ete vu qu'en relisant le texte a la
+    main. Le rapport doit donc dire, pour chaque remplacement, la ligne et les deux valeurs.
+    """
+    cible = tmp_path / "doc.md"
+    cible.write_text("**Statut :** 187 tests verts, et les 3 compétences.\n", encoding="utf-8")
+    code, _, message = reparer(cible, {"tests": 533, "competences": 11}, ecrire=True)
+    assert code == 0, message
+    assert "187 tests verts -> 533 tests verts" in message, message
+    assert "ligne 1" in message, message
+
+
+def test_le_rapport_dit_AUSSI_les_reecritures_qu_il_refuse(tmp_path: Path) -> None:
+    """Le message de refus ne doit pas etre plus pauvre que le message de succes."""
+    cible = tmp_path / "doc.md"
+    cible.write_text("**Statut :** 187 tests verts.\n", encoding="utf-8")
+    # `reparer` refuse d'ecrire quand le produit garde un ecart : ici la mesure disparait
+    # (aucun chiffre du banc dans le document), donc rien ne doit etre touche.
+    code, _, message = reparer(cible, {"competences": 11}, ecrire=True)
+    assert cible.read_text(encoding="utf-8") == "**Statut :** 187 tests verts.\n"
+    assert message, "un refus muet n'apprend rien"
+    assert code in (0, 1)
