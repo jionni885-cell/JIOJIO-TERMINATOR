@@ -181,7 +181,7 @@ _PLAN_SIMULE = (
     ("corriger la cible et prouver la correction",
      "jio run \"{objectif} — cible {cible}\" --entrypoint {entree}"),
     ("verifier que rien d'autre n'a bouge", "jio scan ."),
-    ("verifier les documents qui citent la cible", "jio claims README.md"),
+    ("verifier les documents qui citent la cible", "jio claims {document}"),
     # La derniere etape porte sur l'ENSEMBLE : un plan peut reussir chacune de ses etapes et
     # laisser le depot incoherent (un artefact qui ne correspond plus a sa doctrine, un chiffre
     # annonce qui n'est plus mesure). C'est la porte qui autorise a dire « fini ».
@@ -189,19 +189,34 @@ _PLAN_SIMULE = (
 )
 
 
-def plan_simule(objectif: str, *, cible: str = "jio", entree: str = "") -> list[dict[str, str]]:
+def plan_simule(objectif: str, *, cible: str = ".", entree: str = "") -> list[dict[str, str]]:
     """Un plan deterministe pour le mode SIMULE, qui declare ce qu'il est.
 
     Il n'essaie pas d'etre intelligent : c'est un plan de reference dont chaque etape porte une
     preuve executable. Le mode reel demande un plan au modele, et le valide avec le meme code.
+
+    Adaptation au projet : l'etape « les documents qui citent la cible » ne porte que sur un
+    document QUI EXISTE (README.md, ou la cible elle-meme si c'est un .md). Mesure sur un
+    projet etranger : la faire tourner sur un README absent donnait un blocage de plus — un
+    blocage sur, mais un blocage qu'on evite en regardant avant de planifier.
     """
+    from pathlib import Path
+
+    document = "README.md"
+    if not Path(document).is_file():
+        document = cible if cible.endswith(".md") and Path(cible).is_file() else ""
+    etapes: list[tuple[str, str]] = []
+    for texte, preuve in _PLAN_SIMULE:
+        if "claims" in preuve and not document:
+            continue
+        etapes.append((
+            texte.format(objectif=objectif, cible=cible, entree=entree or "main"),
+            preuve.format(objectif=objectif, cible=cible, entree=entree or "main",
+                          document=document or cible),
+        ))
     return [
-        {
-            "objectif": texte.format(objectif=objectif, cible=cible, entree=entree or "main"),
-            "preuve": preuve.format(objectif=objectif, cible=cible, entree=entree or "main"),
-            "cible": cible,
-        }
-        for texte, preuve in _PLAN_SIMULE
+        {"objectif": objectif_etape, "preuve": preuve_etape, "cible": cible}
+        for objectif_etape, preuve_etape in etapes
     ]
 
 

@@ -4036,7 +4036,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="travaille SEUL sur un plan dont chaque etape doit porter sa preuve",
     )
     au.add_argument("objective", nargs="?", default="", help="l'objectif global")
-    au.add_argument("--cible", default="jio", help="cible du plan (chemin, module)")
+    au.add_argument(
+        "--cible", default=None,
+        help="cible du plan (chemin, module). Defaut : le chemin mentionne dans "
+             "l'objectif s'il existe, sinon '.' — la cible 'jio' n'existe que dans ce depot",
+    )
     au.add_argument("--entrypoint", default="", help="fonction attendue, si le plan en a besoin")
     au.add_argument(
         "--budget", type=int, default=6,
@@ -5708,7 +5712,20 @@ def cmd_auto(args: argparse.Namespace) -> int:
     else:
         import json as _json
 
-        texte = _json.dumps(plan_simule(objectif, cible=args.cible, entree=args.entrypoint))
+        cible = args.cible
+        if cible is None:
+            # La cible par defaut s'ADAPTE au projet : un chemin cite par l'objectif s'il
+            # existe reellement, sinon '.' — jamais 'jio', qui n'existe que dans le depot de
+            # JIO. Mesure sur un projet etranger : le defaut 'jio' produisait une etape E01
+            # « chemin introuvable » qui bloquait le plan des la premiere seconde (le blocage
+            # etait sur — fail-closed — mais l'utilisateur devinait lui-meme le bon argument).
+            cible = "."
+            for mot in objectif.replace(",", " ").replace(":", " ").split():
+                epure = mot.strip("\"'`();")
+                if epure and (Path(epure).is_file() or Path(epure).is_dir()):
+                    cible = epure
+                    break
+        texte = _json.dumps(plan_simule(objectif, cible=cible, entree=args.entrypoint))
         simule = True
 
     if reprise is not None:
