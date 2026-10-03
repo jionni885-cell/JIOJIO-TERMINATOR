@@ -16,6 +16,8 @@
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 **Tu veux l'essayer ?** Le guide pas à pas pour l'intégrer à TON projet est là :
 [`GUIDE-DEMARRAGE.md`](GUIDE-DEMARRAGE.md) — 6 étapes, toutes les commandes testées.
+**Avant de l'utiliser sur du code que tu ne contrôles pas :** lis [`SECURITY.md`](SECURITY.md) — ce que la Sandbox protège (secrets filtrés, timeout) et ce qu'elle n'est pas (une prison : sur du code hostile, utilise un conteneur).
+**Avant de l'utiliser sur du code que tu ne contrôles pas :** lis [`SECURITY.md`](SECURITY.md) — ce que la Sandbox protège (secrets filtrés, timeout) et ce qu'elle n'est pas (une prison : sur du code hostile, utilise un conteneur).
 
 ---
 
