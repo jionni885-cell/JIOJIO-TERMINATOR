@@ -14,6 +14,8 @@
 
 **Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1274 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
+**Tu veux l'essayer ?** Le guide pas à pas pour l'intégrer à TON projet est là :
+[`GUIDE-DEMARRAGE.md`](GUIDE-DEMARRAGE.md) — 6 étapes, toutes les commandes testées.
 
 ---
 
