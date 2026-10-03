@@ -9,8 +9,6 @@ qui n'a rien a mesurer est dite hors de portee au lieu de rendre un faux vert.
 
 from __future__ import annotations
 
-import pytest
-
 from jio.entreprise import (
     POSTES,
     Mission,

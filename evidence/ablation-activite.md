@@ -166,3 +166,29 @@ Le fichier JSON de cette mesure est `evidence/ablation-activite.json` (regime pa
 Les tests qui protegent l'instrument et le banc sont dans `tests/test_ablation.py` (neuf
 tests ajoutes : filtre du volume, ordre des ecarts, trois lectures, silence quand rien
 n'est compte, branchement de l'apprentissage, nettoyage de l'etat).
+
+
+## La calibration : la borne conforme repond, et elle durcit le seuil
+
+L'experience promise par le cout mesure : calibrer la porte (`--calibree`) sur des points
+HONNETES — chaque candidat du banc execute contre les checks, score = fraction passee,
+verite connue (20 points, dont 5 de travail correct). Resultat mesure :
+
+```
+jio ablation --calibree --correlee --skill 0.3 --missions 6 --levers porte
+  porte CALIBREE : tau = 1.00 (au lieu de 0.90 fail-closed), 20 points
+  -> complet : 6 reservees, 0 livree ; sans porte : +4 livraisons propres (p = 0.125)
+```
+
+La borne conforme ((erreurs + 1) / (acceptes + 1) <= alpha) REFUSE tout tau < 1 : avec 5
+points de travail correct, (0+1)/(5+1) = 0,167 > 0,05. La calibration rend donc la porte
+PLUS stricte, pas moins — le 0,90 par defaut etait deja une posture GENEREUSE. Le triangle
+mesure est complet :
+
+1. non calibree, corrèle : la porte coute des livraisons propres (p = 0,0312 a 90 missions) ;
+2. calibree sur les points du banc : la borne justifie tau = 1,0, le cout AUGMENTE ;
+3. conclusion : le cout est le PRIX DE LA GARANTIE, pas un defaut de reglage. Le seul
+   levier est alpha — une decision declaree, pas un reglage devine.
+
+Zero erreur silencieuse dans TOUTES les conditions. La porte est blanchie par la math
+qui devait la juger.

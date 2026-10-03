@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 import json
 
+from jio.bench.tasks import TASKS
 from jio.bench.ablation import (
     LEVIERS,
     ConsensusPremierAvis,
@@ -687,3 +688,55 @@ def test_un_filtre_de_decision_n_est_pas_un_banc_muet() -> None:
                               n_missions=10, taches=5, graines=2)
     texte = formater(rapport)
     assert "aucune puissance d'echantillon ne conclura" not in texte
+
+
+# --------------------------------------------------------------------------- #
+# 8. La calibration de la porte : la borne conforme repond au cout mesure
+# --------------------------------------------------------------------------- #
+
+
+def test_les_points_de_calibration_mesurent_les_candidats() -> None:
+    """Chaque candidat du banc devient un point (score = fraction de checks, verite
+    connue). La solution correcte fait 1,0 ; un distracteur qui echoue fait moins."""
+    from jio.bench.tasks import TASKS
+    from jio.cli import _points_de_calibration
+
+    points = _points_de_calibration(list(TASKS))
+    parfaits = [p for p in points if p.score == 1.0]
+    assert all(p.correct for p in parfaits), "score 1,0 sans verite : calibration mentie"
+    assert any(not p.correct and p.score < 1.0 for p in points), "aucun distracteur echoue"
+    # Deterministe : memes taches, memes points.
+    assert _points_de_calibration(list(TASKS)) == points
+
+
+def test_la_borne_conforme_refuse_un_seuil_plus_bas_sur_ces_points() -> None:
+    """MESURE qui repond au cout de la porte : avec 20 points du banc (5 corrects), la
+    borne (erreurs+1)/(acceptes+1) <= alpha n'autorise AUCUN tau < 1 — (0+1)/(5+1) = 0,167
+    > 0,05. Calibrer rend donc la porte PLUS stricte (0,90 -> 1,00) : le cout mesure en
+    corrèle est le prix de la garantie, pas un défaut de réglage."""
+    from jio.cli import _points_de_calibration
+    from jio.gate.conformal import ConformalGate
+
+    porte = ConformalGate(alpha=0.05)
+    porte.observe_many(_points_de_calibration(list(TASKS)))
+    assert porte.calibrated, "20 points doivent suffire a declencher la calibration"
+    assert porte.tau() == 1.0, (
+        "la borne a change : la lecture « le prix du fail-closed » doit etre re-mesuree"
+    )
+
+
+def test_le_regime_calibre_est_annonce_dans_l_en_tete(capsys) -> None:
+    """Un chiffre sans son regime ne se compare pas : --calibree doit ecrire le tau
+    mesure et le nombre de points, AVANT le tableau."""
+    import argparse as _argparse
+
+    from jio.cli import cmd_ablation
+
+    code = cmd_ablation(_argparse.Namespace(
+        missions=1, levers="porte", taches="", skill=0.35, rounds=2, fidelite=1.0,
+        sans_oracle=False, correlee=True, calibree=True, json=True,
+    ))
+    sortie = capsys.readouterr().out
+    assert code in (0, 1)
+    assert "porte CALIBREE" in sortie
+    assert "tau = " in sortie and "20 points" in sortie

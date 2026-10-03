@@ -3999,6 +3999,11 @@ def build_parser() -> argparse.ArgumentParser:
              "et pas donnes. Plusieurs leviers (mutation, red-team, consensus, porte) ne "
              "peuvent payer que la : avec des temoins parfaits, il n'y a rien a rattraper.",
     )
+    ab.add_argument("--calibree", dest="calibree", action="store_true",
+                    help="calibre la porte sur les candidats du banc (score = fraction de "
+                         "checks passes, verite connue). C'est la reponse mesuree au cout "
+                         "de la porte en regime correle : ajuster le seuil au lieu de le "
+                         "croire. La borne conforme reste en vigueur")
     ab.add_argument("--correlee", dest="correlee", action="store_true",
                     help="panel CORRELE (biais partage : le cas « meme modele partout »). "
                          "C'est le regime ou la porte a quelque chose a filtrer : la "
@@ -4244,6 +4249,39 @@ def _empreinte_activite(rapport: object) -> tuple[tuple[str, int], ...]:
     return tuple(sorted(compte.items()))
 
 
+def _points_de_calibration(pool: list) -> list:
+    """Les points de calibration de la porte, mesures et jamais supposes.
+
+    Pour chaque tache du pool, chaque candidat (la solution correcte ET chaque
+    distracteur) est execute contre les checks de la tache : le score est la FRACTION de
+    checks passes, la verite est connue par construction. C'est la philosophie declaree
+    de cette calibration : faire confiance a l'oracle qu'on peut EXECUTER. Elle mesure la
+    qualite de la preuve disponible, pas le bruit d'un panel — et c'est exactement ce que
+    le cout mesure de la porte demandait : un tau qui distingue « travail prouve » de
+    « travail non prouve » sans jeter le fail-closed (la borne conforme reste en vigueur :
+    (erreurs + 1) / (acceptes + 1) <= alpha).
+    """
+    from .gate.conformal import Calibration
+
+    points: list = []
+    for tache in pool:
+        candidats = [(tache.correct, True)] + [(d, False) for d in tache.distractors]
+        for code, verite in candidats:
+            passes = 0
+            for check in tache.checks.values():
+                espace: dict = {}
+                try:
+                    exec(code, espace)
+                    exec(check, espace)
+                    passes += 1
+                except Exception:
+                    pass
+            points.append(Calibration(
+                score=passes / max(1, len(tache.checks)), correct=verite,
+            ))
+    return points
+
+
 def cmd_ablation(args: argparse.Namespace) -> int:
     """Mesure ce que chaque brique du harness apporte REELLEMENT.
 
@@ -4336,6 +4374,11 @@ def cmd_ablation(args: argparse.Namespace) -> int:
             # retirer la porte change ce qui est livre — mesure, pas suppose.
             correlated=getattr(args, "correlee", False),
         )
+        if points_calibration:
+            # Regime declare : la porte est calibree sur les points mesures ci-dessus.
+            # La borne conforme reste en vigueur — seul le SEUIL bouge, et il descend
+            # uniquement si les acceptes respectent (erreurs+1)/(acceptes+1) <= alpha.
+            moteur.gate.observe_many(points_calibration)
         # Le banc doit mesurer ce que le chemin REEL fait tourner : `jio run` branche la
         # memoire des echecs, la bibliotheque de temoins et le routeur de confiance
         # (`_attach_learning`). Sans ce branchement, les trois leviers correspondants
@@ -4385,6 +4428,24 @@ def cmd_ablation(args: argparse.Namespace) -> int:
             activite=_empreinte_activite(rapport),
         )
 
+    # La calibration : les points sont mesures UNE fois (deterministes : memes taches,
+    # memes candidats), puis observes par la porte de chaque moteur. Fait AVANT l'en-tete,
+    # qui doit annoncer le regime mesure, pas le regime suppose.
+    calibree = bool(getattr(args, "calibree", False))
+    points_calibration = _points_de_calibration(pool) if calibree else []
+    if calibree:
+        from .gate.conformal import ConformalGate
+
+        porte_sonde = ConformalGate(alpha=0.05)
+        porte_sonde.observe_many(points_calibration)
+        tau = porte_sonde.tau()
+        regime_calibration = (
+            f"porte CALIBREE : tau = {tau:.2f} (au lieu de {porte_sonde.default_tau:.2f} "
+            f"fail-closed), {len(points_calibration)} points mesures sur les candidats du banc"
+        )
+    else:
+        regime_calibration = ""
+
     print(BANNER)
     print(f"  Ablation du harness  ·  competence simulee {args.skill:.2f}  ·  "
           f"{taches * graines} mission(s) par bras  ·  {len(noms) if noms else len(LEVIERS)} levier(s)"
@@ -4395,6 +4456,8 @@ def cmd_ablation(args: argparse.Namespace) -> int:
         print(f"  Temoins traduits par le modele simule, fidelite {fidelite:.0%} : une part "
               f"des tests est CONTREFaite, comme dans une mission reelle ou personne ne "
               f"fournit les tests.")
+    if regime_calibration:
+        print(f"  {regime_calibration}")
     print("  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.")
     print()
     racine_etat = Path(tempfile.mkdtemp(prefix="jio-ablation-etat-"))

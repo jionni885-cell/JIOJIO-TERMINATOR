@@ -12,10 +12,47 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1271 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1274 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
+
+## L'état final, en un coup d'œil
+
+Chaque brique du harness a été **enlevée et mesurée** — le dépôt ne dit jamais « ce composant
+sert », il le **prouve** ou il le dit absent. Le tableau complet, acquis par `jio ablation`
+sur ses régimes (défaut, sans oracle, corrélé, calibré, tâche à spécification partielle) :
+
+| brique | verdict mesuré |
+|---|---|
+| `preuve` · `red-team` · `consensus` | **PREUVE** — sans eux, plus aucune livraison propre (8 contre 0, p = 0,0078) |
+| `temoins` | **PREUVE (perte)** en `--sans-oracle` : les appels tombent de 3,9 à 1,0 sans lui |
+| `differentiel` | exercé par la tâche à spécification partielle : retirer la brique fait disparaître les 4 aveux de divergence — des candidats à égalité seraient départagés **en silence** |
+| `integrite` | agit sur 10/10 missions (journal rejoué 524 → 0) ; redondance mesurée, jamais « inutile » |
+| `auto-coherence` | agit sur 9/10 missions ; redondance mesurée |
+| `routeur` | agit sur 10/10 missions ; verdict non concluant et coût noté (sans lui : +1 livraison propre, p = 1,0) |
+| `mutation` | non concluant — conservé pour son rôle : vérifier qu'une règle **peut échouer** |
+| `memoire` | paie 1 % de jetons, aucun effet de sens mesuré à cette échelle — dit tel quel |
+| `bibliotheque` | économise 4 appels sur 10 missions en `--sans-oracle --fidelite 1.0` |
+| `porte` | **COÛT MESURÉ** en régime corrélé (p = 0,0312) — et la calibration l'a **blanchie** : voir ci-dessous |
+
+Le dernier point est le plus instructif. La porte coûte des livraisons propres quand le panel
+est corrélé — et l'expérience de calibration (`--calibree`, points mesurés sur les candidats
+du banc) a rendu son verdict : la borne conforme **refuse** tout seuil sous 1,0 avec ces
+points, donc calibrer durcit la porte au lieu de l'adoucir. **Le coût est le prix de la
+garantie**, pas un défaut de réglage ; le seul levier est `alpha`, une décision déclarée.
+Zéro erreur silencieuse dans toutes les conditions mesurées.
+
+**L'entreprise.** `jio entreprise` distribue les vérifications du dépôt à **une entreprise de
+66 agents** — 98 missions exécutées par des ouvriers réels en parallèle, 549 s de travail en
+219 s réelles (×3,9), chaque problème rendu avec son responsable nommé, réparation mécanique
+fermée (trouvé → réparé → re-vérifié, nommé deux fois), et ce qui demanderait une décision
+humaine jamais touché. Les 11 chiffres du dépôt sont surveillés par `jio chiffres` ; la
+preuve de bout en bout tient en 28 étapes (`bash scripts/evidence.sh`).
+
+La suite de cette page raconte **comment** chacun de ces résultats a été obtenu, avec les
+défauts rencontrés en route — un rapport qui ne raconterait que les réussites serait une
+plaidoirie.
 
 ## Donnez ce dépôt à n'importe quelle IA : trois commandes, et elle s'intègre seule
 
@@ -1620,7 +1657,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1271 tests verts -> 1271 tests verts
+         - README.md ligne 15 : 1274 tests verts -> 1274 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

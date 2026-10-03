@@ -262,7 +262,6 @@ def test_une_regle_dont_l_instrument_est_REFUSE_ne_part_pas_SANS_RESERVE() -> No
     from jio.loop.engine import Engine, EngineConfig, WorkItem
 
     tache = TASKS_BY_ID["sum_even"]
-    bac = Sandbox(timeout=20)
     # Un traducteur qui rend un temoin VALIDE pour R-001 et un instrument CONTREDIT pour R-003 :
     # le test echoue sur la reference fournie avec lui, donc il est refuse a l'execution.
     class TraducteurRefusant:
