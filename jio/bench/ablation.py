@@ -763,6 +763,20 @@ def _phrase_activite(comp: Comparaison) -> str:
     if comp.observations_avec == 0:
         return ""
     if not comp.missions_activite_differente:
+        # Cas a part, mesure sur la porte en regime correle : une brique qui n'agit sur
+        # AUCUN observable de mission mais deplace quand meme les DECISIONS (livrees,
+        # reservees, abstentions) est un FILTRE DE DECISION. La confondre avec « le banc
+        # ne l'exerce pas » conseillerait de changer de banc alors qu'elargir
+        # l'echantillon est exactement ce qui peut trancher.
+        decisions = comp.b + comp.c + comp.b_propre + comp.c_propre
+        if decisions:
+            return (
+                f"la brique est un FILTRE DE DECISION : elle n'agit sur aucun observable de "
+                f"mission, mais son retrait deplace les livraisons ({comp.b} contre {comp.c}, "
+                f"livraisons propres {comp.b_propre} contre {comp.c_propre}). C'est son "
+                "travail — la decision fait partie de ce qu'elle gouverne. `--missions` peut "
+                "trancher : chaque dissociation supplementaire rapproche du seuil."
+            )
         volume = ", ".join(
             f"{cle} {avec}->{sans}" for cle, avec, sans in comp.ecarts_activite[:2]
         )
@@ -1037,7 +1051,11 @@ def formater(rapport: RapportAblation) -> str:
     for c in rapport.leviers:
         lignes.append(f"    {c.nom:<13} {c.verdict:<18} {c.note}")
         if c.verdict == "NON DISTINGUABLE":
-            if c.observations_avec and not c.missions_activite_differente:
+            if (
+                c.observations_avec
+                and not c.missions_activite_differente
+                and not (c.b + c.c + c.b_propre + c.c_propre)
+            ):
                 # Le banc ne l'exerce pas : conseiller `--missions` serait une fausse
                 # piste payee en heures. Le calcul de puissance ne s'applique pas, il n'y a
                 # rien a echantillonner.
@@ -1107,6 +1125,12 @@ def formater(rapport: RapportAblation) -> str:
     )
     lignes.append(
         "    l'exerce pas · elle agit sans rien deplacer · elle agit et l'ecart penche."
+    )
+    lignes.append(
+        "    Une quatrieme : le FILTRE DE DECISION — aucun observable de mission ne bouge,"
+    )
+    lignes.append(
+        "    mais les livraisons/abstentions si (`--correlee` le montre sur la porte)."
     )
     lignes.append(
         "    Un levier « NON DISTINGUABLE » n'est pas un levier inutile : c'est un levier"

@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1267 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1271 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -1620,7 +1620,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1267 tests verts -> 1267 tests verts
+         - README.md ligne 15 : 1271 tests verts -> 1271 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2983,6 +2983,27 @@ interroger » : sans lui, une livraison propre de plus, p = 1,0 — un coût mes
 | `routeur` | NON CONCLUANT, agit 10/10 | idem | idem, **−0,4 appel/mission** |
 | `differentiel` | muet (specs totales) | muet | muet — exercé par `--taches mean_partial` : `constat:divergence` 4 → 0 |
 
+Pour `porte`, le régime existait aussi — il fallait le **voir** : `--correlee` (panel à biais
+partagé, le cas « même modèle partout ») place la confiance près du seuil. À 6 missions, la
+première lecture de l'instrument disait « le banc ne l'exerce pas, aucune puissance
+d'échantillon ne conclura » — **faux**, et la faute est instructive : la porte est un **filtre
+de décision**, elle agit sur livrées/réservées/abstentions (les colonnes du verdict), pas sur
+le travail de la mission. L'instrument connaît maintenant cette quatrième lecture, qui dit le
+contraire de l'erreur : *« `--missions` peut trancher : chaque dissociation supplémentaire
+rapproche du seuil »*. Et à **90 missions**, ça a tranché :
+
+> **`porte` en régime corrélé : COÛT MESURÉ** — retirer la porte rend les livraisons *plus*
+> propres : 6 gagnées contre 0 perdues (McNemar exact p = 0,0312), **zéro erreur silencieuse
+> dans les deux bras**. Lecture : le seuil actuel, face à un panel corrélé, retient des
+> livraisons qui se révèlent justes — c'est le prix du fail-closed, mesuré pour la première
+> fois. Le rapport écrit *« à justifier, ou à interroger »* et ne conclut pas « supprimez » :
+> la même porte vaut ce qu'elle coûte quand la confiance **ment** (le régime réel), et `jio
+> learn` fournit les points de calibration pour l'ajuster au lieu de la croire.
+
+Deux observables de décision ont aussi rejoint l'empreinte : la composition des votes (unanime
+ou à une voix ?) et la sentinelle `avis_en_phase` — la décision retenue suit-elle le vote
+majoritaire, l'observable du consensus qui manquait.
+
 Pour `differentiel`, le chantier de banc a été **fait** : les cinq tâches archivées ont une
 spécification **totale** — deux implémentations correctes y coïncident sur toute entrée, donc
 le levier ressortait muet sur tout régime (mesuré : défaut, sans oracle, compétence 0,05 à
@@ -3049,11 +3070,11 @@ exécute **en parallèle**, chaque compte-rendu signé par l'agent qui l'a produ
 
 ```console
 $ jio entreprise
-  ENTREPRISE JIO  ·  66 postes  ·  96 mission(s)  ·  4 ouvrier(s) en parallele
-    temps cumule 549s  ·  temps reel 143s  ·  gain mesure x3.8
-    postes mobilises : 64/66 (les autres sont la pour la montee en charge, pas pour la pose)
+  ENTREPRISE JIO  ·  66 postes  ·  98 mission(s)  ·  4 ouvrier(s) en parallele
+    temps cumule 844s  ·  temps reel 219s  ·  gain mesure x3.9
+    postes mobilises : 66/66 (les autres sont la pour la montee en charge, pas pour la pose)
 
-  PROBLEMES : AUCUN  ·  96 mission(s) au vert, 0 hors de portee
+  PROBLEMES : AUCUN  ·  98 mission(s) au vert, 0 hors de portee
   VERDICT : AUCUN PROBLEME
 ```
 
@@ -3068,6 +3089,14 @@ Ce qu'une entreprise apporte qu'un gros script séquentiel n'apporte pas :
   portée*, listée à part, jamais comptée comme réussie ;
 - **le fail-loud** — code de sortie 1 au moindre problème : un appelant peut déclarer
   « fini » sur `jio entreprise` sans rien croire.
+
+**La boucle de réparation, fermée et honnête.** Un problème *mécanique* (compteur périmé,
+artefact qui ne tient plus ses promesses) est réparé par l'agent responsable — `jio chiffres
+--appliquer`, `jio coherence --reparer` — puis la mission est **rejouée** : réparé au vert, il
+est nommé deux fois (trouvé, puis réparé) au lieu d'être escamoté ; toujours rouge, il reste
+un problème avec la réparation tentée pour mémoire. Ce qui demanderait une **décision**
+(document faux, compétence dangereuse) n'est jamais touché : la table des réparations est
+fermée, une décision humaine ne se devine pas.
 
 `--liste` affiche le roster avec les mandats écrits ; `--sans tests` fait une passe rapide
 (cohérence, chiffres, affirmations, lint, fumée) ; `--json` rend tout lisible par une machine.

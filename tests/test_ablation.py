@@ -27,6 +27,8 @@ from jio.bench.ablation import (
     PanelSansRedTeam,
     PorteOuverte,
     ProverAveugle,
+    RapportAblation,
+    Bras,
     _activite_de_sens,
     _ecarts,
     _phrase_activite,
@@ -38,7 +40,7 @@ from jio.bench.ablation import (
     mesurer,
 )
 from jio.audit.panel import DEFAULT_PERSONAS
-from jio.core.types import Verdict, Vote
+from jio.core.types import MissionStatus, Verdict, Vote
 
 # --------------------------------------------------------------------------- #
 # 1. Le test statistique
@@ -622,3 +624,66 @@ def test_une_tache_inconnue_est_refusee_avec_un_nom(capsys) -> None:
     sortie = capsys.readouterr()
     assert code == 2, "une tache inconnue est une erreur d'appel, pas une mesure vide"
     assert "mean_partiel" in sortie.err
+
+
+# --------------------------------------------------------------------------- #
+# 7. Les observables de decision : composition des votes et filtre de decision
+# --------------------------------------------------------------------------- #
+
+
+def test_la_composition_des_votes_et_la_sentinelle_entrent_dans_l_empreinte() -> None:
+    """« 5 votes » ne dit pas si le panel a statue a l'unanime ou a une voix.
+
+    La sentinelle `avis_en_phase` est l'observable du CONSENSUS : la decision retenue
+    suit-elle le vote majoritaire ? Sans elle, le passage du quorum au « premier avis
+    decide » est invisible — les voix brutes ne bougent pas, seule la coherence
+    voix -> decision bouge.
+    """
+    from types import SimpleNamespace
+
+    from jio.cli import _empreinte_activite
+
+    rapport_unanime = SimpleNamespace(
+        witnesses=(), findings=(), votes=[
+            SimpleNamespace(decision=Verdict.PASS), SimpleNamespace(decision=Verdict.PASS),
+        ],
+        integrity=None, usage={}, subject="", status=MissionStatus.DELIVERED,
+    )
+    empreinte = dict(_empreinte_activite(rapport_unanime))
+    assert empreinte["votes_pass"] == 2 and empreinte["votes_fail"] == 0
+    assert empreinte["avis_en_phase"] == 1, "majorite pass, livre : en phase"
+
+    rapport_contredit = SimpleNamespace(
+        witnesses=(), findings=(), votes=[
+            SimpleNamespace(decision=Verdict.PASS), SimpleNamespace(decision=Verdict.FAIL),
+            SimpleNamespace(decision=Verdict.FAIL),
+        ],
+        integrity=None, usage={}, subject="", status=MissionStatus.DELIVERED,
+    )
+    empreinte = dict(_empreinte_activite(rapport_contredit))
+    assert empreinte["votes_pass"] == 1 and empreinte["votes_fail"] == 2
+    assert empreinte["avis_en_phase"] == 0, "majorite fail, livre : la decision contredit"
+
+
+def test_un_filtre_de_decision_n_est_pas_un_banc_muet() -> None:
+    """Mesure reelle (porte, regime correle) : la brique n'agit sur AUCUN observable de
+    mission mais deplace les livraisons. L'ancienne lecture disait « le banc ne l'exerce
+    pas, aucune puissance d'echantillon ne conclura » — faux : elargir EST ce qui peut
+    trancher, chaque dissociation rapproche du seuil."""
+    filtre = Comparaison(
+        nom="porte", quoi="q", sans="s", n=10, justes_avec=10, justes_sans=10,
+        livrees_avec=3, livrees_sans=4, reservees_avec=3, reservees_sans=2,
+        silencieuses_avec=0, silencieuses_sans=0, abstentions_avec=0, abstentions_sans=0,
+        appels_avec=7.0, appels_sans=7.0, b=0, c=1, p_exact=1.0, ic_bas=0.0, ic_haut=0.0,
+        b_propre=0, c_propre=1, p_propre=1.0,
+        missions_activite_differente=0, observations_avec=500, observations_sans=500,
+        ecarts_activite=(),
+    )
+    phrase = _phrase_activite(filtre)
+    assert "FILTRE DE DECISION" in phrase
+    assert "0 contre 1" in phrase
+    assert "--missions" in phrase, "elargir est exactement ce qui peut trancher ici"
+    rapport = RapportAblation(complet=Bras(nom="complet"), leviers=[filtre],
+                              n_missions=10, taches=5, graines=2)
+    texte = formater(rapport)
+    assert "aucune puissance d'echantillon ne conclura" not in texte

@@ -194,12 +194,38 @@ def cataloguer(racine: Path | str = ".") -> list[Mission]:
         id="fumee/cli", type="commande", payload="--help", specialite="fumee",
         resume="la CLI s'instancie et rend son aide",
     ))
+    # L'adjoint du mesurier : un controle DISTINCT du premier — tous les chiffres mesures
+    # sont des entiers positifs (une table de vecteurs a zero, un compteur negatif, c'est
+    # une ressource perdue que l'ecart README ne montrerait pas forcement).
+    missions.append(Mission(
+        id="mesure/entiers", type="entiers", payload="", specialite="mesure",
+        resume="tous les chiffres mesures sont des entiers positifs",
+    ))
+    # Le troisieme logeur : le regime sans oracle, ou temoins doit parler.
+    missions.append(Mission(
+        id="ablation/sans-oracle", type="ablation",
+        payload="--sans-oracle --fidelite 0.6 --missions 2 --levers temoins",
+        specialite="ablation", resume="en sans-oracle, le levier temoins parle",
+    ))
     return missions
 
 
 # --------------------------------------------------------------------------- #
 # L'affectation : qui fait quoi
 # --------------------------------------------------------------------------- #
+
+
+#: Les reparations MECANIQUES : mission -> commande qui la repare, sans rien inventer.
+#: C'est la frontiere que le depot refuse de franchir ailleurs : reparer ce qui est
+#: mecanique (un compteur perime, un artefact stale), jamais ce qui demanderait une
+#: decision (un document faux, une competence dangereuse). Une mission absente de cette
+#: table n'est jamais reparee — elle est remontee, et c'est a un humain de trancher.
+REPARATIONS: dict[str, list[str]] = {
+    # Les chiffres documents sont perimes : `--appliquer` ecrit les valeurs mesurees.
+    "mesure/chiffres": ["chiffres", "--appliquer"],
+    # Un artefact ne fait plus ce qu'il dit : la reparation mecanique de coherence.
+    "coherence/_controle_artefacts": ["coherence", "--reparer"],
+}
 
 
 def affecter(missions: list[Mission]) -> dict[str, str]:
@@ -352,6 +378,18 @@ def executer_mission(mission: Mission, racine: Path | str = ".") -> RapportMissi
                 ok = False
                 resume = "rapport JSON illisible : l'instrument est peut-etre debranche"
                 details = (_extrait(sortie, erreurs)[:400],)
+    elif mission.type == "entiers":
+        from .chiffres import mesurer  # noqa: PLC0415
+
+        mesures = mesurer(racine)
+        nuls = {cle: valeur for cle, valeur in mesures.items() if valeur <= 0}
+        ok = not nuls
+        resume = (
+            "tous les chiffres sont des entiers positifs"
+            if ok
+            else f"chiffre(s) nul(s) ou negatif(s) : {nuls}"
+        )
+        details = (str(mesures),)
     else:
         ok, portee, resume = False, False, f"type de mission inconnu : {mission.type}"
 
@@ -377,7 +415,13 @@ def _ouvrier(tache: tuple[Mission, str, str]) -> RapportMission:
 @dataclass
 class RapportEntreprise:
     """Le verdict de l'entreprise : combien de missions, qui, combien de temps, quels
-    problemes — et le parallele declare, mesure, jamais gonfle."""
+    problemes — et le parallele declare, mesure, jamais gonfle.
+
+    `repares` : les problemes MECANIQUES trouves puis repares par l'agent responsable,
+    et re-verifies au vert. Un probleme repare n'est pas un probleme escamote : il est
+    nomme deux fois (trouve, puis repare) — sinon une entreprise qui repare tout en
+    silence finirait par cacher ce qu'elle repare mal.
+    """
 
     missions: list[RapportMission] = field(default_factory=list)
     postes_total: int = 0
@@ -385,6 +429,7 @@ class RapportEntreprise:
     ouvriers: int = 0
     temps_cumule_s: float = 0.0
     temps_reel_s: float = 0.0
+    repares: list[tuple[str, str]] = field(default_factory=list)  # (mission, agent)
 
     @property
     def problemes(self) -> list[RapportMission]:
@@ -410,6 +455,7 @@ class RapportEntreprise:
                 self.temps_cumule_s / self.temps_reel_s, 2
             ) if self.temps_reel_s else 0.0,
             "problem": [m.mission for m in self.problemes],
+            "repares": [list(r) for r in self.repares],
             "hors_portee": [m.mission for m in self.hors_portee],
             "missions": [
                 {"mission": m.mission, "agent": m.agent, "ok": m.ok, "portee": m.portee,
@@ -443,10 +489,33 @@ def mener(
     else:
         with context.Pool(processes=ouvriers) as pool:
             resultats = pool.map(_ouvrier, taches, chunksize=1)
+
+    # La BOUCLE DE REPARATION, fermee et honnete : un probleme dont la reparation est
+    # MECANIQUE (table REPARATIONS) est repare par l'agent responsable, puis la mission
+    # est REJOUEE une fois. Repare au vert -> il quitte la liste des problemes et entre
+    # dans `repares` (trouve, puis repare — jamais escamote). Toujours rouge -> il reste
+    # un probleme, avec la reparation tentee pour mémoire. Ce qui n'est pas mecanique
+    # n'est JAMAIS touche : une decision humaine ne se devine pas.
+    repares: list[tuple[str, str]] = []
+    par_id = {m.id: m for m in missions}
+    for probleme in [r for r in resultats if r.portee and not r.ok]:
+        commande = REPARATIONS.get(probleme.mission)
+        if not commande or probleme.mission not in par_id:
+            continue
+        code, _, _ = _lancer([sys.executable, "-m", "jio", *commande], racine)
+        seconde = executer_mission(par_id[probleme.mission], racine)
+        seconde.agent = probleme.agent
+        if seconde.ok:
+            repares.append((probleme.mission, probleme.agent))
+            resultats[resultats.index(probleme)] = seconde
+        else:
+            seconde.resume = f"reparation tentee ({' '.join(commande)}), toujours en echec : " + seconde.resume
+            resultats[resultats.index(probleme)] = seconde
+
     rapport = RapportEntreprise(
         missions=resultats, postes_total=len(POSTES), ouvriers=ouvriers,
         temps_cumule_s=sum(m.duree_s for m in resultats),
-        temps_reel_s=time.monotonic() - debut,
+        temps_reel_s=time.monotonic() - debut, repares=repares,
     )
     rapport.postes_mobilises = len({m.agent for m in resultats if m.agent})
     return rapport
@@ -474,6 +543,11 @@ def formater(rapport: RapportEntreprise, *, largeur: int = 96) -> str:
         "(les autres sont la pour la montee en charge, pas pour la pose)"
     )
     lignes.append("")
+    if rapport.repares:
+        lignes.append(f"  REPARES ({len(rapport.repares)}) — trouves, repares mecaniquement, re-verifies :")
+        for mission, agent in rapport.repares:
+            lignes.append(f"    [ok] {mission}  ·  {agent}")
+        lignes.append("")
     if pb_n:
         lignes.append(f"  PROBLEMES ({pb_n}) — chaque probleme a un responsable :")
         for m in rapport.problemes:
@@ -488,6 +562,10 @@ def formater(rapport: RapportEntreprise, *, largeur: int = 96) -> str:
         for m in rapport.hors_portee:
             lignes.append(f"    [--] {m.mission}  ·  {m.resume}")
     lignes.append("")
-    verdict = "AUCUN PROBLEME" if not pb_n else f"{pb_n} PROBLEME(S) — a reparer avant tout"
+    verdict = (
+        "AUCUN PROBLEME"
+        if not pb_n
+        else f"{pb_n} PROBLEME(S) — a reparer avant tout"
+    )
     lignes.append(f"  VERDICT : {verdict}")
     return "\n".join(lignes)

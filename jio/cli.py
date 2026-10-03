@@ -3999,6 +3999,11 @@ def build_parser() -> argparse.ArgumentParser:
              "et pas donnes. Plusieurs leviers (mutation, red-team, consensus, porte) ne "
              "peuvent payer que la : avec des temoins parfaits, il n'y a rien a rattraper.",
     )
+    ab.add_argument("--correlee", dest="correlee", action="store_true",
+                    help="panel CORRELE (biais partage : le cas « meme modele partout »). "
+                         "C'est le regime ou la porte a quelque chose a filtrer : la "
+                         "confiance du panel approche le seuil, et la retirer change ce "
+                         "qui est livre")
     ab.add_argument("--json", action="store_true", help="rapport lisible par une machine")
     ab.set_defaults(func=cmd_ablation)
 
@@ -4213,6 +4218,24 @@ def _empreinte_activite(rapport: object) -> tuple[tuple[str, int], ...]:
     for c in constats:
         agent = str(getattr(c, "agent", "") or "?")
         compte[f"constat:{agent}"] = compte.get(f"constat:{agent}", 0) + 1
+    # La COMPOSITION des votes, pas seulement leur nombre : « 5 votes » ne dit pas si le
+    # panel a statue a l'unanime ou a une voix de majorite. Et la SENTINELLE avis_en_phase :
+    # la decision retenue suit-elle le vote majoritaire ? C'est l'observable du CONSENSUS —
+    # sa decision n'apparait nulle part ailleurs (les voix brutes ne bougent pas quand le
+    # mode « premier avis decide » remplace le quorum, mais la coherence voix->decision, si).
+    if votes:
+        decisions = [
+            str(getattr(v, "decision", "")).rsplit(".", 1)[-1].lower() for v in votes
+        ]
+        passes = sum(1 for d in decisions if d == "pass")
+        abstentions = sum(1 for d in decisions if d in ("abstain", "error"))
+        compte["votes_pass"] = passes
+        compte["votes_abstain"] = abstentions
+        compte["votes_fail"] = max(0, len(decisions) - passes - abstentions)
+        majorite_pass = passes * 2 > len(decisions)
+        statut = str(getattr(rapport, "status", ""))
+        livre = "DELIVERED" in statut
+        compte["avis_en_phase"] = 1 if majorite_pass == livre else 0
     for cle, valeur in usage.items():
         try:
             compte[f"usage:{cle}"] = int(valeur)
@@ -4307,6 +4330,11 @@ def cmd_ablation(args: argparse.Namespace) -> int:
             # le simulateur rendrait une reponse vide (no_task) et on mesurerait le
             # silence, pas la brique.
             banque=build_bank([*TASKS, *TACHES_PARTIELLES]) if partielle else None,
+            # --correlee : le panel partage un biais (le cas « meme modele partout »).
+            # C'est LE regime ou la porte a quelque chose a filtrer : l'accord chute ou
+            # la decorrelation plafonne, la confiance devient proche du seuil, et
+            # retirer la porte change ce qui est livre — mesure, pas suppose.
+            correlated=getattr(args, "correlee", False),
         )
         # Le banc doit mesurer ce que le chemin REEL fait tourner : `jio run` branche la
         # memoire des echecs, la bibliotheque de temoins et le routeur de confiance

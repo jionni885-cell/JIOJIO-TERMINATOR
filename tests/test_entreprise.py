@@ -116,3 +116,46 @@ def test_le_rapport_se_lit_et_se_transmet() -> None:
     assert donnees["postes_total"] == len(POSTES)
     assert donnees["problem"] == []
     assert donnees["missions"][0]["agent"]
+
+
+def test_la_boucle_de_reparation_ferme_le_tour(tmp_path) -> None:
+    """Un probleme MECANIQUE est repare par l'agent responsable, puis REVERIFIE.
+
+    Compteur perime -> `jio chiffres --appliquer` -> mission rejouee au vert. Le probleme
+    repare n'est pas escamote : il entre dans `repares`, nomme avec son agent. Une mission
+    sans reparation mecanique n'est jamais touchee.
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_rien.py").write_text(
+        "def test_ok():\n    assert True\n", encoding="utf-8"
+    )
+    (tmp_path / "README.md").write_text(
+        "# un depot d'essai\n\n7 tests verts, les 12 compétences, les 7 agents, "
+        "41 objectifs, 0 faux positif, 41 objectifs de routage, 24 objectifs de "
+        "contrôle, 113 cas jamais vus, 41 objectifs d'un projet, 11000 radicaux, "
+        "une entreprise de 66 agents, premier choix juste dans 40 %\n",
+        encoding="utf-8",
+    )
+    missions = cataloguer(tmp_path)
+    cible = [m for m in missions if m.id == "mesure/chiffres"]
+    assert cible, "la mission de mesure doit exister des qu'un README existe"
+    rapport = mener(tmp_path, cible, ouvriers=1)
+    assert rapport.repares, "un compteur perime est mecanique : il doit etre repare"
+    assert rapport.code == 0, formater(rapport)
+    assert [r[0] for r in rapport.repares] == ["mesure/chiffres"]
+    assert rapport.problemes == []
+    # Le README a ete REPARe, pas seulement contourne : il dit maintenant vrai.
+    texte = (tmp_path / "README.md").read_text(encoding="utf-8")
+    assert "1 tests verts" in texte or "1 test vert" in texte
+
+
+def test_une_mission_sans_reparation_mecanique_n_est_jamais_touchee(tmp_path) -> None:
+    """Le fail-loud reste la regle quand la reparation demanderait une DECISION."""
+    mission = Mission(
+        id="commande/casse", type="commande", payload="--sous-commande-inconnue",
+        specialite="fumee", resume="doit echouer et rester",
+    )
+    rapport = mener(tmp_path, [mission], ouvriers=1)
+    assert rapport.repares == []
+    assert rapport.code == 1
+    assert len(rapport.problemes) == 1

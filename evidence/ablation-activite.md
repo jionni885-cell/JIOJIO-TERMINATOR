@@ -89,10 +89,54 @@ Retirer la brique fait disparaitre les 4 aveux : sans elle, deux candidats a ega
 preuves sont departages par l'ordre d'arrivee, EN SILENCE.
 
 Restent `consensus` (prouve ailleurs : 8 livraisons propres perdues contre 0, p = 0,0078 —
-sa decision n'apparait pas dans les voix) et `porte`, a peine exercee (1 mission sur 10, aux
-deux extremes de competence 0,05 et 0,9). La reponse honnete n'est pas « elargir
-l'echantillon » : il faut des **missions** ou la confiance deborde — un chantier de banc,
-pas un re-reglage.
+sa decision n'apparait pas dans les voix) et `porte`.
+
+## La porte : le filtre de decision, et sa lecture qui a failli tromper l'instrument
+
+`--correlee` (panel a biais partage : le cas « meme modele partout ») donne a la porte le
+regime ou elle a quelque chose a filtrer. Mesure : son retrait ne change AUCUN observable de
+mission, mais deplace les livraisons (0 contre 1 en livraisons propres). La premiere lecture
+de l'instrument disait alors « le banc ne l'exerce pas : aucune puissance d'echantillon ne
+conclura » — **faux**, et la faute est instructive : la porte est un FILTRE DE DECISION, elle
+agit sur livrees/reservees/abstentions (les colonnes du verdict), pas sur le travail de la
+mission. L'instrument distingue maintenant la quatrieme lecture :
+
+```
+la brique est un FILTRE DE DECISION : elle n'agit sur aucun observable de mission, mais son
+retrait deplace les livraisons (0 contre 0, livraisons propres 0 contre 1). C'est son
+travail — la decision fait partie de ce qu'elle gouverne. `--missions` peut trancher :
+chaque dissociation supplementaire rapproche du seuil.
+```
+
+Deux observables de decision ont aussi rejoint l'empreinte : la **composition des votes**
+(`votes_pass`/`votes_fail`/`votes_abstain` — « 5 voix » ne dit pas si le panel a statue a
+l'unanime ou a une voix) et la sentinelle **`avis_en_phase`** (la decision retenue suit-elle
+le vote majoritaire ? c'est l'observable du consensus ; un test unitaire la verrouille sur
+une decision qui contredit sa majorite).
+
+## La sonde decisive : 90 missions, et la porte sort COÛT MESURÉ
+
+`jio ablation --correlee --skill 0.3 --missions 45 --levers porte` (90 missions appariees) :
+
+```
+porte   COUT MESURE   b_propre/c_propre = 0/6 · McNemar exact p = 0.0312
+        complet : 38/40 justes · 19 livrees · 19 reservees · 0 SILENCIEUSE · 7 abstentions
+```
+
+Retirer la porte rend les livraisons PLUS propres en regime correle (6 gagnees contre 0
+perdues), et la securite ne bouge pas (zero erreur silencieuse des deux cotes). C'est la
+premiere brique dont le retrait AMELIORE une metrique avec un p significatif. Le rapport
+ecrit « A justifier, ou a interroger » et ne conclut pas « supprimez » : le cout mesure est
+celui du fail-closed face a un panel corrèle — il se paie en livraisons retenues qui se
+reveleont justes. La meme porte vaut ce qu'elle coute quand la confiance ment (fournisseurs
+reels), et `jio learn` fournit les points de calibration pour l'ajuster au lieu de la croire.
+Ce chiffre est un RESULTAT DE MESURE, pas une decision : la decision attend son humain.
+
+## Ce que la grille ne peut toujours pas dire
+
+`porte` reste NON CONCLUANTE en corrèle a cette taille (1 dissociation pour 6 requises) —
+mais pour la premiere fois, elargir `--missions` est la BONNE action, et l'instrument le dit.
+`consensus` n'a pas besoin de cette grille : sa preuve est ailleurs et tient.
 
 ## Ce que l'instrument refuse d'ecrire
 
@@ -109,6 +153,8 @@ pas un re-reglage.
 
 ```sh
 jio ablation --missions 10                          # le tableau du regime par defaut
+jio ablation --correlee --skill 0.3 --missions 6 --levers porte   # le filtre de decision
+jio ablation --correlee --skill 0.3 --missions 45 --levers porte  # COUT MESURE (p = 0.0312)
 jio ablation --sans-oracle --fidelite 1.0 --missions 6 --levers bibliotheque,temoins,routeur
 jio ablation --sans-oracle --fidelite 0.6 --missions 6 --levers temoins,porte,differentiel,memoire,bibliotheque,routeur
 jio ablation --taches mean_partial --skill 0.7 --missions 6 --levers differentiel
