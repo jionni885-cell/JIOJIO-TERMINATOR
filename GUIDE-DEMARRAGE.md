@@ -6,6 +6,32 @@
 
 ---
 
+## ⚡ LA VOIE RAPIDE — 2 actions, testées, ~10 secondes
+
+**1. Télécharge le SEUL fichier dont tu as besoin** :
+[`installer-jio.py`](https://github.com/jionni885-cell/JIOJIO-TERMINATOR/blob/arena/01a0d44e-jiojio-terminator/installer-jio.py)
+(bouton « Download raw file » ou copie-colle son contenu dans un fichier du même nom)
+
+**2. Depuis le dossier de TON projet :**
+
+```sh
+python installer-jio.py --projet .
+```
+
+C'est tout. Mesuré en réel : il télécharge JIO depuis GitHub, l'installe, intègre ton projet
+(30 artefacts, câblage MCP prouvé, fiche `.jio/ACTIVE.md`) et affiche la commande pour
+travailler. Sur ton projet, ton IA lira ensuite automatiquement `CLAUDE.md` / `AGENTS.md` /
+`.opencode/` — passe directement à **l'étape 4** (brancher ton modèle) et **l'étape 5**
+(travailler).
+
+> Windows : remplace `python3` par `python`. Le script ne touche qu'au dossier que tu lui
+> donnes, et tu peux le lire avant de l'exécuter — c'est la règle du dépôt.
+
+La suite du guide détaille chaque étape (utile pour comprendre, ou si tu préfères tout
+faire à la main).
+
+---
+
 ## Étape 0 — Ce qu'il te faut (5 minutes de préparation)
 
 | besoin | comment vérifier |
