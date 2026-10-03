@@ -17,6 +17,7 @@ Ce que ces tests protegent, dans l'ordre d'importance :
 from __future__ import annotations
 
 import pytest
+import json
 
 from jio.bench.ablation import (
     LEVIERS,
@@ -518,3 +519,106 @@ def test_les_ecarts_qui_vont_contre_la_brique_sont_nommes() -> None:
     phrase = _phrase_activite(degrade)
     assert "CONTRE elle" in phrase
     assert "5 contre 0" in phrase
+
+
+# --------------------------------------------------------------------------- #
+# 6. Le banc branche ce que le chemin reel fait tourner (plus de leviers-fantomes)
+# --------------------------------------------------------------------------- #
+
+
+def test_le_banc_d_ablation_branche_l_apprentissage(capsys) -> None:
+    """Retirer memoire/bibliotheque/routeur ne doit pas etre l'ablation d'un FANTOME.
+
+    Incident mesure : `jio run` branche la memoire des echecs, la bibliotheque de temoins
+    et le routeur de confiance (`_attach_learning`), mais le banc ne le faisait pas — les
+    trois leviers retiraient None et l'instrument d'activite disait « le banc ne l'exerce
+    pas » sur trois briques que le chemin REEL charge, lui. Verrou : sur une mesure reelle
+    (2 missions, levier routeur), le retrait doit changer un observable de sens au moins
+    une fois — le routeur arme un budget journalise, donc `integrite_etapes` differe des
+    la premiere mission. Si ce test devient rouge avec `missions_activite_differente == 0`,
+    quelqu'un a debranche `_attach_learning` du banc.
+    """
+    import argparse as _argparse
+
+    from jio.cli import cmd_ablation
+
+    args = _argparse.Namespace(
+        missions=2, levers="routeur", skill=0.35, rounds=4, fidelite=1.0,
+        sans_oracle=False, json=True,
+    )
+    code = cmd_ablation(args)
+    assert code in (0, 1), "une mesure doit se terminer, meme avec un defaut affiche"
+    sortie = capsys.readouterr().out
+    rapport = json.loads(sortie[sortie.index("{"):])
+    routeur = rapport["leviers"][0]
+    assert routeur["nom"] == "routeur"
+    assert routeur["missions_activite_differente"] > 0, (
+        "le levier routeur ressort fantome : le banc ne branche plus l'apprentissage"
+    )
+    assert routeur["ecarts_activite"], "aucun ecart : meme cause que ci-dessus"
+
+
+def test_le_banc_nettoie_son_etat_d_apprentissage() -> None:
+    """Un banc qui laisse des etats derriere lui contamine la mesure SUIVANTE."""
+    import glob
+    import os
+    import tempfile
+
+    avant = set(glob.glob(os.path.join(tempfile.gettempdir(), "jio-ablation-etat-*")))
+    import argparse as _argparse
+
+    from jio.cli import cmd_ablation
+
+    cmd_ablation(_argparse.Namespace(
+        missions=1, levers="memoire", skill=0.35, rounds=4, fidelite=1.0,
+        sans_oracle=False, json=True,
+    ))
+    apres = set(glob.glob(os.path.join(tempfile.gettempdir(), "jio-ablation-etat-*")))
+    assert apres - avant == set(), "le banc a laisse un dossier d'etat derriere lui"
+
+
+def test_la_tache_a_spec_partielle_exerce_le_differentiel(capsys) -> None:
+    """`differentiel` ne peut pas se montrer sur des specifications TOTALES.
+
+    Mesure : sur les cinq taches archives, le levier ressort muet sur TOUT regime (defaut,
+    sans oracle, competence 0,05 a 0,9) — deux implementations correctes y coincident sur
+    toute entree. La tache `mean_partial` ajoute ce qui manque : l'oracle se tait sur la
+    liste vide, deux implementations LEGITIMES divergent (`ZeroDivisionError` contre
+    `0.0`), le differentiel les sonde et l'aveu devient un constat nomme. Verrou : retirer
+    la brique doit faire disparaitre ce constat, au moins une fois sur deux missions
+    (graines fixes — la mesure est deterministe).
+    """
+    import argparse as _argparse
+
+    from jio.cli import cmd_ablation
+
+    cmd_ablation(_argparse.Namespace(
+        missions=2, levers="differentiel", taches="mean_partial", skill=0.7, rounds=4,
+        fidelite=1.0, sans_oracle=False, json=True,
+    ))
+    sortie = capsys.readouterr().out
+    rapport = json.loads(sortie[sortie.index("{"):])
+    differentiel = rapport["leviers"][0]
+    assert differentiel["nom"] == "differentiel"
+    constats = {e["cle"]: (e["complet"], e["sans"]) for e in differentiel["ecarts_activite"]}
+    assert constats.get("constat:divergence", (0, 0))[0] > 0, (
+        "la tache partielle ne produit plus de constat de divergence : soit la tache a "
+        "ete serree (la spec parle maintenant de la liste vide), soit le differentiel a "
+        "ete debranche"
+    )
+    assert differentiel["missions_activite_differente"] > 0
+
+
+def test_une_tache_inconnue_est_refusee_avec_un_nom(capsys) -> None:
+    """Une faute de frappe dans --taches ne doit pas mesurer le banc VIDE en silence."""
+    import argparse as _argparse
+
+    from jio.cli import cmd_ablation
+
+    code = cmd_ablation(_argparse.Namespace(
+        missions=2, levers="differentiel", taches="mean_partiel", skill=0.7, rounds=4,
+        fidelite=1.0, sans_oracle=False, json=True,
+    ))
+    sortie = capsys.readouterr()
+    assert code == 2, "une tache inconnue est une erreur d'appel, pas une mesure vide"
+    assert "mean_partiel" in sortie.err

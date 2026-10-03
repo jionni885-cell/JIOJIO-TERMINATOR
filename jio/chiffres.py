@@ -194,7 +194,12 @@ CHIFFRES: tuple[Chiffre, ...] = (
     # publie (« 11 000 radicaux ») engage la ressource livree, donc elle se surveille comme les
     # autres. Le mot « radicaux » et non « mots » : la table est indexee par RADICAL, et un motif
     # plus large attraperait n'importe quel compte de mots du document.
-    Chiffre(
+        Chiffre(
+        nom="entreprise",
+        motif=r"entreprise de (\d+) agents",
+        description="les postes de l'entreprise de verification (jio/entreprise.py)",
+    ),
+Chiffre(
         nom="vecteurs",
         motif=r"(\d+) radicaux",
         description="la table de vecteurs embarquee (jio/skills/vecteurs/)",
@@ -268,7 +273,17 @@ def mesurer(racine: Path | str) -> dict[str, int]:
         "cas_controle": sum(len(jeu.cas) for jeu in JEUX),
         "objectifs_controle_clarify": len(CAS_CLARIFY),
         "vecteurs": _taille_table_vecteurs(),
+        # Les postes de l'entreprise : une constante du code, mais mesuree — un roster
+        # qui rapetit sans que le README bouge doit etre un ecart, pas un silence.
+        "entreprise": _compter_postes(),
     }
+
+
+def _compter_postes() -> int:
+    """Les postes de l'entreprise de verification (jio/entreprise.py)."""
+    from .entreprise import POSTES
+
+    return len(POSTES)
 
 
 def _taille_table_vecteurs() -> int:

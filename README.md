@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1253 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1267 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 
 ---
@@ -265,6 +265,16 @@ variable n'est obligatoire** — sans clé, tout reste exécutable.
 `jio bench` mesure quatre configurations sur le banc d'essai intégré, avec un
 **bras de contrôle à budget d'appels égal** — sans lui, tout gain pourrait n'être
 que du « best-of-N » déguisé.
+
+> **Frontière entre les deux bancs, pour qu'elle soit un choix et pas un oubli.** `jio bench`
+> mesure le **pipeline de vérification par mission**, chaque mission étant un échantillon
+> indépendant : la mémoire des échecs, la bibliothèque de témoins et le routeur de confiance
+> n'y sont pas branchés — elles sont des briques **entre** missions, et les mélanger rendrait
+> les relevés dépendants de l'ordre d'exécution. C'est `jio ablation` qui les juge, avec un
+> état d'apprentissage par bras (voir « Chaque brique prouve-t-elle son utilité ? ») : c'est
+> là que `routeur` ressort « à interroger », `bibliotheque` économise 4 appels sur 10
+> missions en `--sans-oracle --fidelite 1.0`, et `memoire` paie 1 % de jetons sans gain
+> mesuré à cette échelle.
 
 | Configuration | Compétence 0.15 | Compétence 0.30 | Compétence 0.50 |
 |---|---|---|---|
@@ -1610,7 +1620,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1253 tests verts -> 1253 tests verts
+         - README.md ligne 15 : 1267 tests verts -> 1267 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2888,14 +2898,13 @@ $ python -m jio ablation --missions 10
   ABLATION DU HARNESS  ·  10 mission(s) appariee(s)  ·  12 levier(s)
     moteur complet : 10/10 justes  ·  8 livree(s)  ·  0 SILENCIEUSE(S)  ·  3.3 appel(s)/mission
     levier        justes          livrees  reserve  silencieuse abst.  appels  activite
-    (complet)     10/10           8        2        0           0      3.3     33272
-    preuve        5/10            0        10       0           0      3.0     10/10 m.
-    red-team      10/10           0        10       0           0      10.5    10/10 m.
+    (complet)     9/10            7        2        0           1      3.3     35395
+    preuve        5/10            0        10       0           0      2.2     10/10 m.
+    red-team      10/10           0        10       0           0      8.4     10/10 m.
     consensus     10/10           0        10       0           0      3.3     0/10 m.
-    porte         10/10           8        2        0           0      3.3     0/10 m.
     integrite     10/10           8        2        0           0      3.3     10/10 m.
-    mutation      10/10           10       0        0           0      3.3     2/10 m.
-    auto-coherence 10/10          8        2        0           0      3.3     10/10 m.
+    routeur       10/10           8        2        0           0      3.3     10/10 m.
+    memoire       10/10           8        2        0           0      3.3     0/10 m.
     ...
 ```
 
@@ -2950,21 +2959,61 @@ Mesuré à 10 missions, compétence 0,35, témoins fournis par le banc :
 
 ```
     exercés par le banc .....  preuve 10/10 · red-team 10/10 · integrite 10/10
-                               auto-coherence 10/10 · mutation 2/10
+                               routeur 10/10 · auto-coherence 9/10 · mutation 2/10
     PAS exercés .............  consensus · porte · differentiel · temoins · memoire
-                               bibliotheque · routeur        (0/10 chacun)
+                               bibliotheque                  (0/10 chacun)
 ```
 
+Et l'instrument a mené à une découverte plus dure que le diagnostic : trois des briques
+« non exercées » — `memoire`, `bibliotheque`, `routeur` — n'étaient **pas construites** par le
+banc. `jio run` branche la mémoire des échecs, la bibliothèque de témoins et le routeur de
+confiance (`_attach_learning`) ; le banc, lui, les retirait d'un moteur où elles n'avaient
+jamais été chargées : l'ablation d'un **fantôme**, muette par construction. Réparation : le
+banc branche l'apprentissage comme le chemin réel, avec un dossier d'état **par bras** (tous
+partent du même vide — ce qui s'y accumule est le produit de la trajectoire de ce bras, la
+sémantique exacte de « on enlève la brique et on rejoue la séquence »). Résultat mesuré :
+`routeur` sort de NON DISTINGUABLE (il agit sur 10/10 missions et le rapport le passe à « à
+interroger » : sans lui, une livraison propre de plus, p = 1,0 — un coût mesuré à cette
+échelle), et une grille de **régimes** remplace la question unique :
+
+| levier | défaut | sans oracle, fidélité 1,0 | sans oracle, fidélité 0,6 |
+|---|---|---|---|
+| `temoins` | muet (tests fournis) | **PREUVE (perte)** — appels 3,9 → 1,0 | **PREUVE (perte)** |
+| `bibliotheque` | muet (rien à retenir) | **agit 4/10** — sans elle, +4 appels (re-traduire) | muet (témoins contrefaits) |
+| `routeur` | NON CONCLUANT, agit 10/10 | idem | idem, **−0,4 appel/mission** |
+| `differentiel` | muet (specs totales) | muet | muet — exercé par `--taches mean_partial` : `constat:divergence` 4 → 0 |
+
+Pour `differentiel`, le chantier de banc a été **fait** : les cinq tâches archivées ont une
+spécification **totale** — deux implémentations correctes y coïncident sur toute entrée, donc
+le levier ressortait muet sur tout régime (mesuré : défaut, sans oracle, compétence 0,05 à
+0,9). La sixième tâche, `mean_partial`, ajoute ce qui manque : l'oracle se tait sur la liste
+vide, deux implémentations **légitimes** divergent (`ZeroDivisionError` contre `0.0`), et le
+différentiel sonde les entrées dérivées pour avouer le désaccord en constat nommé :
+
+```
+$ jio ablation --taches mean_partial --skill 0.7 --missions 6 --levers differentiel
+    differentiel   NON CONCLUANT   act=4/6   constat:divergence 4 -> 0
+```
+
+Retirer la brique fait **disparaître les 4 aveux** : sans elle, deux candidats à égalité de
+preuves sont départagés par l'ordre d'arrivée, en silence. Elle reste NON CONCLUANTE sur la
+justesse (le désaccord n'est jamais bloquant, par conception) — mais le silence, lui, a cessé.
+
+Restent `consensus` (prouvé ailleurs : 8 livraisons propres perdues contre 0 — sa décision
+n'apparaît pas dans les voix) et `porte`, à peine exercée (1 mission sur 10, aux deux
+extrêmes de compétence). La réponse honnête n'est pas « élargir l'échantillon » : il faut des
+**missions** où la confiance déborde — un chantier de banc, pas un réglage.
+
 `integrite` est le cas qui a corrigé la première version de ce compteur : la brique ne change
-aucun verdict, mais retirer le moniteur fait passer le journal rejoué de **508 pas à zéro** —
+aucun verdict, mais retirer le moniteur fait passer le journal rejoué de **524 pas à zéro** —
 elle **travaille**, et le banc n'a simplement jamais d'exploit à lui donner. Le rapport écrit
 maintenant les trois lectures, et pas seulement les deux premières :
 
 1. **le banc ne l'exerce pas** — rien à échantillonner : « aucune puissance d'échantillon ne
    conclura, il faut une mission où la brique ait quelque chose à faire ». C'est le cas de
    `temoins` ici, et c'est normal : le banc fournit ses propres tests, donc la traduction en
-   témoins n'a rien à traduire (c'est le seul réglage où ce levier est mesurable, et
-   `--sans-oracle` existe pour ça) ;
+   témoins n'a rien à traduire — en `--sans-oracle`, le même levier ressort PREUVE (perte),
+   avec les appels qui tombent de 3,9 à 1,0 quand on le retire ;
 2. **elle agit sans rien déplacer** — le retrait coupe des témoins ou des constats sans changer
    un seul verdict : redondance **mesurée**, que le rapport nomme et ne défend pas ;
 3. **elle agit et l'écart penche** — les dissociations vont dans son sens (7 contre 0 pour
@@ -2986,6 +3035,46 @@ croire qu'un réglage plus dur aurait changé le verdict.
 
 Codes de sortie : **0** si le moteur complet n'a livré aucune erreur sans réserve, **1** s'il
 en a livré une — un levier non distingué n'est pas une panne, c'est une mesure honnête.
+
+## Une entreprise de 66 agents : les vérifications distribuées, en parallèle
+
+Les contrôles existaient tous — la suite, la cohérence, les chiffres, les affirmations, les
+régimes d'ablation. Ce qui manquait n'était pas un contrôle de plus : c'était une
+**organisation**. `jio entreprise` tire du dépôt lui-même son catalogue (chaque fichier de
+tests devient une mission, chaque contrôle de cohérence, chaque preuve archivée), distribue
+ces missions à **une entreprise de 66 agents** spécialisés — 48 postes de test par domaine
+(moteur, preuve, panel, routeur, artefacts, intégrations…), les 9 auditeurs de cohérence, le
+mesurier, les vérificateurs d'affirmations, le linteur, les logeurs d'ablation — et les
+exécute **en parallèle**, chaque compte-rendu signé par l'agent qui l'a produit.
+
+```console
+$ jio entreprise
+  ENTREPRISE JIO  ·  66 postes  ·  96 mission(s)  ·  4 ouvrier(s) en parallele
+    temps cumule 549s  ·  temps reel 143s  ·  gain mesure x3.8
+    postes mobilises : 64/66 (les autres sont la pour la montee en charge, pas pour la pose)
+
+  PROBLEMES : AUCUN  ·  96 mission(s) au vert, 0 hors de portee
+  VERDICT : AUCUN PROBLEME
+```
+
+Ce qu'une entreprise apporte qu'un gros script séquentiel n'apporte pas :
+
+- **la vitesse, mesurée et honnête** — le gain est le rapport temps cumulé / temps réel, pas
+  un slogan ; sur la machine de l'atelier (2 cœurs), 4 ouvriers suffisent, et le rapport
+  *déclare* cette borne : 66 postes et 4 ouvriers sont deux chiffres qui disent deux choses ;
+- **un responsable par problème** — un échec n'est plus « quelque part ça a planté » :
+  `[KO] tests/test_x.py · test-moteur-2 · 3,1s` avec l'extrait qui prouve ;
+- **pas de faux vert** — une mission qui ne peut pas mesurer ici (outil absent) sort *hors de
+  portée*, listée à part, jamais comptée comme réussie ;
+- **le fail-loud** — code de sortie 1 au moindre problème : un appelant peut déclarer
+  « fini » sur `jio entreprise` sans rien croire.
+
+`--liste` affiche le roster avec les mandats écrits ; `--sans tests` fait une passe rapide
+(cohérence, chiffres, affirmations, lint, fumée) ; `--json` rend tout lisible par une machine.
+Et la discipline du dépôt s'applique à l'entreprise comme aux autres : sa commande a son test
+de fumée, son chiffre est le onzième surveillé, et son premier tour de garde a attrapé
+**quatre problèmes réels** — dont deux dans son propre code (des imports morts), réparés
+avant ce paragraphe.
 
 ## Hermes : les compétences installées là où l'agent les lit
 

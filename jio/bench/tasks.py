@@ -408,6 +408,83 @@ TASKS: tuple[Task, ...] = (
 TASKS_BY_ID: Mapping[str, Task] = {t.id: t for t in TASKS}
 
 
+# --------------------------------------------------------------------------- #
+# Tache a SPECIFICATION PARTIELLE — celle qui exerce le differentiel
+# --------------------------------------------------------------------------- #
+#
+# Les cinq taches au-dessus ont une specification TOTALE : deux implementations
+# correctes y coincident sur toute entree, donc le differentiel n'a jamais rien a
+# arbitrer — mesure a l'ablation, le levier `differentiel` ressort muet sur TOUT
+# regime (defaut, sans oracle, competence 0,05 a 0,9). Ce n'est pas la brique qui
+# manque, c'est une tache ou elle ait quelque chose a faire : une specification qui
+# se tait sur un cas, la liste vide, ou deux implementations LEGITIMES divergent —
+# `sum(v)/len(v)` leve ZeroDivisionError, `sum(v)/len(v) if v else 0.0` rend 0.0.
+# Les deux passent tous les checks (l'oracle ne juge que le specifie) : ex-aequo de
+# preuves, le differentiel sonde les entrees derivees (les annotations + `_seed_variants`
+# vident systematiquement les listes) et l'aveu devient un constat nomme.
+#
+# Elle est VOLONTAIREMENT hors de TASKS : les releves archives du banc (5 taches)
+# restent comparables d'un commit a l'autre. On l'active par `jio ablation
+# --taches mean_partial`.
+
+T_MEAN_PARTIAL = Task(
+    id="mean_partial",
+    objective=(
+        "Ecrire `moyenne(valeurs)` qui renvoie la moyenne arithmetique des valeurs "
+        "de la liste."
+        # Volontairement muet sur la liste vide : c'est le cas non specifie que le
+        # differentiel doit AVOUER, pas une omission a corriger.
+    ),
+    entrypoint="moyenne",
+    difficulty="facile",
+    # Annotations + doctest : ce sont eux qui donnent au differentiel son domaine
+    # d'entrees derivees (`_cas_d_entree` lit le premier candidat).
+    correct="""def moyenne(valeurs: list[float]) -> float:
+    \"\"\"Moyenne arithmetique des valeurs.
+
+    >>> moyenne([2.0, 4.0])
+    3.0
+    >>> moyenne([0.0, 1.0])
+    0.5
+    \"\""
+    return sum(valeurs) / len(valeurs)
+""",
+    distractors=(
+        # Une SECONDE implementation LEGITIME, pas un bug : elle passe tous les
+        # checks (l'oracle ne parle pas de la liste vide) et diverge sur `[]`.
+        """def moyenne(valeurs: list[float]) -> float:
+    \"\"\"Moyenne arithmetique des valeurs (0.0 pour une liste vide).
+
+    >>> moyenne([2.0, 4.0])
+    3.0
+    >>> moyenne([0.0, 1.0])
+    0.5
+    \"\""
+    return sum(valeurs) / len(valeurs) if valeurs else 0.0
+""",
+    ),
+    rules=(
+        _rule("R-001", "Moyenne arithmetique correcte sur le cas nominal"),
+        _rule("R-002", "Le resultat est un float"),
+    ),
+    checks={
+        "R-001": (
+            "assert moyenne([2.0, 4.0]) == 3.0, f'nominal: {moyenne([2.0, 4.0])} != 3.0'\n"
+            "assert moyenne([0.0, 1.0]) == 0.5, f'nominal: {moyenne([0.0, 1.0])} != 0.5'\n"
+            "assert moyenne([1.0, 2.0, 3.0]) == 2.0, f'nominal: {moyenne([1.0, 2.0, 3.0])} != 2.0'"
+        ),
+        "R-002": (
+            "assert isinstance(moyenne([2.0, 4.0]), float), "
+            "f'type: {type(moyenne([2.0, 4.0]))}'"
+        ),
+    },
+)
+
+#: Les taches a specification partielle : elles n'entrent PAS dans TASKS (les releves
+#: archives restent comparables), elles s'activent par `--taches <id>`.
+TACHES_PARTIELLES: tuple[Task, ...] = (T_MEAN_PARTIAL,)
+
+
 def build_bank(tasks: Sequence[Task] | None = None) -> dict[str, tuple[str, Sequence[str]]]:
     """Construit le banc `cle_de_tache -> (correct, distracteurs)` pour la simulation."""
     out: dict[str, tuple[str, Sequence[str]]] = {}
@@ -417,4 +494,4 @@ def build_bank(tasks: Sequence[Task] | None = None) -> dict[str, tuple[str, Sequ
     return out
 
 
-__all__ = ["Task", "TASKS", "TASKS_BY_ID", "build_bank"]
+__all__ = ["Task", "TASKS", "TASKS_BY_ID", "TACHES_PARTIELLES", "build_bank"]

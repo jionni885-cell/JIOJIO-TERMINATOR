@@ -1170,6 +1170,25 @@ else
         "module `jio.skills.vecteurs` indisponible"
 fi
 
+# -- 28 ---------------------------------------------------------------------- #
+# L'ENTREPRISE : les verifications du depot distribuees a des postes d'agents et executees
+# EN PARALLELE. On lui demande la passe RAPIDE (sans les tests, l'etape 1 les a deja passes
+# ; sans l'ablation, l'etape 26 l'a deja faite) : coherence + chiffres + affirmations + lint
+# + fumee. Echec si UN SEUL probleme : c'est le contrat fail-loud qui autorise a dire « fini ».
+if [ -d .venv ] || command -v python3 >/dev/null 2>&1; then
+    CODE_ENTREPRISE=0
+    SORTIE_ENTREPRISE="$("$PYTHON" -m jio entreprise --sans tests,ablation 2>&1)" || CODE_ENTREPRISE=$?
+    printf '%s\n' "$SORTIE_ENTREPRISE" | sed -n '/ENTREPRISE JIO/,/hors de portee/p' | head -12
+    if [ "$CODE_ENTREPRISE" -ne 0 ]; then
+        echo "    ECHEC : l'entreprise a rendu au moins un probleme (voir ci-dessus)." >&2
+        exit 1
+    fi
+    echo "    -> l'entreprise est au vert : chaque mission avait un responsable nomme."
+else
+    sauter "28. L'entreprise : les verifications distribuees, en parallele" \
+        "aucun interpreteur Python utilisable ici"
+fi
+
 titre "Termine"
 
 # Le controle qui compte : les etapes DECLAREES dans ce fichier doivent toutes avoir ete

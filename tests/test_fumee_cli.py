@@ -125,6 +125,9 @@ SURES: dict[str, list[str]] = {
     # `coherence` : les neuf controles sur le depot de test. Elle ne modifie RIEN (elle
     # constate) : c'est ce qui la rend utilisable juste avant un commit.
     "coherence": [],
+    # `entreprise` : le roster et le catalogue sans rien executer (--liste), puis un
+    # filtrage vide qui doit REFUSER (code 2) — mesurer "rien" en silence serait un defaut.
+    "entreprise": ["--liste"],
     # `sorties` : les exemples de sortie declares des documents, confrontes a l'outil. Sans
     # document ni bloc declare, elle ENSEIGNE le contrat au lieu de rendre un faux vert.
     "sorties": [],

@@ -18,7 +18,9 @@ import argparse
 import json
 import math
 import os
+import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -3978,6 +3980,11 @@ def build_parser() -> argparse.ArgumentParser:
     ab.add_argument("--levers", default="",
                     help="leviers a mesurer, separes par des virgules (defaut : tous). "
                          "`--levers liste` affiche les noms et ce que « sans » veut dire.")
+    ab.add_argument("--taches", default="",
+                    help="taches du banc, separees par des virgules (defaut : les cinq "
+                         "archives). `--taches liste` les affiche. `mean_partial` est la "
+                         "tache a SPECIFICATION PARTIELLE : la seule ou deux implementations "
+                         "legitimes divergent, donc la seule qui exerce le differentiel.")
     ab.add_argument("--skill", type=float, default=0.35, help="competence du modele simule")
     ab.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
                     help="tours de boucle maximum")
@@ -4152,6 +4159,25 @@ def build_parser() -> argparse.ArgumentParser:
     co.add_argument("--json", action="store_true", help="verdict lisible par une machine")
     co.set_defaults(func=cmd_coherence)
 
+    en = sub.add_parser(
+        "entreprise",
+        help="L'ENTREPRISE : les verifications du depot distribuees a 66 postes, en parallele",
+    )
+    en.add_argument("--root", default=".", help="racine du depot a verifier")
+    en.add_argument("--liste", action="store_true",
+                    help="affiche le roster (postes, mandats) et le catalogue du moment")
+    en.add_argument("--seulement", default="",
+                    help="ne garde que les missions dont l'id commence par l'un de ces "
+                         "prefixes, separes par des virgules (ex : coherence,mesure)")
+    en.add_argument("--sans", default="",
+                    help="retire les missions dont l'id commence par l'un de ces prefixes "
+                         "(ex : --sans tests pour une passe rapide)")
+    en.add_argument("--ouvriers", type=int, default=None,
+                    help="borne de parallelisme (defaut : 2x coeurs, plafonne a 6 — la "
+                         "borne reelle de CETTE machine, declaree dans le rapport)")
+    en.add_argument("--json", action="store_true", help="rapport lisible par une machine")
+    en.set_defaults(func=cmd_entreprise)
+
     return p
 
 
@@ -4211,6 +4237,7 @@ def cmd_ablation(args: argparse.Namespace) -> int:
     mesure honnete.
     """
     from .bench.ablation import LEVIERS, Issue, appliquer, formater, levier, mesurer
+    from .bench.tasks import TACHES_PARTIELLES
 
     if args.levers.strip() == "liste":
         print()
@@ -4230,15 +4257,41 @@ def cmd_ablation(args: argparse.Namespace) -> int:
         print(f"  {exc.args[0]}", file=sys.stderr)
         return 2
 
+    # Le pool de taches : defaut = les cinq taches archives (les releves restent
+    # comparables d'un commit a l'autre). `--taches mean_partial` active la tache a
+    # SPECIFICATION PARTIELLE, seule capable d'exercer le differentiel — deux
+    # implementations legitimes qui divergent la ou l'oracle ne parle pas.
+    demandees = getattr(args, "taches", "") or ""
+    if demandees.strip() == "liste":
+        print()
+        print("  TACHES DU BANC D'ABLATION")
+        print()
+        for ta in [*TASKS, *TACHES_PARTIELLES]:
+            etoile = "" if ta in TASKS else "  (spec partielle : exerce differentiel)"
+            print(f"    {ta.id:<14} {ta.difficulty:<7}{etoile}")
+        print()
+        return 0
+    if demandees.strip():
+        connues = {ta.id: ta for ta in [*TASKS, *TACHES_PARTIELLES]}
+        inconnues = [i for i in (x.strip() for x in demandees.split(",")) if i not in connues]
+        if inconnues:
+            print(f"  tache(s) inconnue(s) : {', '.join(inconnues)} (--taches liste)",
+                  file=sys.stderr)
+            return 2
+        pool = [connues[i.strip()] for i in demandees.split(",") if i.strip()]
+    else:
+        pool = list(TASKS)
+    partielle = any(ta not in TASKS for ta in pool)
+
     missions = max(1, args.missions)
-    taches = min(len(TASKS), missions)
+    taches = min(len(pool), missions)
     graines = max(1, math.ceil(missions / taches))
     # Bornee ICI, pas seulement validee : une valeur hors de [0, 1] ferait dire au rapport
     # autre chose que ce qui a ete mesure.
     fidelite = min(1.0, max(0.0, args.fidelite))
 
     def executer(indice: int, graine: int, ablations: tuple[str, ...]) -> Issue:
-        tache: Task = TASKS[indice % len(TASKS)]
+        tache: Task = pool[indice % len(pool)]
         moteur = _simulated_engine(
             tache,
             skill=args.skill,
@@ -4250,6 +4303,22 @@ def cmd_ablation(args: argparse.Namespace) -> int:
             traducteur=(
                 TraducteurSimule(taches=TASKS, fidelite=fidelite) if args.sans_oracle else None
             ),
+            # Une tache partielle n'est pas dans la bank par defaut : sans son entree,
+            # le simulateur rendrait une reponse vide (no_task) et on mesurerait le
+            # silence, pas la brique.
+            banque=build_bank([*TASKS, *TACHES_PARTIELLES]) if partielle else None,
+        )
+        # Le banc doit mesurer ce que le chemin REEL fait tourner : `jio run` branche la
+        # memoire des echecs, la bibliotheque de temoins et le routeur de confiance
+        # (`_attach_learning`). Sans ce branchement, les trois leviers correspondants
+        # retiraient None — l'ablation d'un FANTOME, muette par construction, et
+        # l'instrument d'activite le disait : « le banc ne l'exerce pas » sur trois
+        # briques que le chemin réel charge, lui. Chaque bras a SON dossier d'etat : tous
+        # partent du meme vide, ce qui s'y accumule est le produit de la trajectoire de ce
+        # bras — la semantique exacte de « on enleve la brique et on rejoue la sequence ».
+        _attach_learning(
+            moteur,
+            racine_etat / ("sans-" + "-".join(ablations) if ablations else "complet"),
         )
         appliquer(moteur, ablations)
         debut = time.monotonic()
@@ -4300,15 +4369,21 @@ def cmd_ablation(args: argparse.Namespace) -> int:
               f"fournit les tests.")
     print("  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.")
     print()
-    rapport = mesurer(
-        executer, taches=taches, graines=graines, leviers=noms,
-        # Le progres va sur la sortie d'erreur, avec le temps ecoule : il sert a DECIDER s'il
-        # faut attendre ou interrompre. Sans lui, la commande est indistinguable d'un blocage.
-        avancer=_Progression(
-            taches * graines * ((len(noms) if noms else len(LEVIERS)) + 1),
-            quoi="ablation",
-        ),
-    )
+    racine_etat = Path(tempfile.mkdtemp(prefix="jio-ablation-etat-"))
+    try:
+        rapport = mesurer(
+            executer, taches=taches, graines=graines, leviers=noms,
+            # Le progres va sur la sortie d'erreur, avec le temps ecoule : il sert a DECIDER s'il
+            # faut attendre ou interrompre. Sans lui, la commande est indistinguable d'un blocage.
+            avancer=_Progression(
+                taches * graines * ((len(noms) if noms else len(LEVIERS)) + 1),
+                quoi="ablation",
+            ),
+        )
+    finally:
+        # Un banc qui laisse des etats derriere lui contamine la mesure SUIVANTE : la
+        # memoire d'une session fijuterait celle d'apres.
+        shutil.rmtree(racine_etat, ignore_errors=True)
     if args.json:
         _charge_utile(json.dumps(rapport.en_dict(), ensure_ascii=False, indent=2))
         return 1 if rapport.silencieuses else 0
@@ -4900,6 +4975,51 @@ def cmd_coherence(args: argparse.Namespace) -> int:
     else:
         rapport = controler(racine)
     if getattr(args, "json", False):
+        _charge_utile(_json.dumps(rapport.as_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(formater(rapport))
+    return rapport.code
+
+
+def cmd_entreprise(args: argparse.Namespace) -> int:
+    """`jio entreprise` : les missions de verification, distribuees a 66 postes, EN PARALLELE.
+
+    Le depot sait deja se verifier — la suite, la coherence, les chiffres, les affirmations,
+    les regimes d'ablation. Ce qui manquait n'etait pas un controle de plus, c'etait une
+    organisation : des missions independantes s'executent en meme temps, chacune portee par
+    un agent nomme, et le rapport rend le probleme AVEC son responsable au lieu d'un echec
+    anonyme. Code de sortie : 0 si aucun probleme, 1 sinon — un appelant peut declarer
+    « fini » sur cette base.
+    """
+    import json as _json
+
+    from .entreprise import POSTES, cataloguer, formater, mener
+
+    print(BANNER)
+    if args.liste:
+        print(f"  L'ENTREPRISE  ·  {len(POSTES)} postes")
+        for poste in POSTES:
+            print(f"    {poste.nom:<26} [{poste.specialite:<12}] {poste.mandat}")
+        print()
+        missions = cataloguer(getattr(args, "root", ".") or ".")
+        print(f"  CATALOGUE DU MOMENT  ·  {len(missions)} mission(s), tiree du depot lui-meme")
+        for mission in missions:
+            print(f"    {mission.id:<44} [{mission.specialite}] {mission.resume}")
+        print()
+        return 0
+
+    missions = cataloguer(getattr(args, "root", ".") or ".")
+    seulement = [s.strip() for s in (args.seulement or "").split(",") if s.strip()]
+    if seulement:
+        missions = [m for m in missions if any(m.id.startswith(s) for s in seulement)]
+    sans = [s.strip() for s in (args.sans or "").split(",") if s.strip()]
+    if sans:
+        missions = [m for m in missions if not any(m.id.startswith(s) for s in sans)]
+    if not missions:
+        print("  aucune mission apres filtrage — rien a faire n'est pas un succes.", file=sys.stderr)
+        return 2
+    rapport = mener(getattr(args, "root", ".") or ".", missions, ouvriers=args.ouvriers)
+    if args.json:
         _charge_utile(_json.dumps(rapport.as_dict(), ensure_ascii=False, indent=2))
     else:
         print(formater(rapport))

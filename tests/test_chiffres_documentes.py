@@ -371,6 +371,9 @@ def test_chiffres_et_coherence_rendent_le_MEME_verdict_sur_le_meme_document(
              # surveille, sans exception — c'est son role, et c'est ce qui empeche un motif
              # d'entrer sans que rien ne le verifie.
              f"{mesures['vecteurs']} radicaux, "
+             # Le ONZIEME suit la meme regle que les dix autres : une entreprise qui
+             # rapetit sans que le document bouge doit etre un ecart, pas un silence.
+             f"une entreprise de {mesures['entreprise']} agents, "
              f"premier choix juste dans {mesures['premier_choix']} %\n")
 
     perime = juste.replace(f"{mesures['tests']} tests", f"{mesures['tests'] + 7} tests", 1)
