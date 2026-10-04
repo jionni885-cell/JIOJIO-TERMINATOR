@@ -133,7 +133,7 @@ et le coût par mission diminue — **mesuré, pas supposé**.
   `sync`, `skills`, `evolve`, `doctor`, `report`, `trace`, `blame`, `mcp`
 - **Dashboard web** (live preview) : missions en cours, votes, désaccords, audits,
   entropie sémantique, taux de réussite, frontière Pareto, journal d'intégrité
-- **Rapports** HTML/Markdown/JSON, en français
+- **Rapports** HTML/Markdown/JSON, en français — **partiellement livré** : rapport HTML autonome des traces via `jio trace --html` ; dashboard live et autres formats restent à faire
 - Export OpenTelemetry (GenAI semantic conventions)
 
 **Critère de sortie :** le dashboard montre une mission se dérouler en direct.

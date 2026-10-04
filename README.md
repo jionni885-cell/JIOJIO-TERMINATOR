@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1274 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1277 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 **Tu veux l'essayer ?** Le guide pas à pas pour l'intégrer à TON projet est là :
 [`GUIDE-DEMARRAGE.md`](GUIDE-DEMARRAGE.md) — 6 étapes, toutes les commandes testées.
@@ -1661,7 +1661,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1274 tests verts -> 1274 tests verts
+         - README.md ligne 15 : 1277 tests verts -> 1277 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2185,6 +2185,30 @@ JIO scelle donc **chaque événement du journal** avec l'empreinte du monde où 
 Le journal reste **intègre** (`chaine INTEGRE`) : les deux constats sont indépendants, et c'est
 tout l'intérêt. Le sceau entre dans le hachage, donc le réécrire après coup casse la chaîne —
 vérifié par un test qui falsifie un sceau et exige la rupture.
+
+### Une chronologie HTML, locale et autonome
+
+**Avant :** `jio trace` ne produisait qu'une sortie terminale, avec le payload de chaque événement
+tronqué à 110 caractères. **Après :** `--html` génère une chronologie responsive, un événement
+par carte, avec le JSON complet repliable, les niveaux de confiance, les empreintes, les sceaux
+du monde et les anomalies du rejeu déterministe, en plus du résultat de la chaîne. L'intégrité
+est calculée sur le journal entier, même si `--kind` masque certaines cartes. Le rapport ne
+charge aucun script ni ressource distante et s'ouvre hors ligne.
+
+```sh
+jio run "corriger la somme des pairs" --task sum_even --simulate
+jio trace .jio/journal.jsonl --html mission.html
+```
+
+La démonstration exécutable, `tests/test_trace_html.py`, fixe la mesure : sur un journal témoin
+de **2 événements**, le rapport contient **2 cartes** (2/2 visibles) ; si un payload est modifié,
+le rapport affiche **CHAÎNE CASSÉE** et la commande sort en 1. Le fichier cible existant est
+refusé par défaut (`--ecraser` est nécessaire), et le journal source ne peut jamais être sa
+propre destination. Le JSON peut contenir des prompts, du code ou des données du projet : le
+rapport le rappelle avant tout partage.
+
+Cette livraison couvre **l'export HTML des traces**, pas le dashboard live ni les autres formats
+HTML/Markdown/JSON : ils restent à faire dans la phase 6.
 
 ### Une optimisation plus rapide, mesurée, puis jetée
 

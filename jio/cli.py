@@ -37,7 +37,7 @@ from .audit.integrity import IntegrityMonitor
 from .bench.tasks import TASKS, TASKS_BY_ID, Task, build_bank
 from .bench.temoins import TraducteurSimule
 from .core.journal import Journal
-from .core.types import Mission, MissionReport, MissionStatus
+from .core.types import IntegrityReport, Mission, MissionReport, MissionStatus
 from .gate.conformal import ConformalGate
 from .loop.engine import Engine, EngineConfig, WorkItem
 from .providers.registry import detect_clis
@@ -3422,6 +3422,76 @@ def _outils_mcp(tools: Sequence[Mapping[str, object]], *, interactif: bool) -> N
     print()
 
 
+def _ecrire_rapport_trace(
+    journal: Journal,
+    source: Path,
+    destination: str,
+    *,
+    kind: str = "",
+    ecraser: bool = False,
+    audit: IntegrityReport,
+    sceau_courant: str,
+) -> bool:
+    """Ecrit un rapport autonome sans pouvoir remplacer le journal source par accident."""
+    from .trace_html import rapport_html
+
+    cible = Path(destination).expanduser()
+    temporaire: Path | None = None
+    try:
+        if cible.is_symlink():
+            print(f"  Refus d'ecrire a travers un lien symbolique : {cible}")
+            return False
+        if cible.resolve(strict=False) == source.resolve(strict=False):
+            print("  Refus d'ecraser le journal source avec son propre rapport.")
+            return False
+        if cible.exists() and not ecraser:
+            print(f"  Le fichier existe deja : {cible} (ajoutez --ecraser pour le remplacer).")
+            return False
+        if cible.exists() and os.path.samefile(cible, source):
+            print("  Refus d'ecraser le journal source, meme via un autre chemin.")
+            return False
+
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        contenu = rapport_html(
+            journal,
+            source=str(source),
+            kind=kind,
+            audit=audit,
+            sceau_courant=sceau_courant,
+        )
+        if ecraser:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                errors="replace",
+                prefix=f".{cible.name}.",
+                suffix=".tmp",
+                dir=cible.parent,
+                delete=False,
+            ) as fichier:
+                temporaire = Path(fichier.name)
+                fichier.write(contenu)
+            os.replace(temporaire, cible)
+            temporaire = None
+        else:
+            # Mode exclusif : une course entre le test d'existence et l'ecriture ne peut pas
+            # ecraser le fichier qu'un autre processus vient de creer.
+            with cible.open("x", encoding="utf-8", errors="replace") as fichier:
+                fichier.write(contenu)
+    except FileExistsError:
+        print(f"  Le fichier existe deja : {cible} (ajoutez --ecraser pour le remplacer).")
+        return False
+    except (OSError, RuntimeError) as exc:
+        print(f"  Echec de l'export HTML vers {cible} : {exc}")
+        return False
+    finally:
+        if temporaire is not None:
+            temporaire.unlink(missing_ok=True)
+
+    print(f"  Rapport HTML : {cible} (autonome, sans appel reseau)")
+    return True
+
+
 def cmd_trace(args: argparse.Namespace) -> int:
     """Rejoue et verifie un journal — meme sans indiquer lequel.
 
@@ -3430,6 +3500,9 @@ def cmd_trace(args: argparse.Namespace) -> int:
     poser la question est une mauvaise interface. On cherche donc le journal, du
     plus recent au plus ancien, et on dit clairement quoi faire s'il n'y en a pas.
     """
+    if args.ecraser and not args.html:
+        print("  --ecraser exige un chemin fourni avec --html.")
+        return 2
     explicite = bool(args.journal)
     path = Path(args.journal) if explicite else Path(
         str_env("JIO_JOURNAL", ".jio/journal.jsonl")
@@ -3535,6 +3608,16 @@ def cmd_trace(args: argparse.Namespace) -> int:
     print(f"  INTEGRITE : {'propre' if report.clean else 'ANOMALIES'}")
     for e in report.exploits:
         print(f"    - {e.kind.value} @ {e.step}: {e.detail[:100]}")
+    if args.html and not _ecrire_rapport_trace(
+        journal,
+        path,
+        args.html,
+        kind=args.kind,
+        ecraser=args.ecraser,
+        audit=report,
+        sceau_courant=courant["sceau"],
+    ):
+        return 2
     print()
     return 0 if ok else 1
 
@@ -3809,7 +3892,16 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("journal", nargs="?", default="",
                    help="chemin du journal (defaut : le plus recent trouve)")
     t.add_argument("--kind", default="", help="filtre par type d'evenement")
-    t.set_defaults(func=cmd_trace)
+    t.add_argument(
+        "--html", default="", metavar="FICHIER",
+        help=("ecrit un rapport autonome hors ligne (le contenu du journal peut inclure "
+              "des prompts ou du code)")
+    )
+    t.add_argument(
+        "--ecraser", action="store_true",
+        help="remplacer le fichier HTML s'il existe deja (exige --html)",
+    )
+    t.set_defaults(func=cmd_trace, ecraser=False)
 
     ar = sub.add_parser("artifacts", help="genere les artefacts natifs de tous les outils")
     ar.add_argument("--root", default=".", help="repertoire de destination")
