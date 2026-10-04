@@ -1,0 +1,19 @@
+{
+  "artefact": "",
+  "artefact_digest": "",
+  "attendues_en_echec": [],
+  "bloquant": true,
+  "charge": {
+    "api_key": "sk-jioTemoin0123456789abcdef",
+    "note": "contact de test : sk-jioTemoin0123456789abcdef"
+  },
+  "controles": {},
+  "genre": "securite",
+  "id": "S-api_key-62",
+  "interdits": [
+    "contact de test : sk-jioTemoin0123456789abcdef",
+    "sk-jioTemoin0123456789abcdef"
+  ],
+  "provenance": "revision 5d0f29d, monde e23a783467f5, evenement #62",
+  "raison": "fuite reelle observee (la trace a exporte un champ sensible `api_key` (valeur NON recopiee : longueur 34)) : la redaction doit continuer de masquer ce champ. Valeurs temoins, jamais les valeurs de la trace."
+}

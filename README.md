@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1355 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1382 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 **Tu veux l'essayer ?** Le guide pas à pas pour l'intégrer à TON projet est là :
 [`GUIDE-DEMARRAGE.md`](GUIDE-DEMARRAGE.md) — 6 étapes, toutes les commandes testées.
@@ -52,7 +52,7 @@ Zéro erreur silencieuse dans toutes les conditions mesurées.
 219 s réelles (×3,9), chaque problème rendu avec son responsable nommé, réparation mécanique
 fermée (trouvé → réparé → re-vérifié, nommé deux fois), et ce qui demanderait une décision
 humaine jamais touché. Les 11 chiffres du dépôt sont surveillés par `jio chiffres` ; la
-preuve de bout en bout tient en 28 étapes (`bash scripts/evidence.sh`).
+preuve de bout en bout tient en 30 étapes (`bash scripts/evidence.sh`).
 
 La suite de cette page raconte **comment** chacun de ces résultats a été obtenu, avec les
 défauts rencontrés en route — un rapport qui ne raconterait que les réussites serait une
@@ -286,6 +286,7 @@ python -m jio learn --skill 0.15         # l'auto-amélioration paie-t-elle ? (p
 python -m jio learn --cycles 3 --runs 1  # la mémoire qui S'ACCUMULE paie-t-elle ? (froid/chaud apparié)
 python -m jio mutants                    # NOS tests attrapent-ils NOS erreurs ? (mutation)
 python -m jio ablation --missions 10     # quelle brique apporte quoi ? (ablation appariee)
+python -m jio eval                       # les echecs REELS reviennent-ils en silence ? (regressions)
 python -m jio scan jio                   # JIO s'audite lui-même : 0 problème attendu
 ```
 
@@ -1661,7 +1662,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1355 tests verts -> 1355 tests verts
+         - README.md ligne 15 : 1382 tests verts -> 1382 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -3094,6 +3095,77 @@ plutôt que de laisser croire à un succès.
 * la matrice est une **réserve**, pas un rejet : elle ne condamne ni l'artefact ni les règles, elle
   nomme le prochain geste. La réserve du moteur cite la matrice (`_resume_matrice`), et dit
   **pourquoi** quand elle ne peut pas la citer.
+
+## Les échecs réels reviennent-ils en silence ? `jio eval`
+
+Un échec observé une fois — une règle qui a échoué sur un artefact, un champ sensible qui est
+entré dans un export — laisse une trace dans le journal, puis plus rien ne l'utilise. Le même
+défaut peut donc revenir à la version suivante sans qu'aucun contrôle ne bronche, et rien ne
+permet de comparer deux versions sur les **mêmes** cas : les cas n'existent pas.
+
+`jio eval` les fait exister, en trois gestes dont **le dernier appartient à un humain** :
+
+```console
+$ python -m jio eval --proposer --journal .jio/journal.jsonl
+  5 proposition(s) issue(s) d'une trace REELLE :
+    [temoin] T-R-001-4  la regle R-001 a ECHOUE sur un artefact reel (sortie hachee 25e39109, code 1)
+      provenance : revision 5d0f29d, monde e23a783467f5, evenement #4
+      pour geler : l'artefact (--artefact FICHIER, ou --candidat EMPREINTE) et le controle
+                   de la regle (--controles FICHIER) : l'oracle n'est pas dans la trace
+    [securite] S-telephone-63  la trace a exporte un champ sensible `telephone`
+                   (valeur NON recopiee : longueur 17)
+
+$ python -m jio eval --geler T-R-001-4 --candidat 1b550ccddc8b21e9 --controles controles.json
+$ python -m jio eval
+  JEU DE REGRESSION  ·  evidence/regressions
+    REGRESSIONS  ·  4/4 cas tenu(s)  ·  taux de silence : 0%
+```
+
+### Ce que le taux de silence mesure
+
+Le corpus est rejoué contre la version courante, et le rapport publie la part de défauts
+réels qu'elle **ne détecte plus** :
+
+```console
+$ python scripts/demo-regressions.py
+== 2. Redaction neutralisee : les cas de securite doivent BLOQUER
+    REGRESSIONS  ·  1/4 cas tenu(s)  ·  taux de silence : 75%
+    BLOQUANT  S-api_key-62  [securite]  FUITE : 'sk-jioTemoin0123456789abcdef' sort encore d'un export
+    -> REGRESSION DE SECURITE : la livraison est refusee tant que la fuite n'est pas refermee.
+
+== 3. Prouveur muet : le cas de temoin doit se taire, sans bloquer
+    REGRESSIONS  ·  3/4 cas tenu(s)  ·  taux de silence : 25%
+    SILENCE   T-R-001-4  [temoin]  R-001 n'echoue(nt) plus sur l'artefact enregistre
+```
+
+Une régression de **sécurité** est **bloquante** (code de sortie 1, livraison refusée) ; un
+silence de **témoin** est un défaut qui se déclare. Les deux états sont mesurés par l'étape 29
+de `scripts/evidence.sh`, sur le corpus versionné `evidence/regressions/` — et la démonstration
+échoue si l'un des trois états attendus ne se produit pas.
+
+### L'humain est dans la boucle, et c'est structurel
+
+L'oracle d'un cas de témoin n'est **pas** dans la trace : un contrôle caché est un secret, il ne
+se journalise pas. `--geler` exige donc `--controles` — et refuse le gel si l'échec ne se
+reproduit pas **ici, maintenant** : un cas dont l'attente est fausse dès sa création occupe la
+place d'un garde sans rien garder. Trois refus font la valeur du corpus, tous les trois nés d'une
+mesure :
+
+* **un échec qui ne se reproduit pas** est refusé (le cas ne garderait rien) ;
+* **une fuite encore ouverte** est refusée : archiver un défaut en cours le figerait au lieu de
+  le fermer — et le garde a mordu dès le premier gel, sur une valeur témoin libre
+  (`jioTemoin0123456789abcdef`) qu'aucun motif de la rédaction ne reconnaît : une chaîne
+  aléatoire sans préfixe est indiscernable d'un identifiant. Les valeurs témoins prennent donc
+  la forme des fuites **reconnaissables** (`sk-…`, `Bearer …`, courriel, téléphone) ;
+* **un cas édité à la main** est vu. Deux trous ont été trouvés en le mesurant : l'artefact est
+  lié par empreinte (le modifier est refusé), et une valeur interdite absente de la charge brute
+  est déclarée « cas VIDE » — sans quoi il suffisait de changer la valeur interdite pour que le
+  cas passe, y compris si la rédaction disparaissait (`jio eval` rendait alors **0** sur un
+  garde vidé).
+
+Les valeurs sensibles d'une trace ne sont **jamais** recopiées dans le corpus : le champ donne
+son **nom** au cas, ses valeurs sont des témoins synthétiques. Un secret poussé une fois dans un
+dépôt y reste, historique git compris.
 
 ## Chaque brique prouve-t-elle son utilité ? `jio ablation`
 

@@ -1170,7 +1170,7 @@ else
         "module `jio.skills.vecteurs` indisponible"
 fi
 
-# -- 28 ---------------------------------------------------------------------- #
+# -- L'ENTREPRISE ------------------------------------------------------------ #
 # L'ENTREPRISE : les verifications du depot distribuees a des postes d'agents et executees
 # EN PARALLELE. On lui demande la passe RAPIDE (sans les tests, l'etape 1 les a deja passes
 # ; sans l'ablation, l'etape 26 l'a deja faite) : coherence + chiffres + affirmations + lint
@@ -1185,7 +1185,7 @@ if [ -d .venv ] || command -v python3 >/dev/null 2>&1; then
     fi
     echo "    -> l'entreprise est au vert : chaque mission avait un responsable nomme."
 else
-    sauter "28. L'entreprise : les verifications distribuees, en parallele" \
+    sauter "L'entreprise : les verifications distribuees, en parallele" \
         "aucun interpreteur Python utilisable ici"
 fi
 
@@ -1210,6 +1210,29 @@ if [ -f scripts/demo-matrice.py ]; then
 else
     sauter "28. Un mutant survivant dit-il QUOI corriger ?" \
         "scripts/demo-matrice.py absent de ce depot"
+fi
+
+titre "29. Un echec reel peut-il revenir en silence ?"
+
+# Le jeu de regression est bati sur de VRAIES traces (`evidence/regressions/`) : chaque
+# cas porte sa provenance et son oracle. La demonstration ci-dessous est VERSIONNEE et
+# elle ECHOUE si l'un des trois etats ne se produit pas — version courante qui tient,
+# redaction neutralisee qui BLOQUE, prouveur muet qui se declare SILENCIEUX sans bloquer.
+if [ -f scripts/demo-regressions.py ]; then
+    CODE_REGRESSIONS=0
+    SORTIE_REGRESSIONS="$("$PYTHON" scripts/demo-regressions.py 2>&1)" || CODE_REGRESSIONS=$?
+    printf '%s\n' "$SORTIE_REGRESSIONS" | sed -n '/== Corpus/,/^$/p'
+    printf '%s\n' "$SORTIE_REGRESSIONS" | sed -n '/REGRESSIONS  ·/p'
+    printf '%s\n' "$SORTIE_REGRESSIONS" | sed -n '/BLOQUANT/p'
+    printf '%s\n' "$SORTIE_REGRESSIONS" | sed -n '/SILENCE /p'
+    if [ "$CODE_REGRESSIONS" -ne 0 ]; then
+        echo "    ECHEC : un des trois etats attendus ne s'est pas produit (voir ci-dessus)." >&2
+        exit 1
+    fi
+    echo "    -> un echec reel enregistre ne peut plus revenir en silence."
+else
+    sauter "29. Un echec reel peut-il revenir en silence ?" \
+        "scripts/demo-regressions.py absent de ce depot"
 fi
 
 titre "Termine"

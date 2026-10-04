@@ -4391,6 +4391,29 @@ def build_parser() -> argparse.ArgumentParser:
     co.add_argument("--json", action="store_true", help="verdict lisible par une machine")
     co.set_defaults(func=cmd_coherence)
 
+    ev = sub.add_parser(
+        "eval",
+        help="les echecs REELS deviennent des cas de regression (proposer, geler, rejouer)",
+    )
+    ev.add_argument("--jeu", default="evidence/regressions",
+                    help="dossier du corpus versionne (defaut evidence/regressions)")
+    ev.add_argument("--journal", default=".jio/journal.jsonl",
+                    help="trace a lire pour proposer ou geler un cas")
+    ev.add_argument("--proposer", action="store_true",
+                    help="etape 1 : lister les echecs reels de la trace (aucune ecriture)")
+    ev.add_argument("--geler", default="",
+                    help="etape 2 : geler la proposition d'identifiant donne (ecrit un cas)")
+    ev.add_argument("--artefact", default="",
+                    help="artefact du cas a geler (fichier). Sans lui, `--candidat` peut "
+                         "extraire le candidat de la trace, EMPREINTE VERIFIEE")
+    ev.add_argument("--candidat", default="",
+                    help="empreinte du candidat a extraire de la trace (voir --proposer)")
+    ev.add_argument("--controles", default="",
+                    help="fichier JSON {regle: controle} : l'oracle n'est PAS dans la trace "
+                         "(il est secret), il vient de vous")
+    ev.add_argument("--json", action="store_true", help="rapport lisible par une machine")
+    ev.set_defaults(func=cmd_eval)
+
     en = sub.add_parser(
         "entreprise",
         help="L'ENTREPRISE : les verifications du depot distribuees a 66 postes, en parallele",
@@ -4771,6 +4794,129 @@ def cmd_mutants(args: argparse.Namespace) -> int:
         return 0
     print("    -> la suite attrape chaque mutation mesuree : les affirmations du depot")
     print("       sont tenues par des tests qui savent echouer.")
+    return 0
+
+
+def cmd_eval(args: argparse.Namespace) -> int:
+    """`jio eval` : les echecs reels deviennent des cas, ou ils reviennent en silence.
+
+    Trois gestes, dans l'ordre, et le troisieme appartient a un humain :
+
+      * `--proposer` lit une trace VERIFIEE et liste ce qui a mal tourne (regle qui a
+        echoue, champ sensible exporte), avec sa provenance ;
+      * `--geler ID` fige une proposition. Le controle qui a echoue n'est PAS dans la
+        trace — un oracle secret ne se journalise pas — donc il vient de `--controles`.
+        Le gel est REFUSE si l'echec ne se reproduit pas ici, maintenant : un cas dont
+        l'attente est fausse des sa creation occupe la place d'un garde et ne garde rien ;
+      * sans argument, le corpus est rejoue et le **taux de silence** est publie : la part
+        de defauts reels que la version courante ne detecte plus.
+
+    Code de sortie : 0 tout tient · 1 un silence (et une regression de SECURITE bloque la
+    livraison) · 2 rien a mesurer (aucun cas, ou proposition introuvable).
+    """
+    from .core.codes import ACTION, INDETERMINE
+    from .core.errors import FailClosed
+    from .eval.regressions import (
+        charger,
+        ecrire,
+        evaluer,
+        formater,
+        formater_propositions,
+        geler_securite,
+        geler_temoin,
+        propositions,
+    )
+
+    print(BANNER)
+    jeu = Path(getattr(args, "jeu", "evidence/regressions") or "evidence/regressions")
+    trace = Path(getattr(args, "journal", ".jio/journal.jsonl") or ".jio/journal.jsonl")
+
+    if args.proposer or args.geler:
+        try:
+            items = propositions(trace)
+        except FailClosed as exc:
+            print(f"  propositions impossibles : {exc}", file=sys.stderr)
+            print(f"  -> code {INDETERMINE} : {ACTION[INDETERMINE]}", file=sys.stderr)
+            return INDETERMINE
+        if args.proposer:
+            if args.json:
+                _charge_utile(json.dumps([p.en_dict() for p in items], ensure_ascii=False, indent=2))
+            else:
+                print(f"  TRACE  ·  {trace}")
+                print(formater_propositions(items))
+                if items:
+                    print()
+                    print("    -> pour figer un TEMOIN : `jio eval --geler T-R-001-4 "
+                          "--candidat EMPREINTE --controles controles.json`")
+                    print("    -> pour figer une FUITE  : `jio eval --geler S-api_key-62`")
+            return 0
+
+        choisie = next((p for p in items if p.id == args.geler), None)
+        if choisie is None:
+            connus = ", ".join(p.id for p in items) or "aucune"
+            print(f"  proposition inconnue : {args.geler} (connues : {connus})", file=sys.stderr)
+            print(f"  -> code {INDETERMINE} : {ACTION[INDETERMINE]}", file=sys.stderr)
+            return INDETERMINE
+        try:
+            if choisie.genre == "securite":
+                cas = geler_securite(choisie, dossier=jeu)
+            else:
+                controles: dict[str, str] = {}
+                if args.controles:
+                    controles = {
+                        str(k): str(v)
+                        for k, v in json.loads(Path(args.controles).read_text(encoding="utf-8")).items()
+                    }
+                provenance = ""
+                if args.artefact:
+                    chemin_artefact = Path(args.artefact)
+                    artefact = chemin_artefact.read_text(encoding="utf-8")
+                    provenance = f"artefact {chemin_artefact}"
+                elif args.candidat:
+                    from .eval.regressions import artefact_depuis_trace
+
+                    artefact = artefact_depuis_trace(trace, args.candidat)
+                    provenance = f"candidat {args.candidat} de {trace} (empreinte verifiee)"
+                else:
+                    print(
+                        "  il manque l'artefact : `--artefact FICHIER`, ou `--candidat "
+                        "EMPREINTE` pour un candidat present dans la trace.",
+                        file=sys.stderr,
+                    )
+                    print(f"  -> code {INDETERMINE} : {ACTION[INDETERMINE]}", file=sys.stderr)
+                    return INDETERMINE
+                cas = geler_temoin(
+                    choisie,
+                    artefact=artefact,
+                    controles=controles,
+                    provenance_artefact=provenance,
+                    dossier=jeu,
+                )
+        except FailClosed as exc:
+            print(f"  gel refuse : {exc}", file=sys.stderr)
+            return 1
+        chemin = ecrire(cas, jeu)
+        print(f"  cas gele : {chemin}")
+        print(f"    {cas.id}  [{cas.genre}]  {'BLOQUANT' if cas.bloquant else 'temoin'}")
+        print(f"    provenance : {cas.provenance}")
+        print(f"    raison : {cas.raison}")
+        return 0
+
+    corpus = charger(jeu)
+    rapport = evaluer(corpus)
+    if args.json:
+        _charge_utile(json.dumps(rapport.en_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(f"  JEU DE REGRESSION  ·  {jeu}")
+        print(formater(rapport))
+    if not corpus:
+        print(
+            f"  -> code {INDETERMINE} : {ACTION[INDETERMINE]} — un taux sur du vide serait "
+            "un chiffre sans contenu."
+        )
+        return INDETERMINE
+    if rapport.silencieux:
+        return 1
     return 0
 
 

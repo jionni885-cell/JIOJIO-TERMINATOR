@@ -161,6 +161,12 @@ et le coût par mission diminue — **mesuré, pas supposé**.
   **jamais atteinte** (`hors-portee` : la spécification est incomplète, il faut une règle de
   plus). Ligne localisée dans le texte **muté**, états `inconclusif` explicites plutôt qu'une
   accusation inventée, et un mutant **non jugé** n'est plus compté tué
+- **Jeu de régression depuis les traces** — **livré** : `jio eval --proposer` extrait les
+  échecs RÉELS d'une trace vérifiée (règle en échec, champ sensible exporté), `--geler` les fige
+  en cas versionnés (`evidence/regressions/`) avec leur provenance et leur oracle, et `jio eval`
+  rejoue le corpus en publiant le **taux de silence** — la part de défauts réels que la version
+  courante ne détecte plus. Une régression de **sécurité** est bloquante ; l'oracle d'un cas de
+  témoin vient de l'humain, parce qu'un contrôle caché ne se journalise pas
 - `jio ablation` : quelle brique apporte quoi ? On l'enlève et on compare sur les **mêmes
   missions** (appariement par tâche et par graine). Deux métriques — erreurs silencieuses, et
   livraisons **sans réserve** — parce que retirer le red-team ne rend pas le résultat faux, il

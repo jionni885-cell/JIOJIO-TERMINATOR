@@ -134,6 +134,10 @@ SURES: dict[str, list[str]] = {
     # `skills` : le routeur de competences. Sans objectif, elle dit comment s'en servir et
     # combien coute la bibliotheque — aucune ecriture, aucune dependance au depot courant.
     "skills": [],
+    # `eval` : le jeu de regression. Sur un dossier vide il n'y a AUCUN cas : la commande
+    # doit le DIRE et rendre 2 — « rien a mesurer » n'est pas « tout va bien » — sans rien
+    # ecrire. Ses tests propres vivent dans `tests/test_regressions.py`.
+    "eval": [],
     # `pr` : le generateur du corps de la PR. Sans `--sortie` il n'ecrit RIEN (il imprime) —
     # sur un dossier vide il doit sortir proprement en disant qu'il n'y a pas de depot a
     # resumer, ce que les deux tests ci-dessus verifient. Ses tests propres vivent dans

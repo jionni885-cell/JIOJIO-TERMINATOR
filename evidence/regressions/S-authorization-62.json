@@ -1,0 +1,19 @@
+{
+  "artefact": "",
+  "artefact_digest": "",
+  "attendues_en_echec": [],
+  "bloquant": true,
+  "charge": {
+    "authorization": "Bearer sk-jioTemoin0123456789abcdef",
+    "note": "contact de test : Bearer sk-jioTemoin0123456789abcdef"
+  },
+  "controles": {},
+  "genre": "securite",
+  "id": "S-authorization-62",
+  "interdits": [
+    "Bearer sk-jioTemoin0123456789abcdef",
+    "contact de test : Bearer sk-jioTemoin0123456789abcdef"
+  ],
+  "provenance": "revision 5d0f29d, monde e23a783467f5, evenement #62",
+  "raison": "fuite reelle observee (la trace a exporte un champ sensible `authorization` (valeur NON recopiee : longueur 56)) : la redaction doit continuer de masquer ce champ. Valeurs temoins, jamais les valeurs de la trace."
+}

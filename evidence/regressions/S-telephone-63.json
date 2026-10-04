@@ -1,0 +1,19 @@
+{
+  "artefact": "",
+  "artefact_digest": "",
+  "attendues_en_echec": [],
+  "bloquant": true,
+  "charge": {
+    "note": "contact de test : +33 6 00 00 00 00",
+    "telephone": "+33 6 00 00 00 00"
+  },
+  "controles": {},
+  "genre": "securite",
+  "id": "S-telephone-63",
+  "interdits": [
+    "+33 6 00 00 00 00",
+    "contact de test : +33 6 00 00 00 00"
+  ],
+  "provenance": "revision 5d0f29d, monde e23a783467f5, evenement #63",
+  "raison": "fuite reelle observee (la trace a exporte un champ sensible `telephone` (valeur NON recopiee : longueur 17)) : la redaction doit continuer de masquer ce champ. Valeurs temoins, jamais les valeurs de la trace."
+}

@@ -1,0 +1,17 @@
+{
+  "artefact": "def sum_even(nums):\n    return sum(n for n in nums if n % 2 == 1)\n",
+  "artefact_digest": "1b550ccddc8b21e9",
+  "attendues_en_echec": [
+    "R-001"
+  ],
+  "bloquant": false,
+  "charge": {},
+  "controles": {
+    "R-001": "assert sum_even([1, 2, 3]) == 2"
+  },
+  "genre": "temoin",
+  "id": "T-R-001-4",
+  "interdits": [],
+  "provenance": "revision 5d0f29d, monde e23a783467f5, evenement #4 ; artefact : candidat 1b550ccddc8b21e9 de la trace (monde simule, candidat FAUX)",
+  "raison": "echec reel observe (la regle R-001 a ECHOUE sur un artefact reel (sortie hachee 25e39109, code 1)) : ces regles doivent ENCORE echouer, sinon le garde s'est tu sans que personne ne le decide"
+}
