@@ -465,6 +465,55 @@ _SYNC_MODULE = (
 )
 
 
+#: Le traceur qui mesure la COUVERTURE d'une regle : quelles lignes DE L'ARTEFACT
+#: ont ete executees pendant ce controle precisement.
+#:
+#: Pourquoi ce n'est pas un luxe. Un mutant peut survivre a une specification pour
+#: deux raisons opposees, et les confondre fait accuser la mauvaise :
+#:
+#:   * la regle a EXECUTE la ligne mutee et n'a rien vu — sa verification ne
+#:     distingue pas le correct du faux : c'est une decoration, et c'est un vrai
+#:     defaut de specification, localise, corrigeable ;
+#:   * la regle n'a jamais touche cette ligne — elle ne pouvait rien voir. Lui
+#:     reprocher la survie serait une accusation fausse, et une accusation fausse
+#:     detruit la confiance dans l'outil (meme doctrine que les faux positifs du
+#:     scan).
+#:
+#: Le traceur ne regarde qu'une seule unite de compilation : `<artefact>`, celle de
+#: la source auditee. Ce qui se passe dans le script de controle ne nous interesse
+#: pas, et ne doit pas pouvoir gonfler la couverture.
+_TRACEUR = (
+    "import sys as _jio_sys\n"
+    "_jio_lignes = {}\n"
+    "_jio_regle = ['<aucune>']\n"
+    "_jio_verdicts = {}\n"
+    "def _jio_trace(_jio_frame, _jio_event, _jio_arg):\n"
+    "    if _jio_frame.f_code.co_filename == '<artefact>':\n"
+    "        _jio_lignes.setdefault(_jio_regle[0], set()).add(_jio_frame.f_lineno)\n"
+    "    return _jio_trace\n"
+    "_jio_sys.settrace(_jio_trace)\n"
+)
+
+_RAPPORT_COUVERTURE = (
+    "_jio_sys.settrace(None)\n"
+    "for _jio_nom in sorted(_jio_lignes):\n"
+    "    _jio_sys.stdout.write('[JIO-COUVERTURE] %s %s\\n' % (\n"
+    "        _jio_nom, ' '.join(str(_jio_n) for _jio_n in sorted(_jio_lignes[_jio_nom]))))\n"
+    "for _jio_nom in sorted(_jio_verdicts):\n"
+    "    _jio_sys.stdout.write('[JIO-VERDICT] %s %s\\n' % (\n"
+    "        _jio_nom, 'ok' if _jio_verdicts[_jio_nom] else 'echec'))\n"
+)
+
+
+@dataclass(frozen=True)
+class CouvertureRegle:
+    """Ce qu'une regle a REELLEMENT exerce : son verdict et les lignes touchees."""
+
+    regle: str
+    ok: bool
+    lignes: frozenset[int] = frozenset()
+
+
 @dataclass
 class ExecutableProver:
     """Execute un artefact contre chaque regle de la specification.
@@ -542,6 +591,91 @@ class ExecutableProver:
                 r.id for r in spec.rules if r.kind is RuleKind.ADVISORY
             ),
         )
+
+    def couverture_regles(
+        self,
+        source: str,
+        spec: Spec,
+        *,
+        hidden_checks: Mapping[str, str] | None = None,
+        entrypoint: str = "",
+        preamble: str = "",
+        chemin: Path | None = None,
+        max_lignes: int = 400,
+    ) -> dict[str, CouvertureRegle]:
+        """Quelles lignes de l'artefact chaque controle a executees — en UNE execution.
+
+        Meme programme que `_run_check`, avec un traceur installe apres l'execution
+        de la source. Un controle qui appelle une fonction de l'artefact cree une
+        NOUVELLE trame : elle est donc tracee. La ligne de la source elle-meme qui
+        definit la fonction, elle, ne l'est pas — et c'est sans importance : ce qui
+        compte est de savoir si le CONTROLE a exerce le code mute.
+
+        Le resultat est VIDE quand le traceur n'a rien pu rapporter (source qui ne
+        compile pas dans ce montage, sortie tronquee). Un vide n'est pas « aucune
+        ligne » : c'est « je ne sais pas », et l'appelant doit le traiter comme tel.
+        """
+        # Meme selection que `prove` : un controle cache PRIME sur `rule.check`, donc
+        # une regle qui porte les deux doit etre mesuree ici — sinon elle serait jugee
+        # par un controle et declaree « non mesurable » a cause de l'autre.
+        hidden = {
+            r.id: hidden_checks[r.id]
+            for r in spec.rules
+            if hidden_checks and r.id in hidden_checks
+        }
+        if not hidden:
+            return {}
+
+        morceaux = [
+            _AUDIT_AS_MODULE,
+            preamble,
+            "_jio_source = " + repr(source) + "\n",
+            _prepare_module(chemin),
+            _EXEC_ARTEFACT,
+            _SYNC_MODULE,
+            _TRACEUR,
+        ]
+        for rule in spec.rules:
+            if rule.id not in hidden:
+                continue
+            controle = textwrap.indent(textwrap.dedent(hidden[rule.id]), "    ")
+            morceaux.append(
+                f"_jio_regle[0] = {rule.id!r}\n"
+                "try:\n"
+                f"{controle}\n"
+                "    _jio_verdicts[_jio_regle[0]] = True\n"
+                "except BaseException:\n"
+                "    _jio_verdicts[_jio_regle[0]] = False\n"
+            )
+        morceaux.append(_RAPPORT_COUVERTURE)
+
+        res = self.sandbox.run_python("".join(morceaux), tag="couverture", chemin_reel=chemin)
+        couverture: dict[str, CouvertureRegle] = {}
+        lignes: dict[str, set[int]] = {}
+        verdicts: dict[str, bool] = {}
+        for flux in (res.stdout, res.stderr):
+            for ligne in (flux or "").splitlines():
+                ligne = ligne.strip()
+                if ligne.startswith("[JIO-COUVERTURE]"):
+                    _, nom, valeurs = (ligne.split(" ", 2) + [""])[:3]
+                    for valeur in valeurs.split():
+                        if valeur.isdigit():
+                            lignes.setdefault(nom, set()).add(int(valeur))
+                elif ligne.startswith("[JIO-VERDICT]"):
+                    _, nom, verdict = (ligne.split(" ", 2) + [""])[:3]
+                    verdicts[nom] = verdict == "ok"
+        for rule in spec.rules:
+            if rule.id not in hidden:
+                continue
+            if rule.id not in verdicts:
+                # La regle n'a rien rapporte : on ne sait pas, et on le DIT.
+                continue
+            couverture[rule.id] = CouvertureRegle(
+                regle=rule.id,
+                ok=verdicts[rule.id],
+                lignes=frozenset(sorted(lignes.get(rule.id, ()))[:max_lignes]),
+            )
+        return couverture
 
     # -- executions --------------------------------------------------------- #
 

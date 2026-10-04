@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1331 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1355 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 **Tu veux l'essayer ?** Le guide pas à pas pour l'intégrer à TON projet est là :
 [`GUIDE-DEMARRAGE.md`](GUIDE-DEMARRAGE.md) — 6 étapes, toutes les commandes testées.
@@ -1661,7 +1661,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1331 tests verts -> 1331 tests verts
+         - README.md ligne 15 : 1355 tests verts -> 1355 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2997,6 +2997,103 @@ Trois détails qui font la différence entre une mesure et un chiffre :
 La logique des garde-fous est elle-même dérivée de cette mesure : l'étape 25 de
 `scripts/evidence.sh` rejoue la mutation sur la logique d'audit, et `jio mutants` sort en **1**
 tant qu'un survivant subsiste.
+
+## Quel geste pour un mutant survivant ? la matrice mutants × règles
+
+`jio mutants` rend un chiffre, et un chiffre ne dit pas quoi corriger : deux mutants survivants
+peuvent demander des gestes **opposés**.
+
+* Une règle a **exécuté** la ligne mutée et n'a rien vu : sa vérification ne distingue pas le
+  correct du faux. C'est une décoration, et on sait **laquelle** renforcer.
+* Aucune règle n'a **jamais touché** cette ligne : la survie ne dit rien contre elles — c'est la
+  **spécification** qui est incomplète. Reprocher la survie à une règle qui n'a rien vu serait une
+  accusation fausse, et elle enverrait durcir un contrôle qui n'y peut rien.
+
+Rien ne les distingue sans mesurer **par règle** quelles lignes de l'artefact muté le contrôle a
+réellement exécutées. C'est ce que fait `jio.verify.matrice`, avec un traceur `sys.settrace` qui
+ne retient que les trames du module de l'artefact. Coût borné : une passe de preuve par mutant,
+puis **une seule** exécution tracée **par survivant** — jamais une par couple mutant × règle.
+
+```console
+$ python scripts/demo-matrice.py
+== Reference 1 : une regle de FORME ne peut pas voir un changement de valeur
+    3/4 mutant(s) tue(s) parmi 4 juge(s)  ·  1 survivant(s)  ·  controle(s) de forme (non falsifiable) : R-002
+
+    [tue] mutant 0 : constante 2 -> 3 ligne 4
+        R-001  tue — la regle a echoue sur ce mutant
+    [SURVIT] mutant 1 : operateur Mod -> FloorDiv ligne 4
+        R-001  aveugle — la regle a EXECUTE la ligne 4 du mutant et l'a laissee passer
+        R-002  aveugle — la regle a EXECUTE la ligne 4 du mutant et l'a laissee passer
+
+    RESERVES DE SPECIFICATION (elles ne condamnent pas l'artefact) :
+      - R-001 : ... son assertion compare une valeur, mais ses exemples ne passent pas par le
+        chemin que ce changement modifie : il faut un cas ou ce chemin change le resultat.
+      - R-002 : ... son controle ne compare AUCUNE valeur attendue (forme seulement) : il faut
+        le rendre falsifiable, c'est-a-dire y ecrire ce que le resultat DOIT valoir.
+
+== Reference 2 : une ligne qu'AUCUNE regle n'execute n'accuse pas les regles
+    [SURVIT] mutant 4 : constante 20 -> 21 ligne 4
+        R-001  hors-portee — la regle n'a jamais execute la ligne 4 du mutant
+
+    RESERVES DE SPECIFICATION (elles ne condamnent pas l'artefact) :
+      - R-001 : ... ses exemples ne passent pas par le chemin que ce changement modifie ...
+      - aucune regle n'execute les lignes des mutants 4 : ce chemin de code n'est couvert par
+        RIEN — ajouter une regle, pas durcir une regle existante (aucune ne pouvait le voir).
+```
+
+
+### Cinq états, et aucun n'est un refus de répondre
+
+| État | Ce qu'il affirme | Geste |
+|---|---|---|
+| `tue` | la règle a échoué sur ce mutant | rien |
+| `aveugle` | la ligne a été **exécutée** par la règle, qui l'a laissée passer | renforcer **cette** règle |
+| `hors-portee` | la règle n'a **jamais** atteint la ligne | **ajouter une règle** |
+| `inconclusif` | ligne inconnue, contrôle non traçable, verdicts opposés entre les deux passes | mesurer avant d'accuser |
+| `non-mesure` | mutant tué : il n'y a rien à localiser chez lui | rien |
+
+`inconclusif` n'est pas un silence : c'est une réponse écrite, avec sa raison. Deux cas le
+produisent *volontairement* — un contrôle qui n'a **rien rapporté**, et un contrôle dont le
+verdict change entre l'exécution normale et l'exécution tracée. Dans les deux, accuser serait
+inventer.
+
+### Le geste, pas seulement le verdict
+
+Deux règles `aveugle` ne se corrigent pas de la même façon, et le dire demande de **lire** le
+contrôle : un contrôle dont *toutes* les assertions sont des contrôles de forme (`is not None`,
+`isinstance`, une vérité nue) ne peut distinguer deux valeurs — aucun exemple ne le réveillera,
+il faut réécrire l'assertion. Un contrôle qui compare déjà une valeur attendue n'a pas besoin
+d'être réécrit : il a besoin d'un **cas** qui passe par le chemin muté. Le classement est
+prudent (dès qu'une comparaison porte sur une constante non nulle, ou qu'un appel à
+`approx`/`isclose` apparaît, le contrôle est tenu pour falsifiable) et un cas limite est traité à
+part : `assert f() == None` reste une comparaison de forme.
+
+### Un mutant non jugé n'est pas un mutant tué
+
+En branchant la matrice, un défaut de doctrine est apparu dans la porte de mutation elle-même :
+un mutant que la preuve ne parvenait pas à juger était compté **tué** (*« il ne peut pas
+survivre puisqu'il n'a rien satisfait »*). Sur la matrice de référence, cela se lisait `2/3`
+(67 %) là où un seul mutant sur deux jugés était réellement tué : **plus on prouvait moins, plus
+la spécification semblait solide**. `MutationReport` porte désormais un champ `non_juges` distinct,
+le score porte sur les mutants **jugés**, et le résumé écrit `N NON JUGE(S) (preuve impossible)`
+plutôt que de laisser croire à un succès.
+
+### Ce que la matrice ne fait pas, et le dit
+
+* la localisation est celle du texte **muté** : `ast.unparse` réécrit la mise en forme (les
+  commentaires et les lignes vides disparaissent), donc la ligne d'origine ne désigne plus rien
+  dans le mutant. La comparer produisait, à la première version, des cellules « ligne du
+  changement inconnue » pour **tous** les mutants — une localisation qui ne localise rien. La
+  ligne est retrouvée en comparant les deux arbres, signature superficielle par signature
+  superficielle : le premier nœud dont les **champs directs** diffèrent, pas le `Module` qui les
+  contient tous (**mesuré** : sans cette distinction, le premier nœud qui diffère est toujours le
+  module, sans numéro de ligne) ;
+* un contrôle fourni comme **commande** de règle (`Rule.check`) n'est pas traçable : il s'exécute
+  dans un autre processus. Sa cellule est `inconclusif`, jamais `hors-portee` — on ne transforme
+  pas une impossibilité de mesure en accusation ;
+* la matrice est une **réserve**, pas un rejet : elle ne condamne ni l'artefact ni les règles, elle
+  nomme le prochain geste. La réserve du moteur cite la matrice (`_resume_matrice`), et dit
+  **pourquoi** quand elle ne peut pas la citer.
 
 ## Chaque brique prouve-t-elle son utilité ? `jio ablation`
 

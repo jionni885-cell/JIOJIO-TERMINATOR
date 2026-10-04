@@ -1189,6 +1189,29 @@ else
         "aucun interpreteur Python utilisable ici"
 fi
 
+titre "28. Un mutant survivant dit-il QUOI corriger ?"
+
+# Un chiffre de mutation ne dit pas quoi faire : renforcer une regle qui a VU la ligne et
+# laisse passer le mutant, ou ajouter une regle pour une ligne que personne n'execute, sont
+# deux gestes opposes. La demonstration ci-dessous est VERSIONNEE (`scripts/demo-matrice.py`)
+# et elle ECHOUE si la matrice se trompe d'accusation : accuser une regle qui n'a jamais
+# atteint la ligne, c'est envoyer durcir un controle qui n'y peut rien, et laisser le trou
+# de specification ouvert.
+if [ -f scripts/demo-matrice.py ]; then
+    CODE_MATRICE=0
+    SORTIE_MATRICE="$("$PYTHON" scripts/demo-matrice.py 2>&1)" || CODE_MATRICE=$?
+    printf '%s\n' "$SORTIE_MATRICE" | sed -n '/== Reference 1/,/^OK : la faiblesse/p'
+    printf '%s\n' "$SORTIE_MATRICE" | sed -n '/SURVIT.*constante 20 -> 21/,/^OK : la matrice/p'
+    if [ "$CODE_MATRICE" -ne 0 ]; then
+        echo "    ECHEC : la matrice s'est trompee d'accusation (voir ci-dessus)." >&2
+        exit 1
+    fi
+    echo "    -> chaque survivant porte un GESTE : renforcer ce controle, ou ajouter une regle."
+else
+    sauter "28. Un mutant survivant dit-il QUOI corriger ?" \
+        "scripts/demo-matrice.py absent de ce depot"
+fi
+
 titre "Termine"
 
 # Le controle qui compte : les etapes DECLAREES dans ce fichier doivent toutes avoir ete

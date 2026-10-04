@@ -62,10 +62,19 @@ _SWAP_BIN = {
 
 @dataclass(frozen=True)
 class Mutation:
-    """Une mutation appliquee : description lisible + source mutee."""
+    """Une mutation appliquee : description lisible + source mutee.
+
+    ``ligne`` est la ligne DU TEXTE MUTE ou le changement se voit. Elle n'est pas
+    copiee de l'arbre d'origine : `ast.unparse` reecrit la mise en forme (les
+    commentaires et les lignes vides disparaissent), donc la ligne d'origine ne
+    designe plus rien dans le mutant. Elle est retrouvee en comparant les deux
+    arbres, et elle sert a repondre a la seule question qui compte pour une
+    specification : CE CODE A-T-IL ETE EXECUTE par la regle ?
+    """
 
     label: str
     source: str
+    ligne: int = 0
 
 
 @dataclass
@@ -76,6 +85,23 @@ class MutationReport:
     killed: int = 0
     survived: tuple[Mutation, ...] = ()
     unusable: tuple[str, ...] = ()
+    #: Mutants que la preuve n'a PAS pu juger (controles absents, panne de preuve).
+    #: Ils ne sont ni tues ni survivants : les compter tues gonflait le score d'une
+    #: preuve qui n'a pas eu lieu, et la porte annoncait alors une specification
+    #: solide sur la foi d'un silence. Mesure faite sur `median` : quatre mutants,
+    #: un seul juge, score annonce 75 % — la vraie part jugee etait 100 % d'un seul
+    #: mutant, et personne ne pouvait le voir dans le chiffre.
+    non_juges: tuple[Mutation, ...] = ()
+    #: La matrice mutants x regles (`jio.verify.matrice`) quand elle a pu etre
+    #: construite : elle nomme les regles aveugles et les lignes sans aucune regle.
+    #: Typage volontairement large : `matrice` importe ce module, l'inverse serait
+    #: un cycle d'import pour un seul attribut.
+    matrice: object | None = None
+
+    @property
+    def juges(self) -> int:
+        """Mutants sur lesquels une preuve a effectivement porte."""
+        return self.total - len(self.non_juges)
 
     @property
     def score(self) -> float:
@@ -84,16 +110,24 @@ class MutationReport:
 
     @property
     def weak(self) -> bool:
-        """Vrai si la specification n'a pas su tuer un mutant executable."""
+        """Vrai si la specification n'a pas su tuer un mutant executable.
+
+        Un mutant non juge compte comme une faiblesse : « on n'a pas pu prouver »
+        n'est pas « on a prouve ». L'inverse — compter tue ce qu'on n'a pas juge —
+        est precisement la confiance sans preuve que ce module existe pour empecher.
+        """
         return self.total > 0 and self.killed < self.total
 
     def summary(self) -> str:
         if not self.total:
             return "aucun mutant executable : la porte de mutation n'a rien pu tester"
-        return (
+        texte = (
             f"{self.killed}/{self.total} mutant(s) tue(s) — "
             f"score de mutation {self.score:.0%}"
         )
+        if self.non_juges:
+            texte += f" · {len(self.non_juges)} NON JUGE(S) (preuve impossible)"
+        return texte
 
 
 class _Mutator(ast.NodeTransformer):
@@ -153,6 +187,54 @@ class _Mutator(ast.NodeTransformer):
         return node
 
 
+def _ligne_du_changement(avant: str, apres: str) -> int:
+    """La ligne ou le texte mute DIFFERE du texte d'origine, dans le texte mute.
+
+    `ast.unparse` reecrit la mise en forme : commentaires, lignes vides et
+    parentheses disparaissent. La ligne du noeud d'origine ne designe donc plus
+    rien dans le mutant — mesurer la couverture avec elle reviendrait a regarder
+    une ligne qui n'a pas bouge, et a declarer « hors de portee » une regle qui a
+    pourtant execute le code mute.
+
+    On parcourt donc les DEUX arbres en parallele et on rend la ligne, DANS LE
+    MUTANT, du premier noeud qui differe. C'est exactement le noeud mute (ou le
+    `pass` qui le remplace), et rien d'autre : les arbres sont identiques avant.
+    """
+    try:
+        gauche = ast.parse(avant)
+        droite = ast.parse(apres)
+    except SyntaxError:  # pragma: no cover - la source a deja ete validee en amont
+        return 0
+    for noeud_gauche, noeud_droite in zip(ast.walk(gauche), ast.walk(droite)):
+        if _signature(noeud_gauche) != _signature(noeud_droite):
+            return int(getattr(noeud_droite, "lineno", 0) or 0)
+    return 0
+
+
+def _signature(noeud: ast.AST) -> tuple[str, tuple[tuple[str, object], ...]]:
+    """Signature SUPERFICIELLE d'un noeud : son type et ses champs directs.
+
+    Les enfants sont remplaces par leur type. C'est ce qui fait la difference entre
+    « le noeud a change » et « un de ses descendants a change » : sans cela, le
+    premier noeud qui differe est toujours le MODULE (il contient tout), il n'a pas
+    de numero de ligne, et la matrice ne sait plus rien localiser — defaut mesure a
+    la premiere version : toutes les cellules rendaient « ligne du changement
+    inconnue », donc « inconclusif », donc aucune action.
+    """
+
+    def simplifier(valeur: object) -> object:
+        if isinstance(valeur, ast.AST):
+            return f"<{type(valeur).__name__}>"
+        if isinstance(valeur, list):
+            return [simplifier(item) for item in valeur]
+        return valeur
+
+    return (
+        type(noeud).__name__,
+        tuple((champ, simplifier(valeur)) for champ, valeur in ast.iter_fields(noeud)),
+    )
+
+
 def mutate(source: str, *, budget: int = MUTATION_BUDGET) -> list[Mutation]:
     """Genere jusqu'a `budget` mutations semantiquement fortes.
 
@@ -179,5 +261,11 @@ def mutate(source: str, *, budget: int = MUTATION_BUDGET) -> list[Mutation]:
         except Exception:
             continue
         if text != source and text not in {m.source for m in out}:
-            out.append(Mutation(label=mutator.label, source=text))
+            out.append(
+                Mutation(
+                    label=mutator.label,
+                    source=text,
+                    ligne=_ligne_du_changement(source, text),
+                )
+            )
     return out

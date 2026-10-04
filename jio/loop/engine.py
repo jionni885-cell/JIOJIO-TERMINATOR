@@ -54,6 +54,24 @@ from ..spec.witness import Temoignage, traduire
 from ..verify.executable import ExecutableProver, ProverResult
 
 
+def _resume_matrice(matrice: object | None) -> str:
+    """La matrice en une ligne, ou une raison ECRITE de ne pas en avoir.
+
+    Une reserve qui ne dit pas pourquoi elle est vague laisse croire qu'il n'y avait
+    rien a dire — alors que « pas de mesure » et « rien a signaler » sont deux faits
+    differents.
+    """
+    if matrice is None:
+        return (
+            "localisation impossible : la couverture par regle n'a pas pu etre mesuree "
+            "(prouveur sans traceur, ou mesure en echec) — la faiblesse est reelle, "
+            "mais on ne peut pas dire QUELLE regle ni QUELLE ligne"
+        )
+    from ..verify.matrice import resume
+
+    return resume(matrice)
+
+
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
@@ -980,6 +998,11 @@ class Engine:
 
         Cout borne (MUTATION_BUDGET) : on cherche la faiblesse de specification,
         pas une couverture exhaustive.
+
+        Un mutant que la preuve n'a pas pu juger n'est NI tue NI survivant : il est
+        compte a part. Le compter tue (comportement precedent) revient a crediter la
+        specification d'une preuve qui n'a pas eu lieu — le rapport annoncait alors
+        « 4/4 tues » avec un seul mutant reellement juge.
         """
         from ..verify.mutation import MutationReport, mutate
 
@@ -989,23 +1012,84 @@ class Engine:
 
         killed = 0
         survived: list[object] = []
-        for mutant in mutants:
+        non_juges: list[object] = []
+        # verdicts[i] : les regles qui ont tue le mutant i ; l'ensemble VIDE veut dire
+        # « survecu », `None` veut dire « pas juge ». La matrice lit ce dictionnaire.
+        verdicts: dict[int, frozenset[str] | None] = {}
+        raisons: dict[int, str] = {}
+        for index, mutant in enumerate(mutants):
             try:
                 res = self.prover.prove(
                     mutant.source, spec, hidden_checks=self._checks_en_vigueur(work),
                     entrypoint=work.entrypoint, stage=Stage.PROVE,
                 )
-            except FailClosed:
-                # Aucune preuve disponible pour ce mutant : il ne peut pas
-                # survivre puisqu'il n'a rien satisfait.
-                killed += 1
+            except FailClosed as exc:
+                non_juges.append(mutant)
+                verdicts[index] = None
+                raisons[index] = f"preuve impossible : {exc}"
                 continue
             if res.passed:
                 survived.append(mutant)
+                verdicts[index] = frozenset()
             else:
                 killed += 1
+                verdicts[index] = frozenset(w.rule_id for w in res.failures)
         return MutationReport(
-            total=len(mutants), killed=killed, survived=tuple(survived)
+            total=len(mutants),
+            killed=killed,
+            survived=tuple(survived),
+            non_juges=tuple(non_juges),
+            matrice=self._matrice_mutants(mutants, spec, work, verdicts, raisons),
+        )
+
+    def _matrice_mutants(
+        self,
+        mutants: Sequence[object],
+        spec: Spec,
+        work: WorkItem,
+        verdicts: dict[int, frozenset[str] | None],
+        raisons: dict[int, str],
+    ) -> object | None:
+        """Nomme la regle aveugle et la ligne couverte par AUCUNE regle.
+
+        Le chiffre « 1 mutant survivant » ne dit pas quoi corriger : renforcer une
+        regle qui a vu la ligne, ou ajouter une regle pour une ligne que personne
+        n'execute, sont deux gestes opposes. La matrice les separe.
+
+        Cout : une execution tracee PAR SURVIVANT, et seulement si le prouveur sait
+        tracer. Tout echec de mesure rend `None` : une localisation manquante ne doit
+        jamais empecher une livraison, elle la prive d'un detail.
+        """
+        from ..verify.matrice import assembler, regles_de_forme
+
+        survivants = [index for index, tueuses in verdicts.items() if tueuses == frozenset()]
+        if not survivants:
+            return None
+        tracer = getattr(self.prover, "couverture_regles", None)
+        if not callable(tracer):
+            return None
+        checks = self._checks_en_vigueur(work)
+        try:
+            couvertures = {
+                index: tracer(
+                    mutants[index].source,
+                    spec,
+                    hidden_checks=checks,
+                    entrypoint=work.entrypoint,
+                )
+                for index in survivants
+            }
+        except Exception:  # noqa: BLE001 — mesure optionnelle, jamais bloquante
+            # Y compris un prouveur factice de test : on ne mesure pas, on n'invente
+            # pas non plus. La reserve reste celle d'avant, moins precise mais vraie.
+            return None
+        return assembler(
+            mutants,
+            regles=tuple(r.id for r in spec.rules),
+            verdicts=verdicts,
+            raisons=raisons,
+            couvertures=couvertures,
+            regles_de_forme=regles_de_forme(spec, checks),
         )
 
     # -- apprentissage ------------------------------------------------------ #
@@ -1673,6 +1757,8 @@ class Engine:
                     "killed": mutation.killed,
                     "score": round(mutation.score, 4),
                     "survived": [m.label for m in mutation.survived],
+                    "non_juges": [m.label for m in mutation.non_juges],
+                    "matrice": _resume_matrice(getattr(mutation, "matrice", None)),
                 },
             )
             if mutation_weak:
@@ -1683,7 +1769,8 @@ class Engine:
                         message=(
                             f"specification faible : {len(mutation.survived)} mutant(s) "
                             "survivant(s) — les regles ne distinguent pas l'artefact "
-                            "correct d'un artefact faux"
+                            "correct d'un artefact faux. "
+                            + _resume_matrice(getattr(mutation, "matrice", None))
                         ),
                     )
                 )

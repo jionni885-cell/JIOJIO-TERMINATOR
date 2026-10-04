@@ -156,6 +156,11 @@ et le coût par mission diminue — **mesuré, pas supposé**.
 - `jio mutants` : la suite de tests de ce dépôt attrape-t-elle une erreur injectée dans son
   propre code ? Un survivant est une preuve manquante ; un survivant **équivalent** se déclare,
   avec sa raison, et un test refuse une déclaration fantôme
+- **Matrice mutants × règles** — **livrée** : pour chaque survivant, une seule exécution tracée
+  dit si la règle a **exécuté** la ligne mutée (`aveugle` : renforcer ce contrôle-là) ou ne l'a
+  **jamais atteinte** (`hors-portee` : la spécification est incomplète, il faut une règle de
+  plus). Ligne localisée dans le texte **muté**, états `inconclusif` explicites plutôt qu'une
+  accusation inventée, et un mutant **non jugé** n'est plus compté tué
 - `jio ablation` : quelle brique apporte quoi ? On l'enlève et on compare sur les **mêmes
   missions** (appariement par tâche et par graine). Deux métriques — erreurs silencieuses, et
   livraisons **sans réserve** — parce que retirer le red-team ne rend pas le résultat faux, il
