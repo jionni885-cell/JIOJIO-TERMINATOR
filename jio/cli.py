@@ -491,6 +491,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if clis or keys:
         print("    - mode reel                -> `jio run \"<objectif>\"`")
     print()
+    # Le bac a sable est la frontiere de securite du systeme : dire ICI quel backend est
+    # actif evite la seule erreur qui compte — croire qu'on est isole quand on ne l'est pas.
+    from .verify.executable import Sandbox as _Sandbox
+
+    _bac = _Sandbox(timeout=1)
+    _moteur = next((n for n in ("docker", "podman") if shutil.which(n)), "")
+    print()
+    print("  Bac a sable :")
+    print(f"    - backend actif            : {_bac.backend}"
+          + (f"  ·  moteur {_moteur}" if _bac.backend == "container" and _moteur
+             else ""))
+    if _bac.backend == "container" and not _moteur:
+        print("      ATTENTION : backend container demande, aucun moteur docker/podman trouve")
+        print("      -> les verifications echoueront en 126 au lieu d'executer sans isolement.")
+    elif _bac.backend == "process":
+        print("    - isolation reelle         : NON — timeout, environnement filtre et dossier")
+        print("      temporaire seulement. Sur du code hostile : `JIO_SANDBOX_BACKEND=container`")
+    print(f"    - image (container)        : {_bac.image}")
+    print()
     print(f"  Banc d'essai : {len(TASKS)} taches verifiables avec oracles caches")
     # Ce que la configuration coute AVANT la premiere question. Un fichier de contexte
     # trop long est survole : il occupe la fenetre sans rien apporter.
@@ -3431,6 +3450,7 @@ def _ecrire_rapport_trace(
     ecraser: bool = False,
     audit: IntegrityReport,
     sceau_courant: str,
+    redact: bool = True,
 ) -> bool:
     """Ecrit un rapport autonome sans pouvoir remplacer le journal source par accident."""
     from .trace_html import rapport_html
@@ -3458,6 +3478,7 @@ def _ecrire_rapport_trace(
             kind=kind,
             audit=audit,
             sceau_courant=sceau_courant,
+            redact=redact,
         )
         if ecraser:
             with tempfile.NamedTemporaryFile(
@@ -3488,8 +3509,66 @@ def _ecrire_rapport_trace(
         if temporaire is not None:
             temporaire.unlink(missing_ok=True)
 
-    print(f"  Rapport HTML : {cible} (autonome, sans appel reseau)")
+    print(f"  Rapport HTML : {cible} (autonome, sans appel reseau"
+          f"{', champs sensibles masques' if redact else ', SANS redaction'})")
     return True
+
+
+def _ecrire_otlp(
+    journal: Journal,
+    source: Path,
+    *,
+    fichier: str = "",
+    endpoint: str = "",
+    ecraser: bool = False,
+    contenu: bool = False,
+    redact: bool = True,
+) -> bool:
+    """Exporte la trace en OTLP : fichier JSON local, et/ou envoi HTTP explicite.
+
+    Le fichier local suit les memes garde-fous que le rapport HTML : pas de lien
+    symbolique, pas d'ecrasement sans `--ecraser`, jamais par-dessus le journal
+    source. L'envoi HTTP, lui, n'a lieu QUE si l'utilisateur a nomme un endpoint :
+    aucune donnee ne part ailleurs par defaut.
+    """
+    from .telemetry.otlp import OTLPExportError, send_otlp_http, write_otlp_json
+
+    ok = True
+    if fichier:
+        cible = Path(fichier).expanduser()
+        if cible.is_symlink():
+            print(f"  Refus d'ecrire a travers un lien symbolique : {cible}")
+            ok = False
+        elif cible.resolve(strict=False) == source.resolve(strict=False):
+            print("  Refus d'ecraser le journal source avec son propre export OTLP.")
+            ok = False
+        elif cible.exists() and not ecraser:
+            print(f"  Le fichier existe deja : {cible} (ajoutez --ecraser pour le remplacer).")
+            ok = False
+        else:
+            try:
+                write_otlp_json(
+                    journal, cible, include_content=contenu, overwrite=ecraser, redact=redact
+                )
+                resume = "avec payloads" if contenu else "sans payload (metadonnees seules)"
+                politique = "SANS redaction" if not redact else "redaction active"
+                print(f"  Export OTLP : {cible} ({resume}, {politique})")
+            except FileExistsError:
+                print(f"  Le fichier existe deja : {cible} (ajoutez --ecraser).")
+                ok = False
+            except (OSError, OTLPExportError) as exc:
+                print(f"  Echec de l'export OTLP vers {cible} : {exc}")
+                ok = False
+    if endpoint:
+        try:
+            statut = send_otlp_http(
+                journal, endpoint, include_content=contenu, redact=redact
+            )
+            print(f"  Export OTLP envoye : {endpoint} (HTTP {statut})")
+        except OTLPExportError as exc:
+            print(f"  {exc}")
+            ok = False
+    return ok
 
 
 def cmd_trace(args: argparse.Namespace) -> int:
@@ -3500,8 +3579,16 @@ def cmd_trace(args: argparse.Namespace) -> int:
     poser la question est une mauvaise interface. On cherche donc le journal, du
     plus recent au plus ancien, et on dit clairement quoi faire s'il n'y en a pas.
     """
-    if args.ecraser and not args.html:
-        print("  --ecraser exige un chemin fourni avec --html.")
+    export_fichier = bool(getattr(args, "html", "") or getattr(args, "otlp", ""))
+    if args.ecraser and not export_fichier:
+        print("  --ecraser exige un chemin fourni avec --html ou --otlp.")
+        return 2
+    if getattr(args, "sans_redaction", False) and not (
+        export_fichier or getattr(args, "otlp_http", "")
+    ):
+        # Desactiver une protection sans export a proteger ne fait rien : plutot que de
+        # l'accepter en silence, on le dit — l'utilisateur croit peut-etre avoir exporte.
+        print("  --sans-redaction n'a d'effet qu'avec --html, --otlp ou --otlp-http.")
         return 2
     explicite = bool(args.journal)
     path = Path(args.journal) if explicite else Path(
@@ -3608,6 +3695,7 @@ def cmd_trace(args: argparse.Namespace) -> int:
     print(f"  INTEGRITE : {'propre' if report.clean else 'ANOMALIES'}")
     for e in report.exploits:
         print(f"    - {e.kind.value} @ {e.step}: {e.detail[:100]}")
+    redact = not bool(getattr(args, "sans_redaction", False))
     if args.html and not _ecrire_rapport_trace(
         journal,
         path,
@@ -3616,6 +3704,17 @@ def cmd_trace(args: argparse.Namespace) -> int:
         ecraser=args.ecraser,
         audit=report,
         sceau_courant=courant["sceau"],
+        redact=redact,
+    ):
+        return 2
+    if (getattr(args, "otlp", "") or getattr(args, "otlp_http", "")) and not _ecrire_otlp(
+        journal,
+        path,
+        fichier=getattr(args, "otlp", ""),
+        endpoint=getattr(args, "otlp_http", ""),
+        ecraser=args.ecraser,
+        contenu=bool(getattr(args, "otlp_contenu", False)),
+        redact=redact,
     ):
         return 2
     print()
@@ -3899,9 +3998,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     t.add_argument(
         "--ecraser", action="store_true",
-        help="remplacer le fichier HTML s'il existe deja (exige --html)",
+        help="remplacer le fichier HTML/OTLP s'il existe deja (exige --html ou --otlp)",
     )
-    t.set_defaults(func=cmd_trace, ecraser=False)
+    t.add_argument(
+        "--sans-redaction", dest="sans_redaction", action="store_true",
+        help=("ne PAS masquer les secrets et donnees personnelles reconnaissables dans "
+              "l'export. Par defaut, la redaction est active : champs nommes (cle, mot de "
+              "passe, jeton, e-mail, telephone...), motifs de jetons connus, adresses "
+              "e-mail et numeros de telephone sont remplaces par [REDACTED]. Le journal "
+              "source, lui, n'est jamais modifie."),
+    )
+    t.add_argument(
+        "--otlp", default="", metavar="FICHIER",
+        help=("ecrit un export OTLP/HTTP JSON (OpenTelemetry). Par defaut : metadonnees "
+              "seules (type, sequence, confiance, empreinte, etat de la chaine, tokens et "
+              "latence quand ils sont presents) — aucun payload, donc rien de sensible qui "
+              "sorte sans l'avoir demande."),
+    )
+    t.add_argument(
+        "--otlp-http", dest="otlp_http", default="", metavar="URL",
+        help=("envoie le meme export a un collecteur OTLP/HTTP. Aucun envoi n'a lieu sans "
+              "cette option : jio ne joint jamais un service distant qu'on ne lui a pas nomme."),
+    )
+    t.add_argument(
+        "--otlp-contenu", dest="otlp_contenu", action="store_true",
+        help=("inclure le payload JSON de chaque evenement dans l'export OTLP. A n'utiliser "
+              "qu'avec un collecteur de confiance : c'est la que du contenu de projet peut "
+              "sortir du poste."),
+    )
+    t.set_defaults(func=cmd_trace, ecraser=False,
+                   sans_redaction=False, otlp="", otlp_http="", otlp_contenu=False)
 
     ar = sub.add_parser("artifacts", help="genere les artefacts natifs de tous les outils")
     ar.add_argument("--root", default=".", help="repertoire de destination")

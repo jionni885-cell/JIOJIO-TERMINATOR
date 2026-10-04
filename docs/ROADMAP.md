@@ -72,6 +72,11 @@ Rien n'est « prévu » : soit c'est fait, soit c'est une phase nommée.
 - `McpPin` : hachage des schémas d'outils MCP, alerte sur modification
 - `InjectionScanner` : détecteur PromptArmor-style + patterns connus (42 techniques)
 - Red-team automatisé : `pyrit`/`garak`-style adapté, en self-test du système
+- **Bac à sable à deux backends** — **livré** : `process` reste le défaut (garde-fou, pas une
+  prison) ; `container` (`JIO_SANDBOX_BACKEND=container`) coupe le réseau, retire les
+  capacités, borne CPU/mémoire/PID et monte le projet en lecture seule au même chemin. Sans
+  moteur disponible, l'échec est **explicite (126)** : aucun repli silencieux vers le mode non
+  isolé. `jio doctor` affiche le backend actif
 
 **Critère de sortie :** une injection plantée dans un fichier de test ne provoque **aucune**
 action d'écriture/exécution non autorisée.
@@ -134,7 +139,8 @@ et le coût par mission diminue — **mesuré, pas supposé**.
 - **Dashboard web** (live preview) : missions en cours, votes, désaccords, audits,
   entropie sémantique, taux de réussite, frontière Pareto, journal d'intégrité
 - **Rapports** HTML/Markdown/JSON, en français — **partiellement livré** : rapport HTML autonome des traces via `jio trace --html` ; dashboard live et autres formats restent à faire
-- Export OpenTelemetry (GenAI semantic conventions)
+- Export OpenTelemetry (GenAI semantic conventions) — **livré** : `jio trace --otlp FICHIER` et `--otlp-http URL` produisent des spans reliés, avec `gen_ai.*` quand la donnée existe, **sans payload par défaut** ; la redaction s'applique au contenu demandé
+- **Redaction des exports** — **livrée** : champs nommés, motifs de jetons, e-mail, téléphone et clés privées masqués par défaut dans `--html` et `--otlp` ; `--sans-redaction` est explicite et dit dans la sortie
 
 **Critère de sortie :** le dashboard montre une mission se dérouler en direct.
 

@@ -37,7 +37,25 @@ def test_rapport_html_est_autonome_et_echappe_le_contenu_non_fiable() -> None:
     assert "default-src 'none'" in html
     assert "leakage" in html
     assert "MONDE À RELIRE" in html
-    assert "potentiellement prompts, code" in html
+    assert "masqués dans cette copie" in html
+
+
+def test_le_rapport_masque_par_defaut_et_laisse_choisir_le_brut(tmp_path) -> None:
+    """La redaction est le defaut ; le brut reste possible, mais il est alors DIT."""
+    from jio.trace_html import rapport_html
+
+    journal = Journal()
+    journal.append("provider", {"api_key": "sk-live-0123456789abcdefghijklmnop"})
+
+    masque = rapport_html(journal, source="mission.jsonl")
+    assert "sk-live-0123456789abcdefghijklmnop" not in masque
+    assert "[REDACTED]" in masque
+    assert "masqués dans cette copie" in masque
+
+    brut = rapport_html(journal, source="mission.jsonl", redact=False)
+    assert "sk-live-0123456789abcdefghijklmnop" in brut
+    assert "vérifiez-le avant tout partage" in brut
+    assert "[REDACTED]" not in brut
 
 
 def test_trace_cli_exporte_filtre_et_necrase_pas_sans_confirmation(tmp_path, capsys) -> None:

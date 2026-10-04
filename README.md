@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1277 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1331 tests verts, exécuté sans aucune clé API.
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 **Tu veux l'essayer ?** Le guide pas à pas pour l'intégrer à TON projet est là :
 [`GUIDE-DEMARRAGE.md`](GUIDE-DEMARRAGE.md) — 6 étapes, toutes les commandes testées.
@@ -1661,7 +1661,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1277 tests verts -> 1277 tests verts
+         - README.md ligne 15 : 1331 tests verts -> 1331 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2209,6 +2209,57 @@ rapport le rappelle avant tout partage.
 
 Cette livraison couvre **l'export HTML des traces**, pas le dashboard live ni les autres formats
 HTML/Markdown/JSON : ils restent à faire dans la phase 6.
+
+### Un export qui ne publie pas tes secrets par défaut
+
+**Avant :** le rapport HTML affichait le payload brut ; un jeton de fournisseur présent dans un
+journal partait tel quel dans le fichier qu'on partage. **Après :** chaque export (`--html`,
+`--otlp`) passe par une couche de **redaction** — champs dont le nom dit le secret
+(`api_key`, `access_token`, `password`, `authorization`, `email`, `telephone`, `iban`...),
+motifs de jetons connus (`sk-…`, `ghp_…`, `AKIA…`, JWT), adresses e-mail, numéros de téléphone
+et clés privées sont remplacés par `[REDACTED]`. Le journal source, lui, **n'est jamais
+modifié** : la chaîne de hachage reste vérifiable telle quelle, et c'est la *copie* qui est
+expurgée. `--sans-redaction` existe pour les cas assumés — et l'usage est alors écrit dans la
+sortie, jamais silencieux.
+
+Ce que la redaction ne fait pas est dit aussi clairement que ce qu'elle fait : c'est une
+politique de motifs, pas un détecteur universel de données personnelles. Un identifiant libre
+écrit dans un champ au nom anodin passe au travers. La mesure de cette honnêteté est un test :
+`tests/test_redaction.py` vérifie que les champs techniques du harnais (`input_tokens`,
+`duration_s`, `model`, `exit_code`) **survivent** — une redaction trop large rendrait les traces
+inexploitables, et on finirait par la désactiver en bloc.
+
+### Les traces deviennent des spans OpenTelemetry
+
+`jio trace <journal> --otlp trace.json` produit un export **OTLP/HTTP JSON** conforme, sans
+dépendance OpenTelemetry : chaque événement devient un span, chaîné au précédent par
+`parentSpanId` — une mission se lit donc comme un arbre, pas comme une liste. Les métriques
+suivent les conventions GenAI quand elles sont présentes (`gen_ai.provider.name`,
+`gen_ai.request.model`, `gen_ai.usage.input_tokens` / `output_tokens`), et le résultat d'un
+témoin devient un statut OTLP (`code 2` + message en cas d'échec).
+
+Deux garde-fous, mesurés par `tests/test_otlp.py` : **aucun payload n'est exporté par défaut**
+(seules les métadonnées sortent ; `--otlp-contenu` les ajoute, redigés), et **aucun octet ne
+part sur le réseau** sans une URL nommée explicitement (`--otlp-http`). Un fichier existant
+n'est pas remplacé sans `--ecraser`, un lien symbolique est refusé, et un endpoint non-http(s)
+l'est aussi — un export ne doit pas pouvoir écrire ailleurs que là où on le lui a demandé.
+
+### Un vrai conteneur pour le code hostile, et l'aveu quand il n'y en a pas
+
+`SECURITY.md` disait la vérité : le bac à sable `process` filtre l'environnement et impose un
+timeout, mais n'est **pas une prison**. Le backend `container` comble cet écart sans changer le
+défaut : réseau coupé (`--network=none`), racine en lecture seule, capacités supprimées
+(`--cap-drop=ALL`, `no-new-privileges`), limites de ressources (`--cpus`, `--memory`,
+`--pids-limit`) et projet monté **`:ro` au même chemin absolu** — l'artefact audité retrouve son
+vrai `__file__` sans pouvoir réécrire le dépôt qui l'audite.
+
+Le détail qui décide de la valeur de tout le reste : si `docker`/`podman` manque,
+`JIO_SANDBOX_BACKEND=container` **échoue en 126** avec un message qui nomme l'alternative et
+rappelle qu'elle n'isole pas — **jamais** de repli silencieux sur le mode non isolé. Un repli
+silencieux donnerait une confiance sans isolement, c'est-à-dire exactement l'erreur que ce dépôt
+traque. `jio doctor` affiche le backend actif, l'image, et l'absence de moteur *avant* la
+première vérification. Le mode `process` reste le défaut : le comportement change sur demande
+explicite, pas par surprise.
 
 ### Une optimisation plus rapide, mesurée, puis jetée
 

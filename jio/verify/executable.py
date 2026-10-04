@@ -53,18 +53,40 @@ class SandboxResult:
 class Sandbox:
     """Execute du code ou une commande dans un sous-processus isole.
 
-    Mesures appliquees :
-      * **timeout** dur (jamais de boucle infinie) ;
-      * **environnement minimal** — les secrets de l'hote ne fuient pas dans le
-        processus teste (cloisonnement des variables sensibles) ;
-      * **repertoire temporaire dedie** ;
-      * **sortie plafonnee** — au-dela de 20 000 caracteres, le contenu est
-        ecrit sur disque et remplace par une reference (Levier 2 du harness).
+    Le backend ``process`` conserve le comportement historique (timeout,
+    environnement filtré, répertoire temporaire), mais n'est pas une frontière
+    de sécurité contre du code hostile. Le backend optionnel ``container`` exige
+    Docker ou Podman et ajoute réseau coupé, système de fichiers racine en lecture
+    seule, capacités supprimées, limites CPU/mémoire/PID et espace temporaire.
+    Une absence de runtime ou d'image échoue fermement : aucun repli silencieux.
+
+    Dans les deux modes, la sortie est plafonnée à 20 000 caractères ; au-delà,
+    elle est écrite sur disque si ``offload_dir`` est fourni.
     """
 
     timeout: int = DEFAULT_TIMEOUT
     workdir: Path | None = None
     offload_dir: Path | None = None
+    backend: str = field(
+        default_factory=lambda: os.environ.get("JIO_SANDBOX_BACKEND", "process").strip().lower()
+        or "process"
+    )
+    image: str = field(
+        default_factory=lambda: os.environ.get("JIO_SANDBOX_IMAGE", "python:3.12-slim").strip()
+        or "python:3.12-slim"
+    )
+    runtime: str = field(
+        default_factory=lambda: os.environ.get("JIO_SANDBOX_RUNTIME", "auto").strip().lower()
+        or "auto"
+    )
+
+    def __post_init__(self) -> None:
+        if self.backend not in {"process", "container"}:
+            raise ValueError("Sandbox.backend doit être 'process' ou 'container'")
+        if self.runtime not in {"auto", "docker", "podman"}:
+            raise ValueError("Sandbox.runtime doit être 'auto', 'docker' ou 'podman'")
+        if not self.image.strip():
+            raise ValueError("Sandbox.image ne peut pas être vide")
 
     _SECRET_HINTS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH")
 
@@ -116,31 +138,168 @@ class Sandbox:
         tmp = Path(tempfile.mkdtemp(prefix="jio-", dir=str(self.workdir) if self.workdir else None))
         script = tmp / "main.py"
         script.write_text(source, encoding="utf-8")
+        roots: tuple[Path, ...] = ()
+        if self.backend == "container" and chemin_reel is not None:
+            root = self._root_for_artifact(chemin_reel)
+            if root != tmp.resolve():
+                roots = (root,)
+        # Dans un conteneur, le dossier temporaire est monte sur /workspace : le script
+        # s'appelle donc `/workspace/main.py`, et l'interpreteur est celui de l'image
+        # (le chemin de l'environnement virtuel de l'hote n'existe pas dedans).
+        argv = (
+            ["python3", "-u", "/workspace/main.py"]
+            if self.backend == "container"
+            else [sys.executable, "-u", str(script)]
+        )
         try:
-            res = self.run_command([sys.executable, "-u", str(script)], cwd=tmp, tag=tag)
+            res = self.run_command(
+                argv,
+                cwd=tmp,
+                tag=tag,
+                writable_workspace=True,
+                read_only_roots=roots,
+            )
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-        marker = str(tmp)
+        markers = [str(tmp), "/workspace"] if self.backend == "container" else [str(tmp)]
+        if self.backend == "container" and roots:
+            markers.append(str(roots[0]))
+        stdout, stderr = res.stdout, res.stderr
+        for marker in markers:
+            replacement = "<project>" if roots and marker == str(roots[0]) else "<sandbox>"
+            stdout = stdout.replace(marker, replacement)
+            stderr = stderr.replace(marker, replacement)
         return SandboxResult(
             exit_code=res.exit_code,
-            stdout=res.stdout.replace(marker, "<sandbox>"),
-            stderr=res.stderr.replace(marker, "<sandbox>"),
+            stdout=stdout,
+            stderr=stderr,
             duration_s=res.duration_s,
             timed_out=res.timed_out,
         )
 
+    @staticmethod
+    def _root_for_artifact(path: Path) -> Path:
+        """Choisit le plus proche projet connu comme montage en lecture seule."""
+        resolved = path.expanduser().resolve()
+        for candidate in (resolved.parent, *resolved.parents):
+            if (candidate / ".git").exists() or (candidate / "pyproject.toml").is_file():
+                return candidate
+        return resolved.parent
+
+    #: Options de durcissement du conteneur. Chaque refus est une mesure de
+    #: securite nommee : reseau coupe, racine en lecture seule, aucune capacite
+    #: Linux, pas de nouveaux privileges, limites de ressources.
+    _CONTAINER_FLAGS: tuple[tuple[str, ...], ...] = (
+        ("--network=none",),
+        ("--read-only",),
+        ("--cap-drop=ALL",),
+        ("--security-opt=no-new-privileges",),
+        ("--pids-limit=512",),
+        ("--memory=1024m",),
+        ("--cpus=2",),
+    )
+
+    def _runtime_binaire(self) -> str:
+        """Trouve Docker ou Podman — ou refuse, sans repli silencieux.
+
+        Se replier sur le backend ``process`` apres avoir demande ``container``
+        ferait croire a une isolation qui n'existe pas : c'est exactement le
+        mensonge que ce projet traque. Donc on leve, et l'appelant decide.
+        """
+        if self.runtime in {"docker", "podman"}:
+            if shutil.which(self.runtime) is None:
+                raise FailClosed(
+                    f"backend container demande, mais `{self.runtime}` est introuvable "
+                    "sur le PATH. Installez-le, ou repassez en backend process en "
+                    "assumant que ce n'est pas une frontiere de securite."
+                )
+            return self.runtime
+        for candidate in ("docker", "podman"):
+            if shutil.which(candidate) is not None:
+                return candidate
+        raise FailClosed(
+            "backend container demande, mais ni docker ni podman n'est disponible. "
+            "Installez un moteur de conteneurs, ou repassez en backend process en "
+            "assumant que ce n'est pas une frontiere de securite."
+        )
+
+    def _container_argv(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path,
+        writable_workspace: bool,
+        read_only_roots: Sequence[Path],
+        env: Mapping[str, str],
+    ) -> list[str]:
+        """Assemble la ligne de commande d'un conteneur durci.
+
+        Le dossier de travail est monte sur ``/workspace``. Les racines
+        supplementaires (le projet, pour un artefact qui doit retrouver son vrai
+        ``__file__``) sont montees sur ``/projet`` en LECTURE SEULE : du code
+        hostile ne peut donc pas reecrire le depot qu'on audite.
+        """
+        command = [self._runtime_binaire(), "run", "--rm", "--init",
+                   "--workdir", "/workspace", "--tmpfs", "/tmp:rw,size=256m"]
+        for flag in self._CONTAINER_FLAGS:
+            command.extend(flag)
+        for name, value in sorted(env.items()):
+            command.extend(["--env", f"{name}={value}"])
+        command.extend(["--volume", f"{cwd}:/workspace:{'rw' if writable_workspace else 'ro'}"])
+        # Les racines supplementaires sont montees au MEME chemin absolu, en lecture seule :
+        # le `__file__` ecrit en dur dans le programme audite reste donc valide, et du
+        # code hostile ne peut pas reecrire le depot qu'on lui demande d'auditer.
+        for root in read_only_roots:
+            command.extend(["--volume", f"{root}:{root}:ro"])
+        command.append(self.image)
+        command.extend(str(part) for part in argv)
+        return command
+
     def run_command(
-        self, argv: Sequence[str], *, cwd: Path | None = None, tag: str = "cmd"
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        tag: str = "cmd",
+        writable_workspace: bool = False,
+        read_only_roots: Sequence[Path] = (),
     ) -> SandboxResult:
         started = time.perf_counter()
+        env = self._env()
+        efface = str(cwd) if cwd else (str(self.workdir) if self.workdir else None)
+        command = list(argv)
+        if self.backend == "container":
+            if cwd is None:
+                return SandboxResult(
+                    exit_code=2,
+                    stdout="",
+                    stderr="backend container : un dossier de travail est obligatoire pour "
+                           "monter le volume ; aucune commande n'a ete executee.",
+                    duration_s=0.0,
+                )
+            try:
+                command = self._container_argv(
+                    argv,
+                    cwd=Path(cwd),
+                    writable_workspace=writable_workspace,
+                    read_only_roots=tuple(read_only_roots),
+                    env=env,
+                )
+            except FailClosed as exc:
+                return SandboxResult(
+                    exit_code=126, stdout="", stderr=f"[JIO-SANDBOX] {exc}",
+                    duration_s=time.perf_counter() - started,
+                )
+            env = self._env()
+            efface = None
         try:
             proc = subprocess.run(  # noqa: S603 — argv explicite, jamais de shell=True
-                list(argv),
-                cwd=str(cwd) if cwd else (str(self.workdir) if self.workdir else None),
+                command,
+                cwd=efface,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
-                env=self._env(),
+                env=env,
             )
         except subprocess.TimeoutExpired:
             elapsed = time.perf_counter() - started

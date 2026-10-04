@@ -14,6 +14,7 @@ from html import escape
 
 from .audit.integrity import IntegrityMonitor
 from .core.journal import Event, Journal
+from .core.redaction import redact_data, redact_text
 from .core.types import IntegrityReport
 
 _STYLE = """
@@ -122,16 +123,22 @@ def _horodatage(ts: float) -> str:
         return f"{ts!r} (horodatage hors plage)"
 
 
-def _carte_evenement(position: int, evenement: Event) -> str:
+def _carte_evenement(position: int, evenement: Event, *, redact: bool = True) -> str:
     trust = evenement.trust.value
+    kind_affiche = redact_text(evenement.kind) if redact else evenement.kind
+    donnees_source = evenement.as_dict()
     donnees = json.dumps(
-        evenement.as_dict(), ensure_ascii=False, indent=2, sort_keys=True, default=str
+        redact_data(donnees_source) if redact else donnees_source,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        default=str,
     )
     return f"""<article class="event-card" aria-labelledby="event-title-{position}">
   <div class="event-head">
     <div class="event-seq">#{_echapper(evenement.seq)}</div>
     <div class="event-title">
-      <h3 id="event-title-{position}">{_echapper(evenement.kind)}</h3>
+      <h3 id="event-title-{position}">{_echapper(kind_affiche)}</h3>
       <p>{_echapper(_horodatage(evenement.ts))} · événement {position + 1} sur la trace</p>
     </div>
     <span class="trust trust--{_echapper(trust)}">{_echapper(trust)}</span>
@@ -144,7 +151,7 @@ def _carte_evenement(position: int, evenement: Event) -> str:
 </article>"""
 
 
-def _section_audit(audit: IntegrityReport) -> str:
+def _section_audit(audit: IntegrityReport, *, redact: bool = True) -> str:
     if audit.clean:
         return """<section aria-labelledby="audit-title">
   <h2 id="audit-title">Rejeu déterministe</h2>
@@ -155,7 +162,7 @@ def _section_audit(audit: IntegrityReport) -> str:
     constats = "".join(
         f'<li class="audit-item"><strong>{_echapper(exploit.kind.value)} · étape '
         f'{_echapper(exploit.step)} · confiance {exploit.confidence:.0%}</strong>'
-        f'<p>{_echapper(exploit.detail)}</p></li>'
+        f'<p>{_echapper(redact_text(exploit.detail) if redact else exploit.detail)}</p></li>'
         for exploit in audit.exploits
     )
     return f"""<section aria-labelledby="audit-title">
@@ -212,6 +219,7 @@ def rapport_html(
     kind: str = "",
     audit: IntegrityReport | None = None,
     sceau_courant: str = "",
+    redact: bool = True,
 ) -> str:
     """Rend une vue HTML autonome d'un journal, en vérifiant la chaîne complète.
 
@@ -225,15 +233,18 @@ def rapport_html(
     if audit is None:
         audit = IntegrityMonitor().audit(journal)
     mondes = journal.mondes()
-    audit_html = _section_audit(audit)
+    audit_html = _section_audit(audit, redact=redact)
     mondes_html = _section_mondes(mondes, sceau_courant)
-    compteurs = Counter(evenement.kind for evenement in tous)
+    compteurs = Counter(
+        redact_text(evenement.kind) if redact else evenement.kind for evenement in tous
+    )
     types_html = "".join(
         f'<span class="kind-chip"><strong>{_echapper(nom)}</strong> · {nombre}</span>'
         for nom, nombre in sorted(compteurs.items())
     ) or '<span class="muted">Aucun événement</span>'
     cartes = "\n".join(
-        _carte_evenement(position, evenement) for position, evenement in enumerate(affiches)
+        _carte_evenement(position, evenement, redact=redact)
+        for position, evenement in enumerate(affiches)
     )
     if not cartes:
         cartes = '<p class="empty">Aucun événement ne correspond à ce filtre.</p>'
@@ -246,13 +257,23 @@ def rapport_html(
         else f"Première anomalie à la position {mauvais} (indexation à partir de 0)."
     )
     filtre = (
-        f'<p class="filter-note">Filtre actif : type « {_echapper(kind)} ». '
+        f'<p class="filter-note">Filtre actif : type « '
+        f'{_echapper(redact_text(kind) if redact else kind)} ». '
         "L'intégrité a tout de même été vérifiée sur le journal complet.</p>"
         if kind
         else ""
     )
     tete = journal.head
     nb_mondes = len(mondes)
+    source_affichee = redact_text(source) if redact else source
+    privacy = (
+        "Les champs et motifs sensibles reconnaissables sont masqués dans cette copie ; "
+        "le journal original et ses empreintes ne sont pas modifiés. Le JSON affiché ne "
+        "recalcule donc pas les empreintes de la chaîne. Relisez tout export avant partage."
+        if redact
+        else "Le contenu brut du journal est affiché. Il peut contenir des secrets, prompts, "
+        "code ou données personnelles : vérifiez-le avant tout partage."
+    )
     return f"""<!doctype html>
 <html lang="fr">
 <head>
@@ -269,7 +290,7 @@ def rapport_html(
     <p class="eyebrow">JIO · Observabilité locale</p>
     <h1>Trace de mission</h1>
     <p class="lede">Rapport autonome du journal d'événements. Les cartes suivent l'ordre du journal ; ouvrez un événement pour inspecter son JSON et ses empreintes.</p>
-    <p class="source">Source : {_echapper(source)}</p>
+    <p class="source">Source : {_echapper(source_affichee)}</p>
   </header>
   <section class="status status--{classe}" role="status" aria-label="État d'intégrité">
     <span class="badge badge--{classe}">{badge}</span>
@@ -293,7 +314,7 @@ def rapport_html(
     <h2 id="timeline-title">Chronologie · {len(affiches)} événement(s)</h2>
     <div class="timeline">{cartes}</div>
   </section>
-  <footer class="privacy">Rapport local autonome : aucun JavaScript ni appel réseau. Les détails affichent le contenu brut du journal (potentiellement prompts, code ou données de projet) ; vérifiez-le avant tout partage.</footer>
+  <footer class="privacy">Rapport local autonome : aucun JavaScript ni appel réseau. {privacy}</footer>
 </main>
 </body>
 </html>
