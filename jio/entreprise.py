@@ -35,6 +35,7 @@ from __future__ import annotations
 import multiprocessing
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -296,6 +297,19 @@ def _extrait(*textes: str, lignes_max: int = 6) -> str:
     return "\n".join(lignes[-lignes_max:]) if lignes else "(aucune sortie)"
 
 
+def _pytest_command() -> list[str] | None:
+    """Commande pytest disponible dans l'environnement, ou None si l'outil manque."""
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("pytest") is not None:
+            return [sys.executable, "-m", "pytest"]
+    except Exception:  # pragma: no cover - environnement exotique
+        pass
+    binary = shutil.which("pytest")
+    return [binary] if binary else None
+
+
 def executer_mission(mission: Mission, racine: Path | str = ".") -> RapportMission:
     """Execute une mission et rend son compte-rendu. Fonction de niveau module (donc
     picklable) : c'est elle que les ouvriers executent dans leur processus."""
@@ -304,16 +318,19 @@ def executer_mission(mission: Mission, racine: Path | str = ".") -> RapportMissi
     ok, portee, resume, details = True, True, "", ()
 
     if mission.type == "pytest":
-        code, sortie, erreurs = _lancer(
-            [sys.executable, "-m", "pytest", f"tests/{mission.payload}", "-q",
-             "-p", "no:randomly"],
-            racine,
-        )
-        ok = code == 0
-        resume = f"pytest {mission.payload} -> code {code}"
-        details = (_extrait(sortie, erreurs),)
-        if code == 127:
-            portee, resume = False, "pytest introuvable ici"
+        commande_pytest = _pytest_command()
+        if commande_pytest is None:
+            ok, portee, resume = True, False, "pytest absent : hors de portee ici"
+        else:
+            code, sortie, erreurs = _lancer(
+                [*commande_pytest, f"tests/{mission.payload}", "-q", "-p", "no:randomly"],
+                racine,
+            )
+            ok = code == 0
+            resume = f"pytest {mission.payload} -> code {code}"
+            details = (_extrait(sortie, erreurs),)
+            if code == 127:
+                ok, portee, resume = True, False, "pytest absent : hors de portee ici"
 
     elif mission.type == "controle":
         from .verify.coherence import CONTROLES
@@ -337,17 +354,25 @@ def executer_mission(mission: Mission, racine: Path | str = ".") -> RapportMissi
         details = (_extrait(sortie, erreurs),)
 
     elif mission.type == "ruff":
-        code, sortie, erreurs = _lancer(
-            [sys.executable, "-m", "ruff", "--isolated", "check", "--select", "F",
-             mission.payload],
-            racine,
-        )
-        if code == 127:
+        # Detecter Ruff avant le lancement : `python -m ruff` renvoie 1 si le module
+        # manque (FileNotFoundError ne survient que si l'interpreteur lui-meme manque).
+        # Reutiliser le selecteur du scanner permet aussi le mode executable seul.
+        from .verify.linters import _ruff_command
+
+        commande_ruff = _ruff_command()
+        if commande_ruff is None:
             ok, portee, resume = True, False, "ruff absent : hors de portee ici"
         else:
-            ok = code == 0
-            resume = f"ruff {mission.payload} -> code {code}"
-            details = (_extrait(sortie, erreurs),)
+            code, sortie, erreurs = _lancer(
+                [*commande_ruff, "--isolated", "check", "--select", "F", mission.payload],
+                racine,
+            )
+            if code == 127:
+                ok, portee, resume = True, False, "ruff absent : hors de portee ici"
+            else:
+                ok = code == 0
+                resume = f"ruff {mission.payload} -> code {code}"
+                details = (_extrait(sortie, erreurs),)
 
     elif mission.type == "ablation":
         code, sortie, erreurs = _lancer(

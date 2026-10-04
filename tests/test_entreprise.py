@@ -88,18 +88,34 @@ def test_un_probleme_a_un_responsable() -> None:
     assert probleme.resume, "un probleme sans constat"
 
 
-def test_hors_de_portee_n_est_pas_un_probleme() -> None:
-    """Une mission qui ne peut pas mesurer ICI (outil absent) est declaree hors de
-    portee — un faux vert sur une mission non applicable etait un defaut connu du depot."""
-    mission = Mission(
-        id="lint/nimporte", type="ruff", payload="dossier-inexistant-pour-test",
-        specialite="lint", resume="ruff sur un dossier absent",
+def test_outils_absents_sont_hors_de_portee(monkeypatch) -> None:
+    """Un outil optionnel absent est hors de portee, pas un defaut du depot.
+
+    `python -m <outil>` renvoie 1 (et « No module named ... ») si le paquet manque ;
+    `FileNotFoundError`/127 ne s'applique qu'a l'interpreteur. La presence doit donc etre
+    verifiee avant lancement pour pytest comme pour Ruff.
+    """
+    import jio.entreprise as entreprise
+    import jio.verify.linters as linters
+
+    monkeypatch.setattr(entreprise, "_pytest_command", lambda: None)
+    monkeypatch.setattr(linters, "_ruff_command", lambda: None)
+    missions = (
+        Mission(
+            id="pytest/test_x.py", type="pytest", payload="test_x.py",
+            specialite="tests", resume="pytest absent",
+        ),
+        Mission(
+            id="lint/jio", type="ruff", payload="jio", specialite="lint",
+            resume="ruff absent",
+        ),
     )
-    compte_rendu = executer_mission(mission, ".")
-    assert compte_rendu.portee is True or compte_rendu.ok is True or not compte_rendu.ok
-    # Ce que l'invariant interdit : un ok=True sans avoir mesure.
-    rapport = mener(".", [mission], ouvriers=1)
-    assert isinstance(rapport.as_dict(), dict)
+    for mission in missions:
+        compte_rendu = executer_mission(mission, ".")
+        outil = mission.type
+        assert compte_rendu.ok is True
+        assert compte_rendu.portee is False
+        assert compte_rendu.resume == f"{outil} absent : hors de portee ici"
 
 
 def test_le_rapport_se_lit_et_se_transmet() -> None:

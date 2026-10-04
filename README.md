@@ -3591,3 +3591,32 @@ retrouvés dans la mauvaise langue — le rapport affichait alors « 0 % en fran
 faux produit par la mesure et non par la porte mesurée. La langue est désormais une **donnée**
 du cas. Un calcul sur une étiquette devinée n'est pas une mesure.
 
+## Un outil Python absent ne doit pas faire accuser le dépôt
+
+Un environnement installé avec `pip install -e '.[dev]'` mais sans Ruff a fait échouer
+`tests/test_entreprise.py::test_les_ouvriers_executent_vraiment`. `jio.entreprise` lançait
+`python -m ruff` puis interprétait son code 1 (`No module named ruff`) comme un défaut du
+code audité. Le code 127 ne couvre que l'absence de l'exécutable lui-même. Le même piège
+existait pour `pytest`.
+
+Le contrat de l'entreprise est différent : un outil facultatif absent doit être annoncé
+**hors de portée**, pas transformé en faux défaut. Les missions résolvent maintenant
+l'outil avant son lancement — module Python, puis binaire sur `PATH`. Pour Ruff, elles
+réutilisent le sélecteur de `jio.verify.linters`; pour pytest, le résolveur correspondant.
+Si l'outil manque, le rapport porte `ok=True`, `portee=False` et la raison précise. Une
+panne d'un outil présent reste, elle, un échec.
+
+Le garde `tests/test_entreprise.py::test_outils_absents_sont_hors_de_portee` force
+l'absence de pytest et de Ruff et vérifie les deux verdicts. Rejeu réel avec ces outils
+retirés du `PATH` :
+
+```text
+pytest: ok=True, portee=False, resume=pytest absent : hors de portee ici
+ruff: ok=True, portee=False, resume=ruff absent : hors de portee ici
+```
+
+Preuves après correction : `python -m pytest -q` (code 0, 1274 tests mesurés),
+`python -m jio coherence --json` (`coherent: true`), `python -m jio scan jio
+--exclude-tests --no-learn` (code 0, aucun problème prouvé), et Ruff sur `jio/` et
+`tests/` (code 0).
+
