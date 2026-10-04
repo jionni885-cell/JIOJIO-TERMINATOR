@@ -1,0 +1,147 @@
+
+     ██╗██╗ ██████╗      ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ████████╗ ██████╗ ██████╗
+     ██║██║██╔═══██╗     ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗
+     ██║██║██║   ██║        ██║   █████╗  ██████╔╝██╔████╔██║██║██╔██╗ ██║███████║   ██║   ██║   ██║██████╔╝
+██   ██║██║██║   ██║        ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║   ██║   ██║   ██║██╔══██╗
+╚█████╔╝██║╚██████╔╝        ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║   ██║   ╚██████╔╝██║  ██║
+ ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
+
+  Ablation du harness  ·  competence simulee 0.40  ·  15 mission(s) par bras  ·  8 levier(s)  ·  SANS ORACLE
+  Temoins traduits par le modele simule, fidelite 60% : une part des tests est CONTREFaite, comme dans une mission reelle ou personne ne fournit les tests.
+  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.
+
+  [  1/135] ablation · complet 1/135  ·  1s ecoulees  ·  reste ~3m25s
+  [  2/135] ablation · complet 2/135  ·  3s ecoulees  ·  reste ~3m29s
+  [  3/135] ablation · complet 3/135  ·  4s ecoulees  ·  reste ~3m26s
+  [  4/135] ablation · complet 4/135  ·  6s ecoulees  ·  reste ~3m41s
+  [  5/135] ablation · complet 5/135  ·  8s ecoulees  ·  reste ~3m50s
+  [  6/135] ablation · complet 6/135  ·  11s ecoulees  ·  reste ~3m58s
+  [  7/135] ablation · complet 7/135  ·  11s ecoulees  ·  reste ~3m38s
+  [  8/135] ablation · complet 8/135  ·  12s ecoulees  ·  reste ~3m24s
+  [  9/135] ablation · complet 9/135  ·  13s ecoulees  ·  reste ~3m13s
+  [ 10/135] ablation · complet 10/135  ·  15s ecoulees  ·  reste ~3m18s
+  [ 11/135] ablation · complet 11/135  ·  18s ecoulees  ·  reste ~3m23s
+  [ 12/135] ablation · complet 12/135  ·  20s ecoulees  ·  reste ~3m27s
+  [ 13/135] ablation · complet 13/135  ·  21s ecoulees  ·  reste ~3m25s
+  [ 14/135] ablation · complet 14/135  ·  23s ecoulees  ·  reste ~3m25s
+  [ 15/135] ablation · complet 15/135  ·  25s ecoulees  ·  reste ~3m23s
+  [ 16/135] ablation · sans preuve 16/135  ·  25s ecoulees  ·  reste ~3m10s
+  [ 17/135] ablation · sans preuve 17/135  ·  25s ecoulees  ·  reste ~2m59s
+  [ 18/135] ablation · sans preuve 18/135  ·  26s ecoulees  ·  reste ~2m49s
+  [ 19/135] ablation · sans preuve 19/135  ·  26s ecoulees  ·  reste ~2m41s
+  [ 20/135] ablation · sans preuve 20/135  ·  26s ecoulees  ·  reste ~2m33s
+  [ 21/135] ablation · sans preuve 21/135  ·  26s ecoulees  ·  reste ~2m26s
+  [ 22/135] ablation · sans preuve 22/135  ·  27s ecoulees  ·  reste ~2m19s
+  [ 23/135] ablation · sans preuve 23/135  ·  27s ecoulees  ·  reste ~2m13s
+  [ 24/135] ablation · sans preuve 24/135  ·  27s ecoulees  ·  reste ~2m08s
+  [ 25/135] ablation · sans preuve 25/135  ·  28s ecoulees  ·  reste ~2m03s
+  [ 26/135] ablation · sans preuve 26/135  ·  28s ecoulees  ·  reste ~1m59s
+  [ 27/135] ablation · sans preuve 27/135  ·  28s ecoulees  ·  reste ~1m54s
+  [ 28/135] ablation · sans preuve 28/135  ·  29s ecoulees  ·  reste ~1m50s
+  [ 29/135] ablation · sans preuve 29/135  ·  29s ecoulees  ·  reste ~1m47s
+  [ 30/135] ablation · sans preuve 30/135  ·  29s ecoulees  ·  reste ~1m43s
+  [ 31/135] ablation · sans red-team 31/135  ·  31s ecoulees  ·  reste ~1m46s
+  [ 32/135] ablation · sans red-team 32/135  ·  33s ecoulees  ·  reste ~1m47s
+  [ 33/135] ablation · sans red-team 33/135  ·  35s ecoulees  ·  reste ~1m50s
+  [ 34/135] ablation · sans red-team 34/135  ·  38s ecoulees  ·  reste ~1m53s
+  [ 35/135] ablation · sans red-team 35/135  ·  40s ecoulees  ·  reste ~1m55s
+  [ 36/135] ablation · sans red-team 36/135  ·  42s ecoulees  ·  reste ~1m57s
+  [ 37/135] ablation · sans red-team 37/135  ·  44s ecoulees  ·  reste ~1m57s
+  [ 38/135] ablation · sans red-team 38/135  ·  45s ecoulees  ·  reste ~1m55s
+  [ 39/135] ablation · sans red-team 39/135  ·  46s ecoulees  ·  reste ~1m54s
+  [ 40/135] ablation · sans red-team 40/135  ·  48s ecoulees  ·  reste ~1m55s
+  [ 41/135] ablation · sans red-team 41/135  ·  51s ecoulees  ·  reste ~1m58s
+  [ 42/135] ablation · sans red-team 42/135  ·  54s ecoulees  ·  reste ~1m59s
+  [ 43/135] ablation · sans red-team 43/135  ·  55s ecoulees  ·  reste ~1m59s
+  [ 44/135] ablation · sans red-team 44/135  ·  58s ecoulees  ·  reste ~2m00s
+  [ 45/135] ablation · sans red-team 45/135  ·  1m00s ecoulees  ·  reste ~2m00s
+  [ 46/135] ablation · sans consensus 46/135  ·  1m01s ecoulees  ·  reste ~1m59s
+  [ 47/135] ablation · sans consensus 47/135  ·  1m03s ecoulees  ·  reste ~1m58s
+  [ 48/135] ablation · sans consensus 48/135  ·  1m04s ecoulees  ·  reste ~1m57s
+  [ 49/135] ablation · sans consensus 49/135  ·  1m06s ecoulees  ·  reste ~1m56s
+  [ 50/135] ablation · sans consensus 50/135  ·  1m08s ecoulees  ·  reste ~1m56s
+  [ 51/135] ablation · sans consensus 51/135  ·  1m10s ecoulees  ·  reste ~1m56s
+  [ 52/135] ablation · sans consensus 52/135  ·  1m11s ecoulees  ·  reste ~1m54s
+  [ 53/135] ablation · sans consensus 53/135  ·  1m12s ecoulees  ·  reste ~1m51s
+  [ 54/135] ablation · sans consensus 54/135  ·  1m13s ecoulees  ·  reste ~1m49s
+  [ 55/135] ablation · sans consensus 55/135  ·  1m15s ecoulees  ·  reste ~1m49s
+  [ 56/135] ablation · sans consensus 56/135  ·  1m17s ecoulees  ·  reste ~1m48s
+  [ 57/135] ablation · sans consensus 57/135  ·  1m19s ecoulees  ·  reste ~1m48s
+  [ 58/135] ablation · sans consensus 58/135  ·  1m20s ecoulees  ·  reste ~1m46s
+  [ 59/135] ablation · sans consensus 59/135  ·  1m22s ecoulees  ·  reste ~1m45s
+  [ 60/135] ablation · sans consensus 60/135  ·  1m23s ecoulees  ·  reste ~1m44s
+  [ 61/135] ablation · sans porte 61/135  ·  1m25s ecoulees  ·  reste ~1m43s
+  [ 62/135] ablation · sans porte 62/135  ·  1m26s ecoulees  ·  reste ~1m42s
+  [ 63/135] ablation · sans porte 63/135  ·  1m28s ecoulees  ·  reste ~1m40s
+  [ 64/135] ablation · sans porte 64/135  ·  1m30s ecoulees  ·  reste ~1m40s
+  [ 65/135] ablation · sans porte 65/135  ·  1m32s ecoulees  ·  reste ~1m39s
+  [ 66/135] ablation · sans porte 66/135  ·  1m34s ecoulees  ·  reste ~1m38s
+  [ 67/135] ablation · sans porte 67/135  ·  1m35s ecoulees  ·  reste ~1m36s
+  [ 68/135] ablation · sans porte 68/135  ·  1m36s ecoulees  ·  reste ~1m34s
+  [ 69/135] ablation · sans porte 69/135  ·  1m37s ecoulees  ·  reste ~1m33s
+  [ 70/135] ablation · sans porte 70/135  ·  1m39s ecoulees  ·  reste ~1m32s
+  [ 71/135] ablation · sans porte 71/135  ·  1m41s ecoulees  ·  reste ~1m31s
+  [ 72/135] ablation · sans porte 72/135  ·  1m43s ecoulees  ·  reste ~1m30s
+  [ 73/135] ablation · sans porte 73/135  ·  1m44s ecoulees  ·  reste ~1m29s
+  [ 74/135] ablation · sans porte 74/135  ·  1m46s ecoulees  ·  reste ~1m28s
+  [ 75/135] ablation · sans porte 75/135  ·  1m48s ecoulees  ·  reste ~1m26s
+  [ 76/135] ablation · sans integrite 76/135  ·  1m49s ecoulees  ·  reste ~1m25s
+  [ 77/135] ablation · sans integrite 77/135  ·  1m51s ecoulees  ·  reste ~1m23s
+  [ 78/135] ablation · sans integrite 78/135  ·  1m52s ecoulees  ·  reste ~1m22s
+  [ 79/135] ablation · sans integrite 79/135  ·  1m54s ecoulees  ·  reste ~1m21s
+  [ 80/135] ablation · sans integrite 80/135  ·  1m56s ecoulees  ·  reste ~1m20s
+  [ 81/135] ablation · sans integrite 81/135  ·  1m58s ecoulees  ·  reste ~1m19s
+  [ 82/135] ablation · sans integrite 82/135  ·  1m59s ecoulees  ·  reste ~1m17s
+  [ 83/135] ablation · sans integrite 83/135  ·  2m00s ecoulees  ·  reste ~1m15s
+  [ 84/135] ablation · sans integrite 84/135  ·  2m01s ecoulees  ·  reste ~1m13s
+  [ 85/135] ablation · sans integrite 85/135  ·  2m03s ecoulees  ·  reste ~1m12s
+  [ 86/135] ablation · sans integrite 86/135  ·  2m05s ecoulees  ·  reste ~1m11s
+  [ 87/135] ablation · sans integrite 87/135  ·  2m07s ecoulees  ·  reste ~1m10s
+  [ 88/135] ablation · sans integrite 88/135  ·  2m09s ecoulees  ·  reste ~1m08s
+  [ 89/135] ablation · sans integrite 89/135  ·  2m10s ecoulees  ·  reste ~1m07s
+  [ 90/135] ablation · sans integrite 90/135  ·  2m12s ecoulees  ·  reste ~1m06s
+  [ 91/135] ablation · sans mutation 91/135  ·  2m13s ecoulees  ·  reste ~1m04s
+  [ 92/135] ablation · sans mutation 92/135  ·  2m14s ecoulees  ·  reste ~1m03s
+  [ 93/135] ablation · sans mutation 93/135  ·  2m15s ecoulees  ·  reste ~1m01s
+  [ 94/135] ablation · sans mutation 94/135  ·  2m17s ecoulees  ·  reste ~59s
+  [ 95/135] ablation · sans mutation 95/135  ·  2m19s ecoulees  ·  reste ~58s
+  [ 96/135] ablation · sans mutation 96/135  ·  2m20s ecoulees  ·  reste ~57s
+  [ 97/135] ablation · sans mutation 97/135  ·  2m21s ecoulees  ·  reste ~55s
+  [ 98/135] ablation · sans mutation 98/135  ·  2m22s ecoulees  ·  reste ~53s
+  [ 99/135] ablation · sans mutation 99/135  ·  2m23s ecoulees  ·  reste ~52s
+  [100/135] ablation · sans mutation 100/135  ·  2m24s ecoulees  ·  reste ~50s
+  [101/135] ablation · sans mutation 101/135  ·  2m26s ecoulees  ·  reste ~49s
+  [102/135] ablation · sans mutation 102/135  ·  2m27s ecoulees  ·  reste ~47s
+  [103/135] ablation · sans mutation 103/135  ·  2m28s ecoulees  ·  reste ~46s
+  [104/135] ablation · sans mutation 104/135  ·  2m30s ecoulees  ·  reste ~44s
+  [105/135] ablation · sans mutation 105/135  ·  2m31s ecoulees  ·  reste ~43s
+  [106/135] ablation · sans auto-coherence 106/135  ·  2m32s ecoulees  ·  reste ~41s
+  [107/135] ablation · sans auto-coherence 107/135  ·  2m34s ecoulees  ·  reste ~40s
+  [108/135] ablation · sans auto-coherence 108/135  ·  2m35s ecoulees  ·  reste ~38s
+  [109/135] ablation · sans auto-coherence 109/135  ·  2m37s ecoulees  ·  reste ~37s
+  [110/135] ablation · sans auto-coherence 110/135  ·  2m39s ecoulees  ·  reste ~36s
+  [111/135] ablation · sans auto-coherence 111/135  ·  2m41s ecoulees  ·  reste ~35s
+  [112/135] ablation · sans auto-coherence 112/135  ·  2m42s ecoulees  ·  reste ~33s
+  [113/135] ablation · sans auto-coherence 113/135  ·  2m43s ecoulees  ·  reste ~31s
+  [114/135] ablation · sans auto-coherence 114/135  ·  2m44s ecoulees  ·  reste ~30s
+  [115/135] ablation · sans auto-coherence 115/135  ·  2m46s ecoulees  ·  reste ~28s
+  [116/135] ablation · sans auto-coherence 116/135  ·  2m48s ecoulees  ·  reste ~27s
+  [117/135] ablation · sans auto-coherence 117/135  ·  2m50s ecoulees  ·  reste ~26s
+  [118/135] ablation · sans auto-coherence 118/135  ·  2m52s ecoulees  ·  reste ~24s
+  [119/135] ablation · sans auto-coherence 119/135  ·  2m53s ecoulees  ·  reste ~23s
+  [120/135] ablation · sans auto-coherence 120/135  ·  2m55s ecoulees  ·  reste ~21s
+  [121/135] ablation · sans differentiel 121/135  ·  2m56s ecoulees  ·  reste ~20s
+  [122/135] ablation · sans differentiel 122/135  ·  2m58s ecoulees  ·  reste ~18s
+  [123/135] ablation · sans differentiel 123/135  ·  2m59s ecoulees  ·  reste ~17s
+  [124/135] ablation · sans differentiel 124/135  ·  3m01s ecoulees  ·  reste ~16s
+  [125/135] ablation · sans differentiel 125/135  ·  3m03s ecoulees  ·  reste ~14s
+  [126/135] ablation · sans differentiel 126/135  ·  3m05s ecoulees  ·  reste ~13s
+  [127/135] ablation · sans differentiel 127/135  ·  3m06s ecoulees  ·  reste ~11s
+  [128/135] ablation · sans differentiel 128/135  ·  3m07s ecoulees  ·  reste ~10s
+  [129/135] ablation · sans differentiel 129/135  ·  3m08s ecoulees  ·  reste ~8s
+  [130/135] ablation · sans differentiel 130/135  ·  3m10s ecoulees  ·  reste ~7s
+  [131/135] ablation · sans differentiel 131/135  ·  3m12s ecoulees  ·  reste ~5s
+  [132/135] ablation · sans differentiel 132/135  ·  3m14s ecoulees  ·  reste ~4s
+  [133/135] ablation · sans differentiel 133/135  ·  3m16s ecoulees  ·  reste ~2s
+  [134/135] ablation · sans differentiel 134/135  ·  3m18s ecoulees  ·  reste ~1s
+  [135/135] ablation · sans differentiel 135/135  ·  3m19s ecoulees

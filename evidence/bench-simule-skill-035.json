@@ -1,0 +1,160 @@
+{
+  "horodatage": "2026-10-01 13:01:07 +0000",
+  "modele": "simule",
+  "genre": "simule",
+  "note_modele": "reponses simulees deterministes ; la verification, elle, est reelle",
+  "competence_simulee": 0.35,
+  "tirages": 5,
+  "taches": 5,
+  "tours_max": 4,
+  "duree_s": 168.19,
+  "commit": "ab2d3ff",
+  "bras": [
+    {
+      "cle": "S0",
+      "libelle": "modele brut (1 appel)",
+      "mesure": true,
+      "reussite": 0.32,
+      "ic95": [
+        0.1721,
+        0.5159
+      ],
+      "appels_moyens": 1.0,
+      "essais": 25
+    },
+    {
+      "cle": "S1",
+      "libelle": "echantillonnage seul (best-of-3)",
+      "mesure": true,
+      "reussite": 0.76,
+      "ic95": [
+        0.5657,
+        0.885
+      ],
+      "appels_moyens": 3.0,
+      "essais": 25
+    },
+    {
+      "cle": "S1b",
+      "libelle": "CONTROLE : autant d'appels, 0 verification",
+      "mesure": true,
+      "reussite": 0.76,
+      "ic95": [
+        0.5657,
+        0.885
+      ],
+      "appels_moyens": 3.6,
+      "essais": 25
+    },
+    {
+      "cle": "S2",
+      "libelle": "verification executable + reprise",
+      "mesure": true,
+      "reussite": 1.0,
+      "ic95": [
+        0.8668,
+        1.0
+      ],
+      "appels_moyens": 3.6,
+      "essais": 25
+    },
+    {
+      "cle": "S3",
+      "libelle": "JIO complet (livraison auditee)",
+      "mesure": true,
+      "reussite": 1.0,
+      "ic95": [
+        0.8668,
+        1.0
+      ],
+      "appels_moyens": 3.6,
+      "essais": 25
+    },
+    {
+      "cle": "S4",
+      "libelle": "AUCUN ORACLE : regles traduites en temoins",
+      "mesure": true,
+      "reussite": 0.96,
+      "ic95": [
+        0.8046,
+        0.9929
+      ],
+      "appels_moyens": 4.6,
+      "essais": 25
+    },
+    {
+      "cle": "S4c",
+      "libelle": "AUCUN ORACLE : traducteur a 50 % de fidelite",
+      "mesure": true,
+      "reussite": 0.8,
+      "ic95": [
+        0.6087,
+        0.9114
+      ],
+      "appels_moyens": 5.6,
+      "essais": 25
+    },
+    {
+      "cle": "S4b",
+      "libelle": "AUCUN ORACLE : traducteur FAUX (lue a l'envers)",
+      "mesure": true,
+      "reussite": 0.0,
+      "ic95": [
+        0.0,
+        0.1332
+      ],
+      "appels_moyens": 5.0,
+      "essais": 25
+    },
+    {
+      "cle": "S4r",
+      "libelle": "AUCUN ORACLE : VOS regles traduites par le modele",
+      "mesure": false
+    },
+    {
+      "cle": "S4rc",
+      "libelle": "CONTROLE sans oracle : meme budget, 0 verification",
+      "mesure": false
+    }
+  ],
+  "ecarts": [
+    {
+      "de": "S1b",
+      "vers": "S2",
+      "question": "budget d'appels EGAL : verification vs echantillonnage",
+      "delta_points": 24.0,
+      "ic95_points": [
+        4.57,
+        42.27
+      ],
+      "intervalle_exclut_zero": true,
+      "intervalle_degenere": false,
+      "essais": 25,
+      "verdict": "ecart de +24.0 points, intervalle excluant zero a 25 essais."
+    },
+    {
+      "de": "S0",
+      "vers": "S3",
+      "question": "gain total du harness (modele brut -> JIO)",
+      "delta_points": 68.0,
+      "ic95_points": [
+        53.21,
+        91.69
+      ],
+      "intervalle_exclut_zero": true,
+      "intervalle_degenere": false,
+      "essais": 25,
+      "verdict": "ecart de +68.0 points, intervalle excluant zero a 25 essais."
+    }
+  ],
+  "integrite": {
+    "exploits d'integrite detectes": 0,
+    "abstentions sans oracle": 25,
+    "regles contrefaites par un traducteur faux": 460,
+    "candidats CORRECTS rejetes": 6,
+    "ERREURS LIVREES SANS RESERVE": 0
+  },
+  "hypotheses": [
+    "les reponses du modele sont SIMULEES : ce rapport mesure l'ARCHITECTURE du harness, pas un modele reel. Le meme rapport avec `--provider cli:<votre outil>` mesure votre modele."
+  ]
+}

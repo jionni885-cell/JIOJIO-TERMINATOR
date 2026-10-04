@@ -1,0 +1,56 @@
+# Configuration pre-commit de CE depot. Les autres projets n'ont rien a copier de
+# plus que `.pre-commit-hooks.yaml` ci-dessus : c'est le standard de l'ecosysteme.
+#
+#   pip install pre-commit && pre-commit install
+#
+# Philosophie : on n'ajoute pas de nouvelles regles maison. On branche les outils
+# que tout le monde utilise (ruff, nos propres tests, puis JIO).
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-added-large-files
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff
+        # Pyflakes en entier : code mort et noms non definis. Les regles de STYLE
+        # (ordre des imports, longueur de ligne) restent volontairement exclues.
+        args: ["--select", "E9,F"]
+        files: ^(jio|tests|scripts)/
+
+  - repo: local
+    hooks:
+      - id: jio-scan
+        name: JIO — le projet s'audite lui-meme
+        entry: python -m jio scan jio --exclude-tests --no-learn
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Le hook qui manquait : les DOCUMENTS. Le README, les notes de conception et les
+      # rapports de preuve contiennent des calculs, des blocs et des chemins — et c'est la
+      # que vivent les erreurs qu'aucun test ne voit. N'echoue que sur une refutation :
+      # un document sans matiere prouvable ne bloque pas un commit.
+      - id: jio-claims
+        name: JIO — faits verifiables des documents
+        entry: python -m jio claims --hook
+        language: system
+        files: \.(md|markdown|rst|txt|org|adoc)$
+        exclude: ^evidence/
+
+      # Le portail d'ensemble. `scan` regarde le CODE, `claims` regarde les FAITS d'un
+      # document : aucun des deux ne voit qu'un artefact genere a cesse de correspondre a sa
+      # doctrine, qu'un chiffre annonce n'est plus celui mesure, ou qu'une commande citee
+      # n'existe pas. Ces incoherences-la sont des affirmations devenues fausses, et elles
+      # ne se voient qu'en regardant l'ENSEMBLE.
+      - id: jio-coherence
+        name: JIO — coherence d'ensemble (7 controles, un verdict)
+        entry: python -m jio coherence
+        language: system
+        pass_filenames: false
+        always_run: true

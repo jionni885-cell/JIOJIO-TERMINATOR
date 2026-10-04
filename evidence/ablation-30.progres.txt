@@ -1,0 +1,311 @@
+
+     ██╗██╗ ██████╗      ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ████████╗ ██████╗ ██████╗
+     ██║██║██╔═══██╗     ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗
+     ██║██║██║   ██║        ██║   █████╗  ██████╔╝██╔████╔██║██║██╔██╗ ██║███████║   ██║   ██║   ██║██████╔╝
+██   ██║██║██║   ██║        ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║   ██║   ██║   ██║██╔══██╗
+╚█████╔╝██║╚██████╔╝        ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║   ██║   ╚██████╔╝██║  ██║
+ ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
+
+  Ablation du harness  ·  competence simulee 0.40  ·  30 mission(s) par bras  ·  9 levier(s)
+  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.
+
+  [  1/300] ablation · complet 1/300  ·  1s ecoulees  ·  reste ~8m41s
+  [  2/300] ablation · complet 2/300  ·  3s ecoulees  ·  reste ~8m43s
+  [  3/300] ablation · complet 3/300  ·  5s ecoulees  ·  reste ~8m50s
+  [  4/300] ablation · complet 4/300  ·  7s ecoulees  ·  reste ~8m50s
+  [  5/300] ablation · complet 5/300  ·  9s ecoulees  ·  reste ~9m43s
+  [  6/300] ablation · complet 6/300  ·  12s ecoulees  ·  reste ~9m50s
+  [  7/300] ablation · complet 7/300  ·  15s ecoulees  ·  reste ~10m41s
+  [  8/300] ablation · complet 8/300  ·  18s ecoulees  ·  reste ~11m15s
+  [  9/300] ablation · complet 9/300  ·  21s ecoulees  ·  reste ~11m40s
+  [ 10/300] ablation · complet 10/300  ·  24s ecoulees  ·  reste ~12m02s
+  [ 11/300] ablation · complet 11/300  ·  29s ecoulees  ·  reste ~13m00s
+  [ 12/300] ablation · complet 12/300  ·  33s ecoulees  ·  reste ~13m29s
+  [ 13/300] ablation · complet 13/300  ·  35s ecoulees  ·  reste ~13m13s
+  [ 14/300] ablation · complet 14/300  ·  38s ecoulees  ·  reste ~13m00s
+  [ 15/300] ablation · complet 15/300  ·  40s ecoulees  ·  reste ~12m45s
+  [ 16/300] ablation · complet 16/300  ·  42s ecoulees  ·  reste ~12m31s
+  [ 17/300] ablation · complet 17/300  ·  44s ecoulees  ·  reste ~12m20s
+  [ 18/300] ablation · complet 18/300  ·  46s ecoulees  ·  reste ~12m08s
+  [ 19/300] ablation · complet 19/300  ·  48s ecoulees  ·  reste ~12m02s
+  [ 20/300] ablation · complet 20/300  ·  51s ecoulees  ·  reste ~11m56s
+  [ 21/300] ablation · complet 21/300  ·  53s ecoulees  ·  reste ~11m50s
+  [ 22/300] ablation · complet 22/300  ·  55s ecoulees  ·  reste ~11m42s
+  [ 23/300] ablation · complet 23/300  ·  57s ecoulees  ·  reste ~11m36s
+  [ 24/300] ablation · complet 24/300  ·  1m00s ecoulees  ·  reste ~11m30s
+  [ 25/300] ablation · complet 25/300  ·  1m03s ecoulees  ·  reste ~11m38s
+  [ 26/300] ablation · complet 26/300  ·  1m07s ecoulees  ·  reste ~11m54s
+  [ 27/300] ablation · complet 27/300  ·  1m11s ecoulees  ·  reste ~12m01s
+  [ 28/300] ablation · complet 28/300  ·  1m15s ecoulees  ·  reste ~12m09s
+  [ 29/300] ablation · complet 29/300  ·  1m19s ecoulees  ·  reste ~12m19s
+  [ 30/300] ablation · complet 30/300  ·  1m22s ecoulees  ·  reste ~12m22s
+  [ 31/300] ablation · sans porte 31/300  ·  1m25s ecoulees  ·  reste ~12m21s
+  [ 32/300] ablation · sans porte 32/300  ·  1m27s ecoulees  ·  reste ~12m14s
+  [ 33/300] ablation · sans porte 33/300  ·  1m30s ecoulees  ·  reste ~12m09s
+  [ 34/300] ablation · sans porte 34/300  ·  1m32s ecoulees  ·  reste ~12m03s
+  [ 35/300] ablation · sans porte 35/300  ·  1m36s ecoulees  ·  reste ~12m09s
+  [ 36/300] ablation · sans porte 36/300  ·  1m39s ecoulees  ·  reste ~12m07s
+  [ 37/300] ablation · sans porte 37/300  ·  1m43s ecoulees  ·  reste ~12m14s
+  [ 38/300] ablation · sans porte 38/300  ·  1m47s ecoulees  ·  reste ~12m23s
+  [ 39/300] ablation · sans porte 39/300  ·  1m51s ecoulees  ·  reste ~12m26s
+  [ 40/300] ablation · sans porte 40/300  ·  1m56s ecoulees  ·  reste ~12m35s
+  [ 41/300] ablation · sans porte 41/300  ·  2m01s ecoulees  ·  reste ~12m50s
+  [ 42/300] ablation · sans porte 42/300  ·  2m06s ecoulees  ·  reste ~12m58s
+  [ 43/300] ablation · sans porte 43/300  ·  2m09s ecoulees  ·  reste ~12m51s
+  [ 44/300] ablation · sans porte 44/300  ·  2m11s ecoulees  ·  reste ~12m45s
+  [ 45/300] ablation · sans porte 45/300  ·  2m14s ecoulees  ·  reste ~12m39s
+  [ 46/300] ablation · sans porte 46/300  ·  2m16s ecoulees  ·  reste ~12m34s
+  [ 47/300] ablation · sans porte 47/300  ·  2m18s ecoulees  ·  reste ~12m28s
+  [ 48/300] ablation · sans porte 48/300  ·  2m21s ecoulees  ·  reste ~12m23s
+  [ 49/300] ablation · sans porte 49/300  ·  2m24s ecoulees  ·  reste ~12m19s
+  [ 50/300] ablation · sans porte 50/300  ·  2m27s ecoulees  ·  reste ~12m15s
+  [ 51/300] ablation · sans porte 51/300  ·  2m29s ecoulees  ·  reste ~12m12s
+  [ 52/300] ablation · sans porte 52/300  ·  2m32s ecoulees  ·  reste ~12m08s
+  [ 53/300] ablation · sans porte 53/300  ·  2m35s ecoulees  ·  reste ~12m05s
+  [ 54/300] ablation · sans porte 54/300  ·  2m38s ecoulees  ·  reste ~12m01s
+  [ 55/300] ablation · sans porte 55/300  ·  2m41s ecoulees  ·  reste ~12m00s
+  [ 56/300] ablation · sans porte 56/300  ·  2m45s ecoulees  ·  reste ~12m01s
+  [ 57/300] ablation · sans porte 57/300  ·  2m48s ecoulees  ·  reste ~11m58s
+  [ 58/300] ablation · sans porte 58/300  ·  2m51s ecoulees  ·  reste ~11m54s
+  [ 59/300] ablation · sans porte 59/300  ·  2m54s ecoulees  ·  reste ~11m51s
+  [ 60/300] ablation · sans porte 60/300  ·  2m57s ecoulees  ·  reste ~11m48s
+  [ 61/300] ablation · sans integrite 61/300  ·  2m58s ecoulees  ·  reste ~11m40s
+  [ 62/300] ablation · sans integrite 62/300  ·  3m00s ecoulees  ·  reste ~11m33s
+  [ 63/300] ablation · sans integrite 63/300  ·  3m02s ecoulees  ·  reste ~11m26s
+  [ 64/300] ablation · sans integrite 64/300  ·  3m04s ecoulees  ·  reste ~11m20s
+  [ 65/300] ablation · sans integrite 65/300  ·  3m07s ecoulees  ·  reste ~11m16s
+  [ 66/300] ablation · sans integrite 66/300  ·  3m09s ecoulees  ·  reste ~11m11s
+  [ 67/300] ablation · sans integrite 67/300  ·  3m13s ecoulees  ·  reste ~11m11s
+  [ 68/300] ablation · sans integrite 68/300  ·  3m16s ecoulees  ·  reste ~11m11s
+  [ 69/300] ablation · sans integrite 69/300  ·  3m20s ecoulees  ·  reste ~11m10s
+  [ 70/300] ablation · sans integrite 70/300  ·  3m23s ecoulees  ·  reste ~11m09s
+  [ 71/300] ablation · sans integrite 71/300  ·  3m28s ecoulees  ·  reste ~11m13s
+  [ 72/300] ablation · sans integrite 72/300  ·  3m33s ecoulees  ·  reste ~11m15s
+  [ 73/300] ablation · sans integrite 73/300  ·  3m35s ecoulees  ·  reste ~11m10s
+  [ 74/300] ablation · sans integrite 74/300  ·  3m37s ecoulees  ·  reste ~11m04s
+  [ 75/300] ablation · sans integrite 75/300  ·  3m39s ecoulees  ·  reste ~10m59s
+  [ 76/300] ablation · sans integrite 76/300  ·  3m42s ecoulees  ·  reste ~10m54s
+  [ 77/300] ablation · sans integrite 77/300  ·  3m45s ecoulees  ·  reste ~10m51s
+  [ 78/300] ablation · sans integrite 78/300  ·  3m47s ecoulees  ·  reste ~10m46s
+  [ 79/300] ablation · sans integrite 79/300  ·  3m49s ecoulees  ·  reste ~10m42s
+  [ 80/300] ablation · sans integrite 80/300  ·  3m52s ecoulees  ·  reste ~10m38s
+  [ 81/300] ablation · sans integrite 81/300  ·  3m54s ecoulees  ·  reste ~10m34s
+  [ 82/300] ablation · sans integrite 82/300  ·  3m56s ecoulees  ·  reste ~10m29s
+  [ 83/300] ablation · sans integrite 83/300  ·  3m59s ecoulees  ·  reste ~10m25s
+  [ 84/300] ablation · sans integrite 84/300  ·  4m01s ecoulees  ·  reste ~10m21s
+  [ 85/300] ablation · sans integrite 85/300  ·  4m04s ecoulees  ·  reste ~10m19s
+  [ 86/300] ablation · sans integrite 86/300  ·  4m09s ecoulees  ·  reste ~10m20s
+  [ 87/300] ablation · sans integrite 87/300  ·  4m12s ecoulees  ·  reste ~10m17s
+  [ 88/300] ablation · sans integrite 88/300  ·  4m15s ecoulees  ·  reste ~10m14s
+  [ 89/300] ablation · sans integrite 89/300  ·  4m18s ecoulees  ·  reste ~10m12s
+  [ 90/300] ablation · sans integrite 90/300  ·  4m21s ecoulees  ·  reste ~10m09s
+  [ 91/300] ablation · sans mutation 91/300  ·  4m22s ecoulees  ·  reste ~10m02s
+  [ 92/300] ablation · sans mutation 92/300  ·  4m23s ecoulees  ·  reste ~9m55s
+  [ 93/300] ablation · sans mutation 93/300  ·  4m25s ecoulees  ·  reste ~9m51s
+  [ 94/300] ablation · sans mutation 94/300  ·  4m28s ecoulees  ·  reste ~9m47s
+  [ 95/300] ablation · sans mutation 95/300  ·  4m32s ecoulees  ·  reste ~9m47s
+  [ 96/300] ablation · sans mutation 96/300  ·  4m35s ecoulees  ·  reste ~9m44s
+  [ 97/300] ablation · sans mutation 97/300  ·  4m39s ecoulees  ·  reste ~9m44s
+  [ 98/300] ablation · sans mutation 98/300  ·  4m43s ecoulees  ·  reste ~9m44s
+  [ 99/300] ablation · sans mutation 99/300  ·  4m47s ecoulees  ·  reste ~9m44s
+  [100/300] ablation · sans mutation 100/300  ·  4m50s ecoulees  ·  reste ~9m40s
+  [101/300] ablation · sans mutation 101/300  ·  4m54s ecoulees  ·  reste ~9m39s
+  [102/300] ablation · sans mutation 102/300  ·  4m57s ecoulees  ·  reste ~9m37s
+  [103/300] ablation · sans mutation 103/300  ·  4m59s ecoulees  ·  reste ~9m32s
+  [104/300] ablation · sans mutation 104/300  ·  5m00s ecoulees  ·  reste ~9m26s
+  [105/300] ablation · sans mutation 105/300  ·  5m02s ecoulees  ·  reste ~9m21s
+  [106/300] ablation · sans mutation 106/300  ·  5m04s ecoulees  ·  reste ~9m16s
+  [107/300] ablation · sans mutation 107/300  ·  5m05s ecoulees  ·  reste ~9m11s
+  [108/300] ablation · sans mutation 108/300  ·  5m07s ecoulees  ·  reste ~9m06s
+  [109/300] ablation · sans mutation 109/300  ·  5m08s ecoulees  ·  reste ~9m01s
+  [110/300] ablation · sans mutation 110/300  ·  5m10s ecoulees  ·  reste ~8m56s
+  [111/300] ablation · sans mutation 111/300  ·  5m12s ecoulees  ·  reste ~8m51s
+  [112/300] ablation · sans mutation 112/300  ·  5m13s ecoulees  ·  reste ~8m47s
+  [113/300] ablation · sans mutation 113/300  ·  5m15s ecoulees  ·  reste ~8m42s
+  [114/300] ablation · sans mutation 114/300  ·  5m17s ecoulees  ·  reste ~8m37s
+  [115/300] ablation · sans mutation 115/300  ·  5m19s ecoulees  ·  reste ~8m33s
+  [116/300] ablation · sans mutation 116/300  ·  5m22s ecoulees  ·  reste ~8m30s
+  [117/300] ablation · sans mutation 117/300  ·  5m24s ecoulees  ·  reste ~8m26s
+  [118/300] ablation · sans mutation 118/300  ·  5m26s ecoulees  ·  reste ~8m23s
+  [119/300] ablation · sans mutation 119/300  ·  5m28s ecoulees  ·  reste ~8m19s
+  [120/300] ablation · sans mutation 120/300  ·  5m30s ecoulees  ·  reste ~8m15s
+  [121/300] ablation · sans auto-coherence 121/300  ·  5m31s ecoulees  ·  reste ~8m11s
+  [122/300] ablation · sans auto-coherence 122/300  ·  5m33s ecoulees  ·  reste ~8m06s
+  [123/300] ablation · sans auto-coherence 123/300  ·  5m35s ecoulees  ·  reste ~8m02s
+  [124/300] ablation · sans auto-coherence 124/300  ·  5m37s ecoulees  ·  reste ~7m58s
+  [125/300] ablation · sans auto-coherence 125/300  ·  5m40s ecoulees  ·  reste ~7m56s
+  [126/300] ablation · sans auto-coherence 126/300  ·  5m42s ecoulees  ·  reste ~7m52s
+  [127/300] ablation · sans auto-coherence 127/300  ·  5m45s ecoulees  ·  reste ~7m50s
+  [128/300] ablation · sans auto-coherence 128/300  ·  5m48s ecoulees  ·  reste ~7m48s
+  [129/300] ablation · sans auto-coherence 129/300  ·  5m51s ecoulees  ·  reste ~7m46s
+  [130/300] ablation · sans auto-coherence 130/300  ·  5m55s ecoulees  ·  reste ~7m44s
+  [131/300] ablation · sans auto-coherence 131/300  ·  6m00s ecoulees  ·  reste ~7m44s
+  [132/300] ablation · sans auto-coherence 132/300  ·  6m04s ecoulees  ·  reste ~7m43s
+  [133/300] ablation · sans auto-coherence 133/300  ·  6m06s ecoulees  ·  reste ~7m40s
+  [134/300] ablation · sans auto-coherence 134/300  ·  6m08s ecoulees  ·  reste ~7m36s
+  [135/300] ablation · sans auto-coherence 135/300  ·  6m11s ecoulees  ·  reste ~7m33s
+  [136/300] ablation · sans auto-coherence 136/300  ·  6m13s ecoulees  ·  reste ~7m30s
+  [137/300] ablation · sans auto-coherence 137/300  ·  6m15s ecoulees  ·  reste ~7m26s
+  [138/300] ablation · sans auto-coherence 138/300  ·  6m17s ecoulees  ·  reste ~7m23s
+  [139/300] ablation · sans auto-coherence 139/300  ·  6m19s ecoulees  ·  reste ~7m20s
+  [140/300] ablation · sans auto-coherence 140/300  ·  6m22s ecoulees  ·  reste ~7m16s
+  [141/300] ablation · sans auto-coherence 141/300  ·  6m24s ecoulees  ·  reste ~7m13s
+  [142/300] ablation · sans auto-coherence 142/300  ·  6m26s ecoulees  ·  reste ~7m10s
+  [143/300] ablation · sans auto-coherence 143/300  ·  6m29s ecoulees  ·  reste ~7m07s
+  [144/300] ablation · sans auto-coherence 144/300  ·  6m31s ecoulees  ·  reste ~7m03s
+  [145/300] ablation · sans auto-coherence 145/300  ·  6m34s ecoulees  ·  reste ~7m01s
+  [146/300] ablation · sans auto-coherence 146/300  ·  6m37s ecoulees  ·  reste ~6m59s
+  [147/300] ablation · sans auto-coherence 147/300  ·  6m40s ecoulees  ·  reste ~6m56s
+  [148/300] ablation · sans auto-coherence 148/300  ·  6m43s ecoulees  ·  reste ~6m54s
+  [149/300] ablation · sans auto-coherence 149/300  ·  6m46s ecoulees  ·  reste ~6m51s
+  [150/300] ablation · sans auto-coherence 150/300  ·  6m49s ecoulees  ·  reste ~6m49s
+  [151/300] ablation · sans differentiel 151/300  ·  6m50s ecoulees  ·  reste ~6m45s
+  [152/300] ablation · sans differentiel 152/300  ·  6m52s ecoulees  ·  reste ~6m41s
+  [153/300] ablation · sans differentiel 153/300  ·  6m54s ecoulees  ·  reste ~6m38s
+  [154/300] ablation · sans differentiel 154/300  ·  6m56s ecoulees  ·  reste ~6m34s
+  [155/300] ablation · sans differentiel 155/300  ·  6m58s ecoulees  ·  reste ~6m31s
+  [156/300] ablation · sans differentiel 156/300  ·  7m01s ecoulees  ·  reste ~6m28s
+  [157/300] ablation · sans differentiel 157/300  ·  7m04s ecoulees  ·  reste ~6m26s
+  [158/300] ablation · sans differentiel 158/300  ·  7m07s ecoulees  ·  reste ~6m24s
+  [159/300] ablation · sans differentiel 159/300  ·  7m11s ecoulees  ·  reste ~6m22s
+  [160/300] ablation · sans differentiel 160/300  ·  7m14s ecoulees  ·  reste ~6m20s
+  [161/300] ablation · sans differentiel 161/300  ·  7m19s ecoulees  ·  reste ~6m19s
+  [162/300] ablation · sans differentiel 162/300  ·  7m23s ecoulees  ·  reste ~6m17s
+  [163/300] ablation · sans differentiel 163/300  ·  7m25s ecoulees  ·  reste ~6m14s
+  [164/300] ablation · sans differentiel 164/300  ·  7m28s ecoulees  ·  reste ~6m11s
+  [165/300] ablation · sans differentiel 165/300  ·  7m30s ecoulees  ·  reste ~6m08s
+  [166/300] ablation · sans differentiel 166/300  ·  7m32s ecoulees  ·  reste ~6m05s
+  [167/300] ablation · sans differentiel 167/300  ·  7m34s ecoulees  ·  reste ~6m02s
+  [168/300] ablation · sans differentiel 168/300  ·  7m36s ecoulees  ·  reste ~5m58s
+  [169/300] ablation · sans differentiel 169/300  ·  7m39s ecoulees  ·  reste ~5m55s
+  [170/300] ablation · sans differentiel 170/300  ·  7m41s ecoulees  ·  reste ~5m53s
+  [171/300] ablation · sans differentiel 171/300  ·  7m44s ecoulees  ·  reste ~5m50s
+  [172/300] ablation · sans differentiel 172/300  ·  7m46s ecoulees  ·  reste ~5m47s
+  [173/300] ablation · sans differentiel 173/300  ·  7m49s ecoulees  ·  reste ~5m44s
+  [174/300] ablation · sans differentiel 174/300  ·  7m51s ecoulees  ·  reste ~5m41s
+  [175/300] ablation · sans differentiel 175/300  ·  7m54s ecoulees  ·  reste ~5m38s
+  [176/300] ablation · sans differentiel 176/300  ·  7m58s ecoulees  ·  reste ~5m36s
+  [177/300] ablation · sans differentiel 177/300  ·  8m00s ecoulees  ·  reste ~5m34s
+  [178/300] ablation · sans differentiel 178/300  ·  8m03s ecoulees  ·  reste ~5m31s
+  [179/300] ablation · sans differentiel 179/300  ·  8m06s ecoulees  ·  reste ~5m28s
+  [180/300] ablation · sans differentiel 180/300  ·  8m09s ecoulees  ·  reste ~5m26s
+  [181/300] ablation · sans temoins 181/300  ·  8m11s ecoulees  ·  reste ~5m23s
+  [182/300] ablation · sans temoins 182/300  ·  8m13s ecoulees  ·  reste ~5m19s
+  [183/300] ablation · sans temoins 183/300  ·  8m15s ecoulees  ·  reste ~5m16s
+  [184/300] ablation · sans temoins 184/300  ·  8m16s ecoulees  ·  reste ~5m13s
+  [185/300] ablation · sans temoins 185/300  ·  8m19s ecoulees  ·  reste ~5m10s
+  [186/300] ablation · sans temoins 186/300  ·  8m21s ecoulees  ·  reste ~5m07s
+  [187/300] ablation · sans temoins 187/300  ·  8m24s ecoulees  ·  reste ~5m05s
+  [188/300] ablation · sans temoins 188/300  ·  8m28s ecoulees  ·  reste ~5m02s
+  [189/300] ablation · sans temoins 189/300  ·  8m31s ecoulees  ·  reste ~5m00s
+  [190/300] ablation · sans temoins 190/300  ·  8m34s ecoulees  ·  reste ~4m57s
+  [191/300] ablation · sans temoins 191/300  ·  8m39s ecoulees  ·  reste ~4m56s
+  [192/300] ablation · sans temoins 192/300  ·  8m43s ecoulees  ·  reste ~4m54s
+  [193/300] ablation · sans temoins 193/300  ·  8m45s ecoulees  ·  reste ~4m51s
+  [194/300] ablation · sans temoins 194/300  ·  8m48s ecoulees  ·  reste ~4m48s
+  [195/300] ablation · sans temoins 195/300  ·  8m50s ecoulees  ·  reste ~4m45s
+  [196/300] ablation · sans temoins 196/300  ·  8m52s ecoulees  ·  reste ~4m42s
+  [197/300] ablation · sans temoins 197/300  ·  8m54s ecoulees  ·  reste ~4m39s
+  [198/300] ablation · sans temoins 198/300  ·  8m56s ecoulees  ·  reste ~4m36s
+  [199/300] ablation · sans temoins 199/300  ·  8m59s ecoulees  ·  reste ~4m33s
+  [200/300] ablation · sans temoins 200/300  ·  9m01s ecoulees  ·  reste ~4m30s
+  [201/300] ablation · sans temoins 201/300  ·  9m03s ecoulees  ·  reste ~4m27s
+  [202/300] ablation · sans temoins 202/300  ·  9m06s ecoulees  ·  reste ~4m24s
+  [203/300] ablation · sans temoins 203/300  ·  9m08s ecoulees  ·  reste ~4m21s
+  [204/300] ablation · sans temoins 204/300  ·  9m10s ecoulees  ·  reste ~4m19s
+  [205/300] ablation · sans temoins 205/300  ·  9m13s ecoulees  ·  reste ~4m16s
+  [206/300] ablation · sans temoins 206/300  ·  9m17s ecoulees  ·  reste ~4m14s
+  [207/300] ablation · sans temoins 207/300  ·  9m20s ecoulees  ·  reste ~4m11s
+  [208/300] ablation · sans temoins 208/300  ·  9m22s ecoulees  ·  reste ~4m09s
+  [209/300] ablation · sans temoins 209/300  ·  9m25s ecoulees  ·  reste ~4m06s
+  [210/300] ablation · sans temoins 210/300  ·  9m28s ecoulees  ·  reste ~4m03s
+  [211/300] ablation · sans memoire 211/300  ·  9m30s ecoulees  ·  reste ~4m00s
+  [212/300] ablation · sans memoire 212/300  ·  9m32s ecoulees  ·  reste ~3m57s
+  [213/300] ablation · sans memoire 213/300  ·  9m33s ecoulees  ·  reste ~3m54s
+  [214/300] ablation · sans memoire 214/300  ·  9m35s ecoulees  ·  reste ~3m51s
+  [215/300] ablation · sans memoire 215/300  ·  9m38s ecoulees  ·  reste ~3m48s
+  [216/300] ablation · sans memoire 216/300  ·  9m40s ecoulees  ·  reste ~3m45s
+  [217/300] ablation · sans memoire 217/300  ·  9m43s ecoulees  ·  reste ~3m43s
+  [218/300] ablation · sans memoire 218/300  ·  9m47s ecoulees  ·  reste ~3m40s
+  [219/300] ablation · sans memoire 219/300  ·  9m50s ecoulees  ·  reste ~3m38s
+  [220/300] ablation · sans memoire 220/300  ·  9m53s ecoulees  ·  reste ~3m35s
+  [221/300] ablation · sans memoire 221/300  ·  9m58s ecoulees  ·  reste ~3m34s
+  [222/300] ablation · sans memoire 222/300  ·  10m02s ecoulees  ·  reste ~3m31s
+  [223/300] ablation · sans memoire 223/300  ·  10m05s ecoulees  ·  reste ~3m28s
+  [224/300] ablation · sans memoire 224/300  ·  10m07s ecoulees  ·  reste ~3m26s
+  [225/300] ablation · sans memoire 225/300  ·  10m09s ecoulees  ·  reste ~3m23s
+  [226/300] ablation · sans memoire 226/300  ·  10m11s ecoulees  ·  reste ~3m20s
+  [227/300] ablation · sans memoire 227/300  ·  10m14s ecoulees  ·  reste ~3m17s
+  [228/300] ablation · sans memoire 228/300  ·  10m16s ecoulees  ·  reste ~3m14s
+  [229/300] ablation · sans memoire 229/300  ·  10m19s ecoulees  ·  reste ~3m11s
+  [230/300] ablation · sans memoire 230/300  ·  10m21s ecoulees  ·  reste ~3m09s
+  [231/300] ablation · sans memoire 231/300  ·  10m24s ecoulees  ·  reste ~3m06s
+  [232/300] ablation · sans memoire 232/300  ·  10m26s ecoulees  ·  reste ~3m03s
+  [233/300] ablation · sans memoire 233/300  ·  10m29s ecoulees  ·  reste ~3m00s
+  [234/300] ablation · sans memoire 234/300  ·  10m31s ecoulees  ·  reste ~2m58s
+  [235/300] ablation · sans memoire 235/300  ·  10m34s ecoulees  ·  reste ~2m55s
+  [236/300] ablation · sans memoire 236/300  ·  10m38s ecoulees  ·  reste ~2m53s
+  [237/300] ablation · sans memoire 237/300  ·  10m42s ecoulees  ·  reste ~2m50s
+  [238/300] ablation · sans memoire 238/300  ·  10m45s ecoulees  ·  reste ~2m48s
+  [239/300] ablation · sans memoire 239/300  ·  10m48s ecoulees  ·  reste ~2m45s
+  [240/300] ablation · sans memoire 240/300  ·  10m51s ecoulees  ·  reste ~2m42s
+  [241/300] ablation · sans bibliotheque 241/300  ·  10m53s ecoulees  ·  reste ~2m40s
+  [242/300] ablation · sans bibliotheque 242/300  ·  10m55s ecoulees  ·  reste ~2m37s
+  [243/300] ablation · sans bibliotheque 243/300  ·  10m57s ecoulees  ·  reste ~2m34s
+  [244/300] ablation · sans bibliotheque 244/300  ·  10m59s ecoulees  ·  reste ~2m31s
+  [245/300] ablation · sans bibliotheque 245/300  ·  11m02s ecoulees  ·  reste ~2m28s
+  [246/300] ablation · sans bibliotheque 246/300  ·  11m04s ecoulees  ·  reste ~2m25s
+  [247/300] ablation · sans bibliotheque 247/300  ·  11m08s ecoulees  ·  reste ~2m23s
+  [248/300] ablation · sans bibliotheque 248/300  ·  11m11s ecoulees  ·  reste ~2m20s
+  [249/300] ablation · sans bibliotheque 249/300  ·  11m15s ecoulees  ·  reste ~2m18s
+  [250/300] ablation · sans bibliotheque 250/300  ·  11m19s ecoulees  ·  reste ~2m15s
+  [251/300] ablation · sans bibliotheque 251/300  ·  11m24s ecoulees  ·  reste ~2m13s
+  [252/300] ablation · sans bibliotheque 252/300  ·  11m29s ecoulees  ·  reste ~2m11s
+  [253/300] ablation · sans bibliotheque 253/300  ·  11m32s ecoulees  ·  reste ~2m08s
+  [254/300] ablation · sans bibliotheque 254/300  ·  11m34s ecoulees  ·  reste ~2m05s
+  [255/300] ablation · sans bibliotheque 255/300  ·  11m37s ecoulees  ·  reste ~2m03s
+  [256/300] ablation · sans bibliotheque 256/300  ·  11m39s ecoulees  ·  reste ~2m00s
+  [257/300] ablation · sans bibliotheque 257/300  ·  11m41s ecoulees  ·  reste ~1m57s
+  [258/300] ablation · sans bibliotheque 258/300  ·  11m44s ecoulees  ·  reste ~1m54s
+  [259/300] ablation · sans bibliotheque 259/300  ·  11m46s ecoulees  ·  reste ~1m51s
+  [260/300] ablation · sans bibliotheque 260/300  ·  11m49s ecoulees  ·  reste ~1m49s
+  [261/300] ablation · sans bibliotheque 261/300  ·  11m52s ecoulees  ·  reste ~1m46s
+  [262/300] ablation · sans bibliotheque 262/300  ·  11m55s ecoulees  ·  reste ~1m43s
+  [263/300] ablation · sans bibliotheque 263/300  ·  11m57s ecoulees  ·  reste ~1m40s
+  [264/300] ablation · sans bibliotheque 264/300  ·  12m00s ecoulees  ·  reste ~1m38s
+  [265/300] ablation · sans bibliotheque 265/300  ·  12m03s ecoulees  ·  reste ~1m35s
+  [266/300] ablation · sans bibliotheque 266/300  ·  12m07s ecoulees  ·  reste ~1m33s
+  [267/300] ablation · sans bibliotheque 267/300  ·  12m11s ecoulees  ·  reste ~1m30s
+  [268/300] ablation · sans bibliotheque 268/300  ·  12m14s ecoulees  ·  reste ~1m27s
+  [269/300] ablation · sans bibliotheque 269/300  ·  12m18s ecoulees  ·  reste ~1m25s
+  [270/300] ablation · sans bibliotheque 270/300  ·  12m21s ecoulees  ·  reste ~1m22s
+  [271/300] ablation · sans routeur 271/300  ·  12m23s ecoulees  ·  reste ~1m19s
+  [272/300] ablation · sans routeur 272/300  ·  12m26s ecoulees  ·  reste ~1m16s
+  [273/300] ablation · sans routeur 273/300  ·  12m28s ecoulees  ·  reste ~1m13s
+  [274/300] ablation · sans routeur 274/300  ·  12m30s ecoulees  ·  reste ~1m11s
+  [275/300] ablation · sans routeur 275/300  ·  12m33s ecoulees  ·  reste ~1m08s
+  [276/300] ablation · sans routeur 276/300  ·  12m35s ecoulees  ·  reste ~1m05s
+  [277/300] ablation · sans routeur 277/300  ·  12m39s ecoulees  ·  reste ~1m03s
+  [278/300] ablation · sans routeur 278/300  ·  12m43s ecoulees  ·  reste ~1m00s
+  [279/300] ablation · sans routeur 279/300  ·  12m47s ecoulees  ·  reste ~57s
+  [280/300] ablation · sans routeur 280/300  ·  12m51s ecoulees  ·  reste ~55s
+  [281/300] ablation · sans routeur 281/300  ·  12m56s ecoulees  ·  reste ~52s
+  [282/300] ablation · sans routeur 282/300  ·  13m01s ecoulees  ·  reste ~49s
+  [283/300] ablation · sans routeur 283/300  ·  13m03s ecoulees  ·  reste ~47s
+  [284/300] ablation · sans routeur 284/300  ·  13m06s ecoulees  ·  reste ~44s
+  [285/300] ablation · sans routeur 285/300  ·  13m09s ecoulees  ·  reste ~41s
+  [286/300] ablation · sans routeur 286/300  ·  13m11s ecoulees  ·  reste ~38s
+  [287/300] ablation · sans routeur 287/300  ·  13m14s ecoulees  ·  reste ~35s
+  [288/300] ablation · sans routeur 288/300  ·  13m16s ecoulees  ·  reste ~33s
+  [289/300] ablation · sans routeur 289/300  ·  13m19s ecoulees  ·  reste ~30s
+  [290/300] ablation · sans routeur 290/300  ·  13m22s ecoulees  ·  reste ~27s
+  [291/300] ablation · sans routeur 291/300  ·  13m24s ecoulees  ·  reste ~24s
+  [292/300] ablation · sans routeur 292/300  ·  13m27s ecoulees  ·  reste ~22s
+  [293/300] ablation · sans routeur 293/300  ·  13m30s ecoulees  ·  reste ~19s
+  [294/300] ablation · sans routeur 294/300  ·  13m32s ecoulees  ·  reste ~16s
+  [295/300] ablation · sans routeur 295/300  ·  13m36s ecoulees  ·  reste ~13s
+  [296/300] ablation · sans routeur 296/300  ·  13m40s ecoulees  ·  reste ~11s
+  [297/300] ablation · sans routeur 297/300  ·  13m43s ecoulees  ·  reste ~8s
+  [298/300] ablation · sans routeur 298/300  ·  13m46s ecoulees  ·  reste ~5s
+  [299/300] ablation · sans routeur 299/300  ·  13m49s ecoulees  ·  reste ~2s
+  [300/300] ablation · sans routeur 300/300  ·  13m52s ecoulees

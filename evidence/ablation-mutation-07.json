@@ -1,0 +1,39 @@
+{
+  "n_missions": 30,
+  "taches": 5,
+  "graines": 6,
+  "complet": {
+    "justes": 30,
+    "livrees": 24,
+    "silencieuses": 0,
+    "abstentions": 0,
+    "appels": 3.1
+  },
+  "leviers": [
+    {
+      "nom": "mutation",
+      "sans": "les regles ne sont jamais mises a l'epreuve d'un mutant",
+      "justes_avec": 30,
+      "justes_sans": 30,
+      "livrees_sans": 30,
+      "abstentions_sans": 0,
+      "silencieuses_avec": 0,
+      "silencieuses_sans": 0,
+      "appels_avec": 3.1,
+      "appels_sans": 3.1,
+      "b": 0,
+      "c": 0,
+      "p_exact": 1.0,
+      "b_propre": 0,
+      "c_propre": 6,
+      "p_propre": 0.03125,
+      "ic95_points": [
+        0.0,
+        0.0
+      ],
+      "verdict": "COUT MESURE",
+      "note": "retirer cette brique rend les livraisons PLUS propres : 6 gagnee(s) contre 0 perdue(s) (McNemar exact p = 0.0312). A justifier, ou a interroger. aucune dissociation observee ; au moins 6 dissociations dans le meme sens seraient necessaires pour que ce test conclue."
+    }
+  ],
+  "note": ""
+}

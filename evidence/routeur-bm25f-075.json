@@ -1,0 +1,105 @@
+{
+  "retouche": "BM25F : le corps des competences entre dans l'index comme second champ",
+  "parametre": {
+    "nom": "POIDS_CORPS",
+    "avant": 0.0,
+    "apres": 0.75
+  },
+  "jeux": {
+    "banc (celui du reglage)": {
+      "cas": 31,
+      "hors_sujet": 8,
+      "avant": 0.8387,
+      "apres": 0.871,
+      "gain_points": 3.2,
+      "ic95_gain_points": [
+        0.0,
+        9.7
+      ],
+      "abstention_avant": 1.0,
+      "abstention_apres": 1.0,
+      "echecs_apres": [
+        "Un agent a reussi la mission en modifiant le test au lieu de corriger le code",
+        "The agent edited the oracle so its output would pass",
+        "Le modele recoit « erreur » sans savoir quel fichier ni quelle ligne",
+        "Report the exact command, exit code and stderr when a check fails"
+      ]
+    },
+    "controle A (jamais vu)": {
+      "cas": 24,
+      "hors_sujet": 4,
+      "avant": 0.4583,
+      "apres": 0.5833,
+      "gain_points": 12.5,
+      "ic95_gain_points": [
+        0.0,
+        25.0
+      ],
+      "abstention_avant": 1.0,
+      "abstention_apres": 1.0,
+      "echecs_apres": [
+        "The agent changed the assertion until the suite went green",
+        "We need to know whether the run really proved it or just looked convincing",
+        "Record the failing command with its exit status so the next attempt can be checked",
+        "This error keeps coming back on every retry, stop paying for it twice",
+        "Turn the same bug into a reusable procedure so it cannot return",
+        "Le correctif a ete obtenu en desactivant le controle qui echouait",
+        "Je veux la trace qui montre que la sortie annoncee est vraie",
+        "Quand un controle casse, il faut la ligne de commande et le code de retour",
+        "On refait toujours la meme erreur d'arrondi a chaque session",
+        "Un bug qui revient merite de devenir une fiche reutilisable"
+      ]
+    },
+    "jeu B (jamais vu, ecrit avant la retouche)": {
+      "cas": 24,
+      "hors_sujet": 5,
+      "avant": 0.5,
+      "apres": 0.5,
+      "gain_points": 0.0,
+      "ic95_gain_points": [
+        0.0,
+        0.0
+      ],
+      "abstention_avant": 1.0,
+      "abstention_apres": 1.0,
+      "echecs_apres": [
+        "corriger un bug de division par zero dans le calcul de remise",
+        "le prix affiche est faux quand la remise depasse 50 pourcent",
+        "verifier que trier les articles ne change pas le total",
+        "le modele repond sans lire le fichier depuis le depot",
+        "la suite de tests passe au vert alors que le correctif ne fait rien",
+        "transformer cet echec repete en fiche de procedure reutilisable",
+        "le meme test echoue des qu'on change l'ordre des entrees",
+        "un correctif qui desactive le controle qui echouait",
+        "the same crash is back after every session, remember it",
+        "make the skill list stop loading procedures that do not apply",
+        "record the exact command and exit status when a check breaks",
+        "turn our repeated mistakes into a bounded reusable playbook"
+      ]
+    }
+  },
+  "jeux_jamais_vus_regroupes": {
+    "cas": 48,
+    "avant": 0.4792,
+    "apres": 0.5417,
+    "gain_points": 6.2,
+    "ic95_gain_points": [
+      0.0,
+      14.6
+    ],
+    "note": "deux jeux ecrits AVANT la retouche ; borne basse a zero = direction, pas preuve a 95 %"
+  },
+  "objectifs_reels": {
+    "cas": 6,
+    "chargent_avant": 2,
+    "chargent_apres": 2,
+    "bien_routes_avant": 2,
+    "bien_routes_apres": 2,
+    "note": "l'abstention reste : c'est la DECOUVERTE qui est reparee (inventaire tier 0 rendu)"
+  },
+  "horodatage": "2026-10-01 14:53:13 +0000",
+  "genre": "routeur de competences",
+  "commit": "438d784",
+  "materiel": "aucun modele appele : la mesure est deterministe, rejouable a l'octet",
+  "reproductible_par": "jio skills --banc ; jio skills --controle ; scripts/mesure-routeur.py (apparie avant/apres, IC95 bootstrap, graine fixe)"
+}

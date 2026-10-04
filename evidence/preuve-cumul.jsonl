@@ -1,0 +1,10 @@
+{"type": "entete", "skill": 0.4, "runs": 8, "rounds": 2, "gain": 0.2}
+{"type": "replication", "seed_base": 0, "runs": 8, "rounds": 2}
+{"type": "cycle", "numero": 1, "froid": 33, "temoin": 33, "chaud": 36, "essais": 40, "avertis": 93, "appels": 113, "caracteres_memoire": 38439, "memo_avant": 0, "memo_apres": 11, "rappels": 31, "artefact": 0, "ecart": 3, "chaud_seul": 3, "temoin_seul": 0, "bloc": 0}
+{"type": "cycle", "numero": 2, "froid": 36, "temoin": 36, "chaud": 38, "essais": 40, "avertis": 116, "appels": 116, "caracteres_memoire": 59991, "memo_avant": 11, "memo_apres": 17, "rappels": 40, "artefact": 0, "ecart": 2, "chaud_seul": 2, "temoin_seul": 0, "bloc": 0}
+{"type": "replication", "seed_base": 2000, "runs": 8, "rounds": 2}
+{"type": "cycle", "numero": 3, "froid": 35, "temoin": 35, "chaud": 35, "essais": 40, "avertis": 49, "appels": 110, "caracteres_memoire": 20145, "memo_avant": 0, "memo_apres": 10, "rappels": 17, "artefact": 0, "ecart": 0, "chaud_seul": 0, "temoin_seul": 0, "bloc": 2000}
+{"type": "cycle", "numero": 4, "froid": 35, "temoin": 35, "chaud": 37, "essais": 40, "avertis": 93, "appels": 116, "caracteres_memoire": 38718, "memo_avant": 10, "memo_apres": 18, "rappels": 30, "artefact": 0, "ecart": 2, "chaud_seul": 2, "temoin_seul": 0, "bloc": 2000}
+{"type": "replication", "seed_base": 4000, "runs": 8, "rounds": 2}
+{"type": "cycle", "numero": 5, "froid": 36, "temoin": 36, "chaud": 37, "essais": 40, "avertis": 66, "appels": 111, "caracteres_memoire": 25600, "memo_avant": 0, "memo_apres": 7, "rappels": 21, "artefact": 0, "ecart": 1, "chaud_seul": 1, "temoin_seul": 0, "bloc": 4000}
+{"type": "cycle", "numero": 6, "froid": 36, "temoin": 36, "chaud": 36, "essais": 40, "avertis": 91, "appels": 112, "caracteres_memoire": 43216, "memo_avant": 7, "memo_apres": 15, "rappels": 31, "artefact": 0, "ecart": 0, "chaud_seul": 0, "temoin_seul": 0, "bloc": 4000}

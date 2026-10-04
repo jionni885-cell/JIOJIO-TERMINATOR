@@ -1,0 +1,102 @@
+{
+  "horodatage": "2026-10-01 16:17:11 +0000",
+  "commit": "76b3f3e",
+  "table": {
+    "source": "wink-embeddings-sg-100d 1.1.0 (npm, MIT) — vecteurs derives de GloVe (PDDL)",
+    "mots": 11000,
+    "dims": 100,
+    "octets": 879054,
+    "chemin": "jio/skills/vecteurs/glove-sg-100d-jio.bin.gz",
+    "construite_par": "scripts/construire-vecteurs.py"
+  },
+  "1_porte_semantique": {
+    "verdict": "IMPOSSIBLE — les deux populations se recouvrent",
+    "objectifs_du_domaine_refuses": {
+      "cas": 24,
+      "sans_signal": 0,
+      "ressemblance_max": {
+        "min": 0.496,
+        "mediane": 0.713,
+        "max": 0.806
+      },
+      "contraste_mediane": 0.101
+    },
+    "hors_sujet": {
+      "cas": 30,
+      "sans_signal": 1,
+      "ressemblance_max": {
+        "min": 0.367,
+        "mediane": 0.619,
+        "max": 0.998
+      },
+      "contraste_mediane": 0.09
+    }
+  },
+  "2_reordonner_la_liste": {
+    "verdict": "ECARTE — gagne au milieu, perd la tete",
+    "24_refuses_bm25": {
+      "@1": "10/24",
+      "@3": "14/24",
+      "@5": "16/24",
+      "@12": "21/24"
+    },
+    "24_refuses_reordonnee": {
+      "@1": "9/24",
+      "@3": "15/24",
+      "@5": "19/24",
+      "@12": "24/24"
+    },
+    "banc_bm25": {
+      "@1": "27/31",
+      "@3": "30/31",
+      "@5": "30/31",
+      "@12": "31/31"
+    },
+    "banc_reordonnee": {
+      "@1": "22/31",
+      "@3": "30/31",
+      "@5": "30/31",
+      "@12": "31/31"
+    }
+  },
+  "3_completer_la_liste": {
+    "verdict": "RETENU — domination stricte, aucune metrique ne baisse",
+    "24_refuses_avant": {
+      "@1": "10/24",
+      "@3": "14/24",
+      "@5": "16/24",
+      "@12": "21/24"
+    },
+    "24_refuses_apres": {
+      "@1": "10/24",
+      "@3": "14/24",
+      "@5": "17/24",
+      "@12": "24/24"
+    },
+    "113_cas_avant": {
+      "@1": "56/113",
+      "@3": "86/113",
+      "@5": "92/113",
+      "@12": "107/113"
+    },
+    "113_cas_apres": {
+      "@1": "56/113",
+      "@3": "86/113",
+      "@5": "93/113",
+      "@12": "112/113"
+    },
+    "banc_avant": {
+      "@1": "27/31",
+      "@3": "30/31",
+      "@5": "30/31",
+      "@12": "31/31"
+    },
+    "banc_apres": {
+      "@1": "27/31",
+      "@3": "30/31",
+      "@5": "30/31",
+      "@12": "31/31"
+    }
+  },
+  "reproductible_par": "python scripts/mesure-vecteurs.py --json ; jio skills --controle"
+}

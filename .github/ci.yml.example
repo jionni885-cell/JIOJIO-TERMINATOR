@@ -1,0 +1,106 @@
+# EXEMPLE a installer en `.github/workflows/ci.yml`
+# --------------------------------------------------------------------------- #
+# Pourquoi ce fichier porte encore l'extension `.example` : mesure faite, le jeton
+# utilise pour pousser n'a PAS la permission `workflows`. La creation du fichier est
+# refusee a la source :
+#
+#   refusing to allow a GitHub App to create or update workflow
+#   `.github/workflows/ci.yml` without `workflows` permission
+#
+# Plutot que de perdre le travail ou de contourner la securite du depot, le fichier
+# est fourni ici, pret a l'emploi et a jour.
+#
+# Installation (toi seul as les droits) :
+#     mkdir -p .github/workflows
+#     cp .github/ci.yml.example .github/workflows/ci.yml
+#     git add .github/workflows/ci.yml && git commit -m "CI: tests + auto-audit JIO"
+#
+# Ou plus simple : GitHub -> Actions -> New workflow -> « set up a workflow
+# yourself », puis coller ce contenu.
+
+# CI : la meme porte que celle passee en local, pour que personne ne puisse
+# merger sans elle.
+#
+# Deux verifications, et pas une : que les tests passent, ET que le projet
+# s'audite lui-meme proprement. Un projet qui se contente de ses propres tests ne
+# verifie que ce qu'il a pense a tester ; `jio scan` regarde ce qu'on n'a pas pense
+# a tester. Les documents sont verifies aussi : leurs affirmations sont refutables.
+
+name: CI
+
+# Deux verifications, pas une : que les tests passent, ET que le projet s'audite
+# lui-meme proprement. Un projet qui se contente de ses propres tests ne verifie
+# que ce qu'il a pense a tester ; `jio scan` regarde ce que personne n'a pense a
+# tester. Les deux doivent etre verts pour merger.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installer les outils de verification
+        run: |
+          python -m pip install --upgrade pip
+          # On installe l'EXTRA, pas une liste recopiee a la main : une liste recopiee
+          # diverge. Celle-ci affirmait « aucune autre dependance n'est necessaire » alors
+          # que les tests importent `yaml` (via `pyyaml`) : sur un clone neuf, deux tests
+          # echouaient. `jio scan` verifie desormais ce lien, mais l'installation doit
+          # d'abord partir de la source unique — `pyproject.toml`.
+          # ruff : l'analyseur standard des vrais bugs, branche sur `jio scan`.
+          python -m pip install -e '.[dev]' ruff
+
+      - name: Suite de tests
+        run: python -m pytest -q
+
+      - name: JIO s'audite lui-meme
+        # Doit sortir en code 0 : aucun defaut prouve. Les reserves et les limites
+        # declarees sont affichees sans faire echouer — c'est la difference entre
+        # auditer et pretendre auditer.
+        run: python -m jio scan jio --exclude-tests --no-learn
+
+      - name: Les documents ne mentent pas sur leurs commandes
+        # L'oracle est le parseur de la CLI : verifier ce qu'un document affirme ne
+        # coute aucun modele. 0 refutation attendue sur tous les documents du depot.
+        run: |
+          python -m jio claims --hook $(git ls-files '*.md' '*.rst' '*.txt' | grep -v '^evidence/')
+
+      - name: Les competences et les agents ne commandent rien de dangereux
+        # Une competence n'est pas un document : c'est une consigne pour un agent qui peut
+        # ecrire des fichiers et lancer des commandes. Une competence hostile s'execute
+        # avec ses droits (arXiv 2608.29381 en donne un exemple complet).
+        run: python -m jio artifacts --audit
+
+      - name: Les chiffres annonces sont ceux mesures
+        # 187 tests verts pour 520 reels : ce controle a mordu trois fois. Il ne se
+        # contente plus de refuser — `jio chiffres --appliquer` ecrit la valeur mesuree.
+        # En CI, on refuse : un chiffre faux dans la documentation coute plus cher qu'une
+        # absence de chiffre.
+        run: python -m jio chiffres
+
+      - name: Le depot passe sa propre porte
+        # `jio scan .` (depot entier) sort en 1 : les tests contiennent du code fautif,
+        # c'est leur sujet. Le paquet `jio/` doit etre propre sans reserve, et c'est ce
+        # que ce controle exige.
+        run: python -m jio scan jio --no-learn
+
+      - name: La coherence d'ensemble
+        # Les etapes precedentes regardent chacune UNE chose. Celle-ci regarde ce qui les
+        # relie : les artefacts generes correspondent-ils a leur doctrine, les chiffres
+        # annonces a la mesure, les commandes citees au parseur reel, un plan autonome
+        # laisse-t-il du travail en suspens ? Code 0 seulement si tout est coherent.
+        run: python -m jio coherence
+
+      - name: La mesure du banc
+        # Le chiffre publie doit etre reproduisible par n'importe qui, sinon ce
+        # n'est pas une mesure mais une affirmation.
+        run: python -m jio bench --rounds 2

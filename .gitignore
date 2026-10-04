@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.pyc
+.jio/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Sauvegardes locales creees avant une reecriture automatique (garde d'ecriture des
+# artefacts, et `jio chiffres --appliquer`). Elles servent a revenir en arriere ; elles
+# n'ont pas leur place dans l'historique.
+*.avant-jio
+*.jio
+
+# Un verrou est un etat d'execution, pas une preuve : il change a chaque campaigne et ne
+# doit pas entrer dans l'histoire du depot (il a ete committe une fois, par `git add -A`).
+*.verrou
+
+# Le modele entraine ici (scripts/modele-local/) : un binaire de quelques megaoctets n'a rien
+# a faire dans l'historique. Ce qui est versionne, c'est la graine, la configuration, le
+# corpus (le depot) et le journal d'entrainement — de quoi le refaire et verifier l'empreinte.
+modele/
+
+# Journaux d'execution d'un service local : une trace d'affichage, pas une preuve.
+evidence/modele-local-serveur.log

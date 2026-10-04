@@ -1,0 +1,58 @@
+# JIO utilisable comme hook pre-commit, au standard de l'ecosysteme.
+# Le principe : un defaut prouve ne doit jamais atteindre un commit.
+#
+#   - repo: https://github.com/jionni885-cell/JIOJIO-TERMINATOR
+#     rev: <tag ou commit>
+#     hooks:
+#       - id: jio-scan
+#
+# `pass_filenames: false` est volontaire : un defaut n'existe pas fichier par
+# fichier. Un renommage casse le CONSOMMATEUR, qui n'est pas le fichier modifie ;
+# c'est justement ce qu'une verification par fichier isole ne peut pas voir.
+- id: jio-scan
+  name: JIO — audit du projet (defauts prouves uniquement)
+  description: >
+    Derive des regles executables depuis le code lui-meme (signature, exemples de
+    docstring, reproductibilite), verifie les imports internes, puis passe le projet
+    aux analyseurs standards. Ne signale que ce qui a une preuve.
+  entry: jio scan . --exclude-tests --no-learn
+  language: python
+  pass_filenames: false
+  always_run: true
+
+- id: jio-scan-strict
+  name: JIO — audit strict (aucune reserve toleree)
+  description: >
+    Meme audit, mais `--strict` : echoue AUSSI sur les reserves (une regle n'a pas su
+    trancher) et sur les fichiers non testables (import incoherent, analyse impossible).
+    A utiliser une fois la base assainie.
+  entry: jio scan . --exclude-tests --no-learn --strict
+  language: python
+  pass_filenames: false
+  always_run: true
+
+- id: jio-claims
+  name: JIO — faits verifiables des documents (calculs, blocs, chemins)
+  description: >
+    Recalcule les calculs annonces, compile les blocs presentes comme du Python et
+    verifie les chemins cites, dans les documents modifies. N'echoue QUE sur une
+    affirmation refutee : un document sans matiere prouvable n'est ni un succes ni un
+    echec, et ne doit pas bloquer un commit.
+  entry: jio claims --hook
+  language: python
+  files: \.(md|markdown|rst|txt|org|adoc)$
+  # Les noms de fichiers sont passes a `jio claims --hook` : c'est le mode ou
+  # « rien a verifier » ne bloque pas, et ou seule une refutation fait echouer.
+
+- id: jio-artifacts-audit
+  name: JIO — instructions des competences et des agents
+  description: >
+    Verifie que ce qui sera EXECUTE par un agent (competences Hermes, agents opencode,
+    prompts) ne contient pas d'ordre dangereux : contournement d'un garde-fou, commande
+    destructrice, execution de code telecharge, exfiltration de secret, invitation a taire
+    une erreur. Une ligne qui INTERDIT le motif est comptee comme mise en garde, jamais
+    condamnee : un controle qui accuse les fichiers qui le protegent se fait desactiver.
+  entry: jio artifacts --audit
+  language: python
+  pass_filenames: false
+  always_run: true

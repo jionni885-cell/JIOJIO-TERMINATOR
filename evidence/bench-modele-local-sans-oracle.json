@@ -1,0 +1,164 @@
+{
+  "horodatage": "2026-09-30 20:10:58 +0000",
+  "modele": "openai:modele-local-char",
+  "genre": "openai",
+  "note_modele": "point d'acces compatible OpenAI, modele modele-local-char",
+  "competence_simulee": 0.35,
+  "tirages": 1,
+  "taches": 5,
+  "tours_max": 4,
+  "duree_s": 1042.02,
+  "commit": "57541dc",
+  "bras": [
+    {
+      "cle": "S0",
+      "libelle": "modele brut (1 appel)",
+      "mesure": true,
+      "reussite": 0.0,
+      "ic95": [
+        0.0,
+        0.4345
+      ],
+      "appels_moyens": 1.0,
+      "essais": 5
+    },
+    {
+      "cle": "S1",
+      "libelle": "echantillonnage seul (best-of-3)",
+      "mesure": true,
+      "reussite": 0.0,
+      "ic95": [
+        0.0,
+        0.4345
+      ],
+      "appels_moyens": 3.0,
+      "essais": 5
+    },
+    {
+      "cle": "S1b",
+      "libelle": "CONTROLE : autant d'appels, 0 verification",
+      "mesure": true,
+      "reussite": 0.0,
+      "ic95": [
+        0.0,
+        0.4345
+      ],
+      "appels_moyens": 3.0,
+      "essais": 5
+    },
+    {
+      "cle": "S2",
+      "libelle": "verification executable + reprise",
+      "mesure": true,
+      "reussite": 0.0,
+      "ic95": [
+        0.0,
+        0.4345
+      ],
+      "appels_moyens": 3.0,
+      "essais": 5
+    },
+    {
+      "cle": "S3",
+      "libelle": "JIO complet (livraison auditee)",
+      "mesure": true,
+      "reussite": 0.0,
+      "ic95": [
+        0.0,
+        0.4345
+      ],
+      "appels_moyens": 3.0,
+      "essais": 5
+    },
+    {
+      "cle": "S4",
+      "libelle": "AUCUN ORACLE : regles traduites en temoins",
+      "mesure": false
+    },
+    {
+      "cle": "S4c",
+      "libelle": "AUCUN ORACLE : traducteur a 50 % de fidelite",
+      "mesure": false
+    },
+    {
+      "cle": "S4b",
+      "libelle": "AUCUN ORACLE : traducteur FAUX (lue a l'envers)",
+      "mesure": false
+    },
+    {
+      "cle": "S4r",
+      "libelle": "AUCUN ORACLE : VOS regles traduites par le modele",
+      "mesure": true,
+      "reussite": 0.0,
+      "ic95": [
+        0.0,
+        0.4345
+      ],
+      "appels_moyens": 3.0,
+      "essais": 5
+    },
+    {
+      "cle": "S4rc",
+      "libelle": "CONTROLE sans oracle : meme budget, 0 verification",
+      "mesure": true,
+      "reussite": 0.0,
+      "ic95": [
+        0.0,
+        0.4345
+      ],
+      "appels_moyens": 3.0,
+      "essais": 5
+    }
+  ],
+  "ecarts": [
+    {
+      "de": "S1b",
+      "vers": "S2",
+      "question": "budget d'appels EGAL : verification vs echantillonnage",
+      "delta_points": 0.0,
+      "ic95_points": [
+        -43.45,
+        43.45
+      ],
+      "intervalle_exclut_zero": false,
+      "intervalle_degenere": false,
+      "essais": 5,
+      "verdict": "aucune difference sur ce jeu de taches."
+    },
+    {
+      "de": "S0",
+      "vers": "S3",
+      "question": "gain total du harness (modele brut -> JIO)",
+      "delta_points": 0.0,
+      "ic95_points": [
+        -43.45,
+        43.45
+      ],
+      "intervalle_exclut_zero": false,
+      "intervalle_degenere": false,
+      "essais": 5,
+      "verdict": "aucune difference sur ce jeu de taches."
+    },
+    {
+      "de": "S4rc",
+      "vers": "S4r",
+      "question": "sans oracle : harness vs meme budget sans verification",
+      "delta_points": 0.0,
+      "ic95_points": [
+        -43.45,
+        43.45
+      ],
+      "intervalle_exclut_zero": false,
+      "intervalle_degenere": false,
+      "essais": 5,
+      "verdict": "aucune difference sur ce jeu de taches."
+    }
+  ],
+  "integrite": {
+    "exploits d'integrite detectes": 0,
+    "abstentions sans oracle": 0,
+    "candidats CORRECTS rejetes": 0,
+    "ERREURS LIVREES SANS RESERVE": 0
+  },
+  "hypotheses": []
+}
