@@ -7,8 +7,8 @@ sur la simulation deterministe : le systeme reste utilisable et testable.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Iterable, Sequence
 
 from .base import Provider
 from .cli import CliProvider
@@ -35,13 +35,15 @@ class Registry:
 
     def get(self, name: str) -> Provider:
         if name not in self.providers:
-            raise KeyError(f"fournisseur inconnu : {name!r} (connus : {sorted(self.providers)})")
+            raise KeyError(
+                f"fournisseur inconnu : {name!r} (connus : {sorted(self.providers)})"
+            )
         return self.providers[name]
 
     def names(self) -> list[str]:
         return sorted(self.providers)
 
-    def __iter__(self) -> Iterable[Provider]:
+    def __iter__(self) -> Iterator[Provider]:
         return iter(self.providers.values())
 
 
@@ -96,7 +98,12 @@ def from_env() -> Registry:
 
 
 def _first_key() -> str | None:
-    for var in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"):
+    for var in (
+        "OPENROUTER_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "DEEPSEEK_API_KEY",
+    ):
         val = os.environ.get(var)
         if val:
             return val
@@ -119,4 +126,4 @@ def make_providers(specs: Sequence[str]) -> list[Provider]:
     return out
 
 
-__all__ = ["Registry", "KNOWN_CLIS", "detect_clis", "from_env", "make_providers"]
+__all__ = ["KNOWN_CLIS", "Registry", "detect_clis", "from_env", "make_providers"]

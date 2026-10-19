@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
-import urllib.request
 from pathlib import Path
 
 BRANCHE = "arena/01a0d44e-jiojio-terminator"
@@ -31,7 +30,7 @@ URL_DEPOT = "https://github.com/jionni885-cell/JIOJIO-TERMINATOR.git"
 
 def _lancer(commande: list[str], ou: Path | None = None) -> tuple[int, str]:
     resultat = subprocess.run(
-        commande, cwd=ou, capture_output=True, text=True,
+        commande, cwd=ou, capture_output=True, text=True, check=False,
     )
     sortie = (resultat.stdout or "") + (resultat.stderr or "")
     return resultat.returncode, sortie

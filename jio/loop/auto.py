@@ -34,6 +34,8 @@ un autre etat).
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
@@ -43,14 +45,14 @@ __all__ = [
     "MAX_ETAPES",
     "Etape",
     "EtapeRefusee",
-    "ResultatEtape",
     "ResultatAuto",
-    "extraire_etapes",
-    "plan_simule",
-    "executer",
-    "formater",
+    "ResultatEtape",
     "enregistrer",
+    "executer",
+    "extraire_etapes",
+    "formater",
     "lire_etat",
+    "plan_simule",
     "reprendre",
 ]
 
@@ -82,11 +84,17 @@ class EtapeRefusee:
     raison: str
 
 
-def _champs_valides(etape: dict[str, object]) -> tuple[Etape | None, EtapeRefusee | None]:
+def _champs_valides(
+    etape: dict[str, object],
+) -> tuple[Etape | None, EtapeRefusee | None]:
     """Valide UNE etape proposee par le modele. Rend l'etape, ou son refus motive."""
     objectif = str(etape.get("objectif") or etape.get("objective") or "").strip()
     preuve = str(
-        etape.get("preuve") or etape.get("proof") or etape.get("check") or etape.get("test") or ""
+        etape.get("preuve")
+        or etape.get("proof")
+        or etape.get("check")
+        or etape.get("test")
+        or ""
     ).strip()
     cible = str(etape.get("cible") or etape.get("target") or "").strip()
     if not objectif:
@@ -103,7 +111,7 @@ def _champs_valides(etape: dict[str, object]) -> tuple[Etape | None, EtapeRefuse
         return None, EtapeRefusee(
             objectif=objectif,
             raison=f"preuve trop longue ({len(preuve)} > {MAX_PREUVE} caracteres) : illisible, "
-                   "donc non verifiable",
+            "donc non verifiable",
         )
     return Etape(id="", objectif=objectif, preuve=preuve, cible=cible), None
 
@@ -133,7 +141,9 @@ def extraire_etapes(
     refusees: list[EtapeRefusee] = []
     for index, item in enumerate(brut, 1):
         if not isinstance(item, dict):
-            refusees.append(EtapeRefusee(objectif=str(item)[:60], raison="etape non structurée"))
+            refusees.append(
+                EtapeRefusee(objectif=str(item)[:60], raison="etape non structurée")
+            )
             continue
         etape, refus = _champs_valides(item)
         if refus is not None:
@@ -149,7 +159,12 @@ def extraire_etapes(
             )
             continue
         acceptees.append(
-            Etape(id=f"E{index:02d}", objectif=etape.objectif, preuve=etape.preuve, cible=etape.cible)
+            Etape(
+                id=f"E{index:02d}",
+                objectif=etape.objectif,
+                preuve=etape.preuve,
+                cible=etape.cible,
+            )
         )
     return tuple(acceptees), tuple(refusees)
 
@@ -158,14 +173,16 @@ def _premier_json_liste(texte: str) -> list[object] | None:
     """Extrait la premiere liste JSON du texte, meme entouree de prose ou de balises."""
     candidat = texte.strip()
     if candidat.startswith("```"):
-        candidat = candidat.split("```")[1] if len(candidat.split("```")) > 1 else candidat
+        candidat = (
+            candidat.split("```")[1] if len(candidat.split("```")) > 1 else candidat
+        )
         candidat = candidat.removeprefix("json").strip()
     debut = candidat.find("[")
     fin = candidat.rfind("]")
     if debut < 0 or fin <= debut:
         return None
     try:
-        charge = json.loads(candidat[debut:fin + 1])
+        charge = json.loads(candidat[debut : fin + 1])
     except ValueError:
         return None
     return charge if isinstance(charge, list) else None
@@ -178,8 +195,10 @@ _PLAN_SIMULE = (
     ("localiser la cible et lire ses regles", "jio scan {cible}"),
     # La preuve de l'etape de correction cite la CIBLE dans l'objectif : une preuve qui ne dit
     # pas sur quoi elle porte ne prouve rien de precis, meme quand elle sort en 0.
-    ("corriger la cible et prouver la correction",
-     "jio run \"{objectif} — cible {cible}\" --entrypoint {entree}"),
+    (
+        "corriger la cible et prouver la correction",
+        'jio run "{objectif} — cible {cible}" --entrypoint {entree}',
+    ),
     ("verifier que rien d'autre n'a bouge", "jio scan ."),
     ("verifier les documents qui citent la cible", "jio claims {document}"),
     # La derniere etape porte sur l'ENSEMBLE : un plan peut reussir chacune de ses etapes et
@@ -189,7 +208,9 @@ _PLAN_SIMULE = (
 )
 
 
-def plan_simule(objectif: str, *, cible: str = ".", entree: str = "") -> list[dict[str, str]]:
+def plan_simule(
+    objectif: str, *, cible: str = ".", entree: str = ""
+) -> list[dict[str, str]]:
     """Un plan deterministe pour le mode SIMULE, qui declare ce qu'il est.
 
     Il n'essaie pas d'etre intelligent : c'est un plan de reference dont chaque etape porte une
@@ -209,11 +230,17 @@ def plan_simule(objectif: str, *, cible: str = ".", entree: str = "") -> list[di
     for texte, preuve in _PLAN_SIMULE:
         if "claims" in preuve and not document:
             continue
-        etapes.append((
-            texte.format(objectif=objectif, cible=cible, entree=entree or "main"),
-            preuve.format(objectif=objectif, cible=cible, entree=entree or "main",
-                          document=document or cible),
-        ))
+        etapes.append(
+            (
+                texte.format(objectif=objectif, cible=cible, entree=entree or "main"),
+                preuve.format(
+                    objectif=objectif,
+                    cible=cible,
+                    entree=entree or "main",
+                    document=document or cible,
+                ),
+            )
+        )
     return [
         {"objectif": objectif_etape, "preuve": preuve_etape, "cible": cible}
         for objectif_etape, preuve_etape in etapes
@@ -227,7 +254,7 @@ class ResultatEtape:
     id: str
     objectif: str
     preuve: str
-    etat: str          # prouvee | refusee | bloquee | non_tentee
+    etat: str  # prouvee | refusee | bloquee | non_tentee
     motif: str = ""
     appels: int = 0
     duree_s: float = 0.0
@@ -238,7 +265,7 @@ class ResultatAuto:
     """Le resultat d'un plan : trois issues, jamais quatre."""
 
     objectif: str
-    etat: str                       # termine | bloque | budget | refuse
+    etat: str  # termine | bloque | budget | refuse
     motif: str = ""
     etapes: list[ResultatEtape] = field(default_factory=list)
     refusees: list[EtapeRefusee] = field(default_factory=list)
@@ -256,7 +283,9 @@ class ResultatAuto:
     @property
     def silencieuses(self) -> int:
         """Etapes declarees reussies sans preuve. Doit rester a ZERO, par construction."""
-        return sum(1 for e in self.etapes if e.etat in {"prouvee", "termine"} and not e.preuve)
+        return sum(
+            1 for e in self.etapes if e.etat in {"prouvee", "termine"} and not e.preuve
+        )
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -281,7 +310,10 @@ def _revision(racine: Path) -> str:
     try:
         proc = subprocess.run(
             ["git", "-C", str(racine), "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=30, check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -297,6 +329,7 @@ def executer(
     budget_etapes: int = MAX_ETAPES,
     refusees: Sequence[EtapeRefusee] = (),
     questions: Sequence[str] = (),
+    on_progress: Callable[[ResultatAuto], None] | None = None,
 ) -> ResultatAuto:
     """Execute les etapes dans l'ordre et s'arrete des la premiere qui ne peut pas etre prouvee.
 
@@ -313,10 +346,16 @@ def executer(
     debut = time.monotonic()
     resultat = ResultatAuto(
         objectif=objective,
-        etat="termine",
+        etat="en_cours",
         refusees=list(refusees),
         questions=tuple(questions),
         revision=_revision(racine),
+        etapes=[
+            ResultatEtape(
+                id=e.id, objectif=e.objectif, preuve=e.preuve, etat="non_tentee"
+            )
+            for e in etapes
+        ],
     )
     for index, etape in enumerate(etapes):
         if index >= budget_etapes:
@@ -326,10 +365,9 @@ def executer(
                 f"budget de {budget_etapes} etape(s) epuise : {len(restantes)} etape(s) "
                 f"NON TENTEE(S) — {restantes[0][:80]} …"
             )
-            resultat.etapes += [
-                ResultatEtape(id=e.id, objectif=e.objectif, preuve=e.preuve, etat="non_tentee")
-                for e in etapes[index:]
-            ]
+            if on_progress is not None:
+                resultat.duree_s = time.monotonic() - debut
+                on_progress(resultat)
             break
         depart = time.monotonic()
         try:
@@ -337,26 +375,25 @@ def executer(
         except Exception as exc:  # fail-closed : une etape qui plante n'est pas prouvee
             prouvee, motif, appels = False, f"l'etape a leve : {exc}", 0
         resultat.appels += appels
-        resultat.etapes.append(
-            ResultatEtape(
-                id=etape.id, objectif=etape.objectif, preuve=etape.preuve,
-                etat="prouvee" if prouvee else "bloquee",
-                motif=motif, appels=appels, duree_s=time.monotonic() - depart,
-            )
+        resultat.etapes[index] = ResultatEtape(
+            id=etape.id,
+            objectif=etape.objectif,
+            preuve=etape.preuve,
+            etat="prouvee" if prouvee else "bloquee",
+            motif=motif,
+            appels=appels,
+            duree_s=time.monotonic() - depart,
         )
+        if on_progress is not None:
+            resultat.duree_s = time.monotonic() - debut
+            on_progress(resultat)
         if not prouvee:
             resultat.etat = "bloque"
             resultat.motif = (
                 f"etape {etape.id} non prouvee : {motif} — les {len(etapes) - index - 1} "
                 "etape(s) suivantes ne sont PAS tentees"
             )
-            # Ce qui n'a PAS ete fait est ecrit noir sur blanc. Un rapport qui s'arrete a
-            # l'echec laisse croire que le plan etait court ; il etait long, et il reste du
-            # travail — c'est precisement ce que l'humain doit voir avant de reprendre.
-            resultat.etapes += [
-                ResultatEtape(id=e.id, objectif=e.objectif, preuve=e.preuve, etat="non_tentee")
-                for e in etapes[index + 1:]
-            ]
+            # Les etapes suivantes sont deja inscrites `non_tentee` dans le checkpoint.
             break
     if not etapes:
         # Aucune etape executable : l'etat est `refuse`, JAMAIS `termine`. Defaut trouve par
@@ -370,7 +407,11 @@ def executer(
             if refusees
             else "aucune etape exploitable : rien n'a ete execute."
         )
+    if resultat.etat == "en_cours":
+        resultat.etat = "termine"
     resultat.duree_s = time.monotonic() - debut
+    if on_progress is not None:
+        on_progress(resultat)
     return resultat
 
 
@@ -382,9 +423,24 @@ def enregistrer(resultat: ResultatAuto, chemin: Path) -> None:
     sont pas la meme chose que deux etapes d'un meme plan.
     """
     chemin.parent.mkdir(parents=True, exist_ok=True)
-    chemin.write_text(
-        json.dumps(resultat.as_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    contenu = json.dumps(resultat.as_dict(), ensure_ascii=False, indent=2) + "\n"
+    # Remplacement atomique : une interruption pendant l'ecriture ne doit pas detruire le
+    # dernier checkpoint valide et rendre toute reprise impossible.
+    fd, temporaire = tempfile.mkstemp(
+        prefix=f".{chemin.name}.", suffix=".tmp", dir=chemin.parent
     )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as flux:
+            flux.write(contenu)
+            flux.flush()
+            os.fsync(flux.fileno())
+        os.replace(temporaire, chemin)
+    except BaseException:
+        try:
+            os.unlink(temporaire)
+        except OSError:
+            pass
+        raise
 
 
 @dataclass(frozen=True)
@@ -430,6 +486,7 @@ def lire_etat(chemin: Path) -> dict:
     """
     donnees = json.loads(chemin.read_text(encoding="utf-8"))
     if not isinstance(donnees, dict):
+        # Erreur de schema du fichier persistant (les erreurs JSON sont des erreurs de valeur).
         raise ValueError("l'etat n'est pas un objet JSON")
     return donnees
 
@@ -448,30 +505,38 @@ def reprendre(chemin: Path, *_, revision_courante: str = "") -> Reprise:
     try:
         donnees = lire_etat(chemin)
     except (OSError, ValueError) as exc:
-        return Reprise((), frozenset(), f"etat illisible ({exc}) : reprendre serait deviner")
+        return Reprise(
+            (), frozenset(), f"etat illisible ({exc}) : reprendre serait deviner"
+        )
 
     brut = donnees.get("etapes") or []
     etapes: list[Etape] = []
     for index, item in enumerate(brut, start=1):
         try:
-            etapes.append(Etape(
-                id=str(item.get("id") or f"E{index:02d}"),
-                objectif=str(item.get("objectif") or ""),
-                preuve=str(item.get("preuve") or ""),
-            ))
+            etapes.append(
+                Etape(
+                    id=str(item.get("id") or f"E{index:02d}"),
+                    objectif=str(item.get("objectif") or ""),
+                    preuve=str(item.get("preuve") or ""),
+                )
+            )
         except AttributeError:
             continue
     if not etapes:
-        return Reprise((), frozenset(), "l'etat ne contient aucune etape : rien a reprendre")
+        return Reprise(
+            (), frozenset(), "l'etat ne contient aucune etape : rien a reprendre"
+        )
 
     etat = str(donnees.get("etat") or "")
     revision_etat = str(donnees.get("revision") or "")
 
     if etat == "termine":
         return Reprise(
-            tuple(etapes), frozenset(e.id for e in etapes),
+            tuple(etapes),
+            frozenset(e.id for e in etapes),
             "plan deja TERMINE : rien a reprendre",
-            revision_etat, revision_courante,
+            revision_etat,
+            revision_courante,
         )
 
     if not revision_etat or revision_etat != revision_courante:
@@ -481,29 +546,41 @@ def reprendre(chemin: Path, *_, revision_courante: str = "") -> Reprise:
             else f"revision differente ({revision_etat[:8]} -> {revision_courante[:8]})"
         )
         return Reprise(
-            tuple(etapes), frozenset(),
+            tuple(etapes),
+            frozenset(),
             f"{raison} : les preuves obtenues decrivent un monde qui n'existe plus, "
             "donc le plan est rejoue ENTIER (rien n'est cru sur parole)",
-            revision_etat, revision_courante,
+            revision_etat,
+            revision_courante,
         )
 
     # Même revision : on saute ce qui a ete PROUVE, et rien d'autre. Une etape bloquee ou non
     # tentee est rejouee — c'est le sens d'une reprise.
     prouvees = frozenset(
-        str(item.get("id")) for item in brut
-        if isinstance(item, dict) and item.get("etat") == "prouvee" and item.get("preuve")
+        str(item.get("id"))
+        for item in brut
+        if isinstance(item, dict)
+        and item.get("etat") == "prouvee"
+        and item.get("preuve")
     )
     return Reprise(
-        tuple(etapes), prouvees,
+        tuple(etapes),
+        prouvees,
         f"revision identique ({revision_courante[:8]}) : {len(prouvees)} etape(s) deja prouvee(s) "
         "sont sautees, le reste est rejoue",
-        revision_etat, revision_courante,
+        revision_etat,
+        revision_courante,
     )
 
 
 def formater(resultat: ResultatAuto, *, largeur: int = 100) -> str:
     """Le rapport, en francais : ce qui est prouve, ce qui est bloque, et quoi faire."""
-    icone = {"prouvee": "ok", "bloquee": "BLOQUE", "non_tentee": "--", "refusee": "REFUSE"}
+    icone = {
+        "prouvee": "ok",
+        "bloquee": "BLOQUE",
+        "non_tentee": "--",
+        "refusee": "REFUSE",
+    }
     lignes = [
         "  MISSION AUTONOME  ·  un plan dont chaque etape porte sa preuve",
         f"    objectif : {resultat.objectif[:70]}",
@@ -513,7 +590,9 @@ def formater(resultat: ResultatAuto, *, largeur: int = 100) -> str:
         "",
     ]
     for etape in resultat.etapes:
-        lignes.append(f"    [{icone.get(etape.etat, etape.etat):<7}] {etape.id} {etape.objectif[:66]}")
+        lignes.append(
+            f"    [{icone.get(etape.etat, etape.etat):<7}] {etape.id} {etape.objectif[:66]}"
+        )
         lignes.append(f"              preuve : {etape.preuve[:76]}")
         if etape.motif:
             lignes.append(f"              motif   : {etape.motif[:76]}")

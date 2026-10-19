@@ -33,11 +33,11 @@ from pathlib import Path
 RACINE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RACINE))
 
-import jio.skills.router as R  # noqa: E402
-from jio.skills import banc as B  # noqa: E402
-from jio.skills.controle import JEUX  # noqa: E402
-from jio.skills.lexique import CLASSES  # noqa: E402
-from jio.skills.router import stem  # noqa: E402
+import jio.skills.router as R
+from jio.skills import banc as B
+from jio.skills.controle import JEUX
+from jio.skills.lexique import CLASSES
+from jio.skills.router import stem
 
 CAT = R.catalogue_du_depot()
 
@@ -47,8 +47,9 @@ def vocabulaire(texte: str) -> frozenset[str]:
     return frozenset({m for mot in R.jetons(texte) for m in (mot, R.stem(mot))})
 
 
-V_LEX = frozenset({m for classe in CLASSES for mot in classe
-                   for m in (mot, R.stem(mot))})
+V_LEX = frozenset(
+    {m for classe in CLASSES for mot in classe for m in (mot, R.stem(mot))}
+)
 V_TIER0 = frozenset(CAT._vocabulaire)
 V_CORPS = frozenset().union(*(vocabulaire(d.corps) for d in CAT.documents if d.corps))
 
@@ -63,6 +64,7 @@ def mots(objectif: str, source: frozenset[str]) -> set[str]:
 # --------------------------------------------------------------------------------------- #
 # Les portes candidates. Chacune rend True = « charger ».
 # --------------------------------------------------------------------------------------- #
+
 
 def porte_0(objectif: str) -> bool:
     """L'etat actuel : au moins DEUX mots de domaine (lexique ou tiers 0)."""
@@ -124,8 +126,13 @@ def evaluer(porte) -> dict[str, tuple[int, int, int]]:
     """Par jeu : (justes, servis, charges a tort)."""
     resultat = {}
     jeux = [(f"{j.nom}", [c for c in j.cas], list(j.hors_sujet)) for j in JEUX]
-    jeux.append(("banc", [(o.texte, sorted(o.attendu)[0], "") for o in B.BANC if o.attendu],
-                 [o.texte for o in B.BANC if not o.attendu]))
+    jeux.append(
+        (
+            "banc",
+            [(o.texte, min(o.attendu), "") for o in B.BANC if o.attendu],
+            [o.texte for o in B.BANC if not o.attendu],
+        )
+    )
     for nom, positifs, negatifs in jeux:
         justes = servis = 0
         for texte, attendu, _ in positifs:
@@ -140,8 +147,11 @@ def evaluer(porte) -> dict[str, tuple[int, int, int]]:
 
 def main() -> int:
     print("  Les portes, jeu par jeu. Format : justes/servis, hors sujet charges.\n")
-    entete = "  " + f"{'porte':44}" + "".join(f"{n:>12}" for n in
-                                             ["A", "B", "C", "D", "banc"])
+    entete = (
+        "  "
+        + f"{'porte':44}"
+        + "".join(f"{n:>12}" for n in ["A", "B", "C", "D", "banc"])
+    )
     print(entete)
     for nom, porte in PORTES:
         r = evaluer(porte)
@@ -152,10 +162,17 @@ def main() -> int:
         tot_justes = sum(r[j][0] for j in ("A", "B", "C", "D"))
         tot_charge = sum(r[j][2] for j in ("A", "B", "C", "D"))
         tot_servis = sum(r[j][1] for j in ("A", "B", "C", "D"))
-        print(ligne + f"  | 4 jeux : {tot_justes}/{tot_servis} justes, {tot_charge} charges")
+        print(
+            ligne
+            + f"  | 4 jeux : {tot_justes}/{tot_servis} justes, {tot_charge} charges"
+        )
     print()
-    print("  Lecture : `justes/servis` compte les premiers choix justes PARMI les objectifs")
-    print("  servis. Un jeu ou servis = 31/31 est un jeu sature, il ne discrimine plus rien.")
+    print(
+        "  Lecture : `justes/servis` compte les premiers choix justes PARMI les objectifs"
+    )
+    print(
+        "  servis. Un jeu ou servis = 31/31 est un jeu sature, il ne discrimine plus rien."
+    )
     return 0
 
 

@@ -23,7 +23,6 @@ from jio.artifacts.audit_skills import MOTIFS, analyser_artefacts, analyser_text
 from jio.artifacts.definitions import AGENTS, SKILLS
 from jio.cli import main
 
-
 # --------------------------------------------------------------------------- #
 # 1. Le controle MORD (sinon tout le reste ne prouve rien)
 # --------------------------------------------------------------------------- #

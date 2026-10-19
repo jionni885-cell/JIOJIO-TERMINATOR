@@ -28,7 +28,6 @@ from jio.loop.auto import (
     plan_simule,
 )
 
-
 # --------------------------------------------------------------------------- #
 # 1. Une etape sans preuve n'entre pas dans un plan
 # --------------------------------------------------------------------------- #
@@ -41,11 +40,18 @@ def test_une_etape_sans_preuve_est_REFUSEE_avec_sa_raison() -> None:
     un plan dont on retire des etapes en silence n'est plus le plan du modele, et personne ne
     saurait ce qui a ete supprime.
     """
-    acceptees, refusees = extraire_etapes(json.dumps([
-        {"objectif": "corriger la borne", "preuve": "python -m pytest tests/test_mutation.py"},
-        {"objectif": "ameliorer le reste"},
-        {"objectif": ""},
-    ]))
+    acceptees, refusees = extraire_etapes(
+        json.dumps(
+            [
+                {
+                    "objectif": "corriger la borne",
+                    "preuve": "python -m pytest tests/test_mutation.py",
+                },
+                {"objectif": "ameliorer le reste"},
+                {"objectif": ""},
+            ]
+        )
+    )
     assert [e.objectif for e in acceptees] == ["corriger la borne"]
     assert len(refusees) == 2
     raisons = " ".join(r.raison for r in refusees)
@@ -61,7 +67,9 @@ def test_un_plan_illisible_est_refuse_et_le_DIT() -> None:
     executable. Le dire, avec le format exact, permet de relancer ; deviner a sa place
     produirait un plan que personne n'a demande.
     """
-    acceptees, refusees = extraire_etapes("Je vais d'abord analyser, puis corriger le bug.")
+    acceptees, refusees = extraire_etapes(
+        "Je vais d'abord analyser, puis corriger le bug."
+    )
     assert acceptees == ()
     assert len(refusees) == 1
     assert "JSON" in refusees[0].raison
@@ -76,7 +84,8 @@ def test_le_plan_est_BORNE_et_le_depassement_est_refuse() -> None:
     ne sache ce qui a ete fait.
     """
     propositions = [
-        {"objectif": f"etape {i}", "preuve": "jio version"} for i in range(MAX_ETAPES + 3)
+        {"objectif": f"etape {i}", "preuve": "jio version"}
+        for i in range(MAX_ETAPES + 3)
     ]
     acceptees, refusees = extraire_etapes(json.dumps(propositions))
     assert len(acceptees) == MAX_ETAPES
@@ -104,7 +113,9 @@ def test_le_plan_simule_est_DETERMINISTE_et_annonce_comme_simule() -> None:
     assert premier[-1]["preuve"] == "jio coherence"
     acceptees, refusees = extraire_etapes(json.dumps(premier))
     assert len(acceptees) == len(premier) and not refusees
-    assert [e.id for e in acceptees] == [f"E{i:02d}" for i in range(1, len(premier) + 1)]
+    assert [e.id for e in acceptees] == [
+        f"E{i:02d}" for i in range(1, len(premier) + 1)
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -136,17 +147,61 @@ def test_un_echec_arrete_le_plan_et_les_etapes_suivantes_sont_NON_TENTEES(
             return False, "code 1 · une regle a echoue", 2
         return True, "code 0", 1
 
-    resultat = executer(_etapes(4), objective="objectif", lancer=lancer, racine=tmp_path)
+    resultat = executer(
+        _etapes(4), objective="objectif", lancer=lancer, racine=tmp_path
+    )
 
     assert appels == ["E01", "E02"], "l'etape E03 ne doit JAMAIS etre lancee"
     assert resultat.etat == "bloque"
     assert resultat.prouvees == 1
     etats = [(e.id, e.etat) for e in resultat.etapes]
-    assert etats == [("E01", "prouvee"), ("E02", "bloquee"), ("E03", "non_tentee"),
-                     ("E04", "non_tentee")]
+    assert etats == [
+        ("E01", "prouvee"),
+        ("E02", "bloquee"),
+        ("E03", "non_tentee"),
+        ("E04", "non_tentee"),
+    ]
     assert "non prouvee" in resultat.motif and "PAS tentees" in resultat.motif
     assert resultat.appels == 3
     assert resultat.silencieuses == 0
+
+
+def test_checkpoint_est_ecrit_apres_chaque_etape_et_survit_a_une_interruption(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Une interruption après une preuve conserve le plan entier et le progrès prouvé."""
+    import json
+
+    from jio.loop import auto
+
+    monkeypatch.setattr(auto, "_revision", lambda _root: "rev-stable")
+    checkpoint = tmp_path / ".jio" / "plan.json"
+    notifications = []
+
+    def sauvegarder_et_interrompre(etat):
+        auto.enregistrer(etat, checkpoint)
+        notifications.append(json.loads(checkpoint.read_text(encoding="utf-8")))
+        raise KeyboardInterrupt("arret simule")
+
+    with pytest.raises(KeyboardInterrupt):
+        executer(
+            _etapes(3),
+            objective="reprise",
+            lancer=lambda _e: (True, "ok", 1),
+            racine=tmp_path,
+            on_progress=sauvegarder_et_interrompre,
+        )
+
+    assert len(notifications) == 1
+    sauvegarde = notifications[0]
+    assert [e["etat"] for e in sauvegarde["etapes"]] == [
+        "prouvee",
+        "non_tentee",
+        "non_tentee",
+    ]
+    reprise = auto.reprendre(checkpoint, revision_courante="rev-stable")
+    assert reprise.deja_prouvees == frozenset({"E01"})
+    assert not list(checkpoint.parent.glob("*.tmp"))
 
 
 def test_un_budget_epuise_est_declare_au_lieu_d_etre_oublie(tmp_path: Path) -> None:
@@ -156,15 +211,26 @@ def test_un_budget_epuise_est_declare_au_lieu_d_etre_oublie(tmp_path: Path) -> N
     Le code de sortie distingue les trois issues (`termine` 0, `bloque` 1, `budget` 2), parce
     qu'un appelant automatise doit pouvoir les distinguer sans lire le texte.
     """
+
     def lancer(_etape: Etape) -> tuple[bool, str, int]:
         return True, "code 0", 1
 
-    resultat = executer(_etapes(5), objective="objectif", lancer=lancer, racine=tmp_path,
-                        budget_etapes=2)
+    resultat = executer(
+        _etapes(5),
+        objective="objectif",
+        lancer=lancer,
+        racine=tmp_path,
+        budget_etapes=2,
+    )
     assert resultat.etat == "budget"
     assert resultat.prouvees == 2
-    assert [e.etat for e in resultat.etapes] == ["prouvee", "prouvee", "non_tentee", "non_tentee",
-                                                 "non_tentee"]
+    assert [e.etat for e in resultat.etapes] == [
+        "prouvee",
+        "prouvee",
+        "non_tentee",
+        "non_tentee",
+        "non_tentee",
+    ]
     assert "budget de 2" in resultat.motif
     assert "NON TENTEE" in resultat.motif
 
@@ -175,10 +241,13 @@ def test_une_etape_qui_LEVE_est_bloquee_jamais_prouvee(tmp_path: Path) -> None:
     C'est la regle la plus importante du fichier. Un try/except qui rendrait « ok » sur
     exception transformerait chaque panne en etape reussie — et le plan avancerait sur du vide.
     """
+
     def lancer(etape: Etape) -> tuple[bool, str, int]:
         raise RuntimeError("le bac a sable a disparu")
 
-    resultat = executer(_etapes(2), objective="objectif", lancer=lancer, racine=tmp_path)
+    resultat = executer(
+        _etapes(2), objective="objectif", lancer=lancer, racine=tmp_path
+    )
     assert resultat.etat == "bloque"
     assert resultat.etapes[0].etat == "bloquee"
     assert "le bac a sable a disparu" in resultat.etapes[0].motif
@@ -191,8 +260,9 @@ def test_un_plan_sans_etape_est_REFUSE_et_ne_s_execute_pas(tmp_path: Path) -> No
     Un plan vide qui sort en 0 serait un mensonge par omission : l'appelant croirait que tout
     est prouve alors que rien n'a ete tente.
     """
-    resultat = executer((), objective="objectif", lancer=lambda e: (True, "code 0", 1),
-                        racine=tmp_path)
+    resultat = executer(
+        (), objective="objectif", lancer=lambda e: (True, "code 0", 1), racine=tmp_path
+    )
     assert resultat.etat == "refuse"
     assert resultat.prouvees == 0
     assert "aucune etape" in resultat.motif
@@ -211,9 +281,15 @@ def test_l_etat_du_plan_est_enregistre_et_reprend_la_revision(tmp_path: Path) ->
     obtenues decrivent un etat qui n'existe plus. Le fichier doit donc permettre de le SAVOIR,
     meme si la decision reste humaine.
     """
-    resultat = executer(_etapes(2), objective="objectif", lancer=lambda e: (True, "code 0", 1),
-                        racine=Path.cwd())
-    assert resultat.revision, "le depot de test est un depot git : la revision doit etre lue"
+    resultat = executer(
+        _etapes(2),
+        objective="objectif",
+        lancer=lambda e: (True, "code 0", 1),
+        racine=Path.cwd(),
+    )
+    assert resultat.revision, (
+        "le depot de test est un depot git : la revision doit etre lue"
+    )
 
     chemin = tmp_path / "plan.json"
     enregistrer(resultat, chemin)
@@ -233,8 +309,11 @@ def test_le_rapport_affiche_les_questions_qui_BLOQUENT(tmp_path: Path) -> None:
     clarification alimente cette liste, et le rapport la transporte jusqu'a l'ecran.
     """
     resultat = executer(
-        _etapes(1), objective="objectif", lancer=lambda e: (False, "code 1", 0),
-        racine=tmp_path, questions=("Sur QUOI exactement ?", "Comment saura-t-on que c'est fini ?"),
+        _etapes(1),
+        objective="objectif",
+        lancer=lambda e: (False, "code 1", 0),
+        racine=tmp_path,
+        questions=("Sur QUOI exactement ?", "Comment saura-t-on que c'est fini ?"),
     )
     texte = formater(resultat)
     assert "QUESTIONS A POSER" in texte
@@ -280,7 +359,10 @@ def test_une_preuve_autorisee_est_reecrite_sur_l_INTERPRETEUR_courant() -> None:
     argv = _argv_de_preuve("jio version")
     assert argv == [sys.executable, "-m", "jio", "version"]
     assert _argv_de_preuve("python -m pytest tests/test_auto.py") == [
-        sys.executable, "-m", "pytest", "tests/test_auto.py",
+        sys.executable,
+        "-m",
+        "pytest",
+        "tests/test_auto.py",
     ]
     assert _argv_de_preuve("") is None
 
@@ -305,7 +387,9 @@ def test_le_banc_mesure_l_apport_de_la_VALIDATION_des_etapes() -> None:
     cible = "jio/verify/mutation.py"
 
     # Cote 1 : le plan de reference, avec ses preuves.
-    acceptees, refusees = extraire_etapes(json.dumps(plan_simule(objectif, cible=cible)))
+    acceptees, refusees = extraire_etapes(
+        json.dumps(plan_simule(objectif, cible=cible))
+    )
     assert len(acceptees) >= 3 and not refusees
 
     lances: list[str] = []
@@ -325,13 +409,16 @@ def test_le_banc_mesure_l_apport_de_la_VALIDATION_des_etapes() -> None:
     ]
     acceptees2, refusees2 = extraire_etapes(json.dumps(sans_preuve))
     assert acceptees2 == () and len(refusees2) == len(sans_preuve)
-    jamais = executer((), objective=objectif, lancer=lancer, racine=Path.cwd(),
-                      refusees=refusees2)
+    jamais = executer(
+        (), objective=objectif, lancer=lancer, racine=Path.cwd(), refusees=refusees2
+    )
     # Aucune etape executable : l'etat est `refuse`, jamais `termine`. Un plan entierement
     # refuse qui sortirait en `termine` ferait croire a un travail accompli.
     assert jamais.etat == "refuse"
     assert jamais.prouvees == 0 and jamais.silencieuses == 0
-    assert len(lances) == len(acceptees), "aucune etape supplementaire ne doit avoir ete lancee"
+    assert len(lances) == len(acceptees), (
+        "aucune etape supplementaire ne doit avoir ete lancee"
+    )
     assert len(jamais.refusees) == len(sans_preuve)
     assert all("aucune preuve" in r.raison for r in jamais.refusees)
 
@@ -342,18 +429,27 @@ def test_le_banc_mesure_l_apport_de_la_VALIDATION_des_etapes() -> None:
 
 
 def _etat(
-    etapes: list[tuple[str, str, str, str]], *, revision: str, etat: str = "bloque",
+    etapes: list[tuple[str, str, str, str]],
+    *,
+    revision: str,
+    etat: str = "bloque",
     objectif: str = "objectif enregistre",
 ) -> str:
     """Un `.jio/plan.json` minimal : `(id, objectif, preuve, etat)` par etape."""
-    return json.dumps({
-        "objectif": objectif, "etat": etat, "revision": revision,
-        "prouvees": sum(1 for e in etapes if e[3] == "prouvee"), "total": len(etapes),
-        "etapes": [
-            {"id": i, "objectif": o, "preuve": p, "etat": e, "motif": ""}
-            for i, o, p, e in etapes
-        ],
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "objectif": objectif,
+            "etat": etat,
+            "revision": revision,
+            "prouvees": sum(1 for e in etapes if e[3] == "prouvee"),
+            "total": len(etapes),
+            "etapes": [
+                {"id": i, "objectif": o, "preuve": p, "etat": e, "motif": ""}
+                for i, o, p, e in etapes
+            ],
+        },
+        ensure_ascii=False,
+    )
 
 
 def test_une_reprise_de_meme_revision_SAUTE_les_etapes_prouvees(tmp_path: Path) -> None:
@@ -366,11 +462,17 @@ def test_une_reprise_de_meme_revision_SAUTE_les_etapes_prouvees(tmp_path: Path) 
     from jio.loop.auto import reprendre
 
     chemin = tmp_path / "plan.json"
-    chemin.write_text(_etat([
-        ("E01", "localiser", "jio scan .", "prouvee"),
-        ("E02", "corriger", "jio run \"x\"", "bloquee"),
-        ("E03", "verifier", "jio coherence", "non_tentee"),
-    ], revision="abc123"), encoding="utf-8")
+    chemin.write_text(
+        _etat(
+            [
+                ("E01", "localiser", "jio scan .", "prouvee"),
+                ("E02", "corriger", 'jio run "x"', "bloquee"),
+                ("E03", "verifier", "jio coherence", "non_tentee"),
+            ],
+            revision="abc123",
+        ),
+        encoding="utf-8",
+    )
 
     reprise = reprendre(chemin, revision_courante="abc123")
     assert reprise.utilisable
@@ -391,14 +493,22 @@ def test_une_revision_DIFFERENTE_rejoue_tout_et_le_DIT(tmp_path: Path) -> None:
     from jio.loop.auto import reprendre
 
     chemin = tmp_path / "plan.json"
-    chemin.write_text(_etat([
-        ("E01", "localiser", "jio scan .", "prouvee"),
-        ("E02", "corriger", "jio run \"x\"", "bloquee"),
-    ], revision="ancienne"), encoding="utf-8")
+    chemin.write_text(
+        _etat(
+            [
+                ("E01", "localiser", "jio scan .", "prouvee"),
+                ("E02", "corriger", 'jio run "x"', "bloquee"),
+            ],
+            revision="ancienne",
+        ),
+        encoding="utf-8",
+    )
 
     reprise = reprendre(chemin, revision_courante="nouvelle")
     assert reprise.utilisable
-    assert reprise.deja_prouvees == frozenset(), "aucune etape ne doit etre crue sur parole"
+    assert reprise.deja_prouvees == frozenset(), (
+        "aucune etape ne doit etre crue sur parole"
+    )
     assert "revision differente" in reprise.motif
     assert "rejoue ENTIER" in reprise.motif
     assert "ancienne" in reprise.motif and "nouvelle" in reprise.motif
@@ -413,8 +523,10 @@ def test_un_etat_SANS_revision_ne_permet_aucun_raccourci(tmp_path: Path) -> None
     from jio.loop.auto import reprendre
 
     chemin = tmp_path / "plan.json"
-    chemin.write_text(_etat([("E01", "localiser", "jio scan .", "prouvee")], revision=""),
-                      encoding="utf-8")
+    chemin.write_text(
+        _etat([("E01", "localiser", "jio scan .", "prouvee")], revision=""),
+        encoding="utf-8",
+    )
     reprise = reprendre(chemin, revision_courante="abc")
     assert reprise.deja_prouvees == frozenset()
     assert "n'indique pas la revision" in reprise.motif
@@ -452,10 +564,17 @@ def test_un_plan_TERMINE_n_a_rien_a_reprendre(tmp_path: Path) -> None:
     from jio.loop.auto import reprendre
 
     chemin = tmp_path / "plan.json"
-    chemin.write_text(_etat([
-        ("E01", "localiser", "jio scan .", "prouvee"),
-        ("E02", "corriger", "jio run \"x\"", "prouvee"),
-    ], revision="abc", etat="termine"), encoding="utf-8")
+    chemin.write_text(
+        _etat(
+            [
+                ("E01", "localiser", "jio scan .", "prouvee"),
+                ("E02", "corriger", 'jio run "x"', "prouvee"),
+            ],
+            revision="abc",
+            etat="termine",
+        ),
+        encoding="utf-8",
+    )
     reprise = reprendre(chemin, revision_courante="abc")
     assert reprise.sautees == len(reprise.etapes) == 2
     assert "deja TERMINE" in reprise.motif
@@ -473,24 +592,33 @@ def test_la_reprise_de_BOUT_EN_BOUT_ne_relance_pas_les_etapes_prouvees(
     from jio.loop.auto import executer, reprendre
 
     chemin = tmp_path / "plan.json"
-    chemin.write_text(_etat([
-        ("E01", "localiser", "jio scan .", "prouvee"),
-        ("E02", "corriger", "jio run \"x\"", "bloquee"),
-        ("E03", "verifier", "jio coherence", "non_tentee"),
-    ], revision="rev-1"), encoding="utf-8")
+    chemin.write_text(
+        _etat(
+            [
+                ("E01", "localiser", "jio scan .", "prouvee"),
+                ("E02", "corriger", 'jio run "x"', "bloquee"),
+                ("E03", "verifier", "jio coherence", "non_tentee"),
+            ],
+            revision="rev-1",
+        ),
+        encoding="utf-8",
+    )
 
     reprise = reprendre(chemin, revision_courante="rev-1")
     lances: list[str] = []
 
     def lancer(etape: Etape) -> tuple[bool, str, int]:
-        if etape.id in reprise.deja_prouvees:          # le contrat du lanceur reel
+        if etape.id in reprise.deja_prouvees:  # le contrat du lanceur reel
             return True, "deja prouvee (reprise : meme revision)", 0
         lances.append(etape.id)
         return True, "code 0", 1
 
-    resultat = executer(reprise.etapes, objective="objectif enregistre", lancer=lancer,
-                        racine=tmp_path)
-    assert lances == ["E02", "E03"], "E01 etait prouvee : elle ne doit pas avoir ete relancee"
+    resultat = executer(
+        reprise.etapes, objective="objectif enregistre", lancer=lancer, racine=tmp_path
+    )
+    assert lances == ["E02", "E03"], (
+        "E01 etait prouvee : elle ne doit pas avoir ete relancee"
+    )
     assert resultat.etat == "termine"
     assert resultat.prouvees == 3
     # Les appels comptes sont ceux du LANCEUR : 0 pour l'etape reprise, 1 pour les autres.

@@ -29,14 +29,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 __all__ = [
-    "NOM_SERVEUR",
-    "prouver_branchement",
-    "fragment_opencode",
-    "fragment_hermes",
-    "fragment_codex",
-    "fragments",
-    "brancher",
     "DIALECTES",
+    "NOM_SERVEUR",
+    "brancher",
+    "fragment_codex",
+    "fragment_hermes",
+    "fragment_opencode",
+    "fragments",
+    "prouver_branchement",
 ]
 
 #: Nom du serveur MCP tel qu'il apparaitra dans les outils de l'IA.
@@ -78,21 +78,39 @@ def _candidats() -> list[tuple[str, ...]]:
     return candidats
 
 
-def _parler_au_serveur(commande: Sequence[str], delai: float,
-                       racine: Path | None = None) -> tuple[list[str], str, str]:
+def _parler_au_serveur(
+    commande: Sequence[str], delai: float, racine: Path | None = None
+) -> tuple[list[str], str, str]:
     """Demarre le serveur et lui parle vraiment. Rend (outils, version, detail d'echec)."""
     import json
     import subprocess
 
     requetes = (
-        json.dumps({"jsonrpc": "2.0", "id": ID_INITIALIZE, "method": "initialize", "params": {}}),
-        json.dumps({"jsonrpc": "2.0", "id": ID_TOOLS_LIST, "method": "tools/list", "params": {}}),
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": ID_INITIALIZE,
+                "method": "initialize",
+                "params": {},
+            }
+        ),
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": ID_TOOLS_LIST,
+                "method": "tools/list",
+                "params": {},
+            }
+        ),
     )
     try:
         processus = subprocess.run(
             list(commande),
             input="\n".join(requetes) + "\n",
-            capture_output=True, text=True, timeout=delai, check=False,
+            capture_output=True,
+            text=True,
+            timeout=delai,
+            check=False,
             cwd=str(racine) if racine else None,
         )
     except FileNotFoundError:
@@ -131,8 +149,9 @@ def _args_toml(commande: Sequence[str] | None) -> str:
     return "[" + ", ".join(json.dumps(a) for a in (commande or _COMMANDE)[1:]) + "]"
 
 
-def commande_qui_marche(*, racine: Path | None = None,
-                        delai: float = 20.0) -> tuple[tuple[str, ...], str]:
+def commande_qui_marche(
+    *, racine: Path | None = None, delai: float = 20.0
+) -> tuple[tuple[str, ...], str]:
     """La commande a ECRIRE dans les configurations : la premiere qui sert des outils.
 
     Rend `(commande, note)`. La note est vide quand la commande par defaut suffit — c'est le
@@ -158,7 +177,9 @@ def commande_qui_marche(*, racine: Path | None = None,
                 + (detail.splitlines()[0] if detail else "aucun outil annonce")
                 + f") ; la configuration ecrit donc `{' '.join(commande)}`, verifie en direct."
             )
-        essais.append(f"{' '.join(commande)} ({detail.splitlines()[0] if detail else 'rien'})")
+        essais.append(
+            f"{' '.join(commande)} ({detail.splitlines()[0] if detail else 'rien'})"
+        )
     return _COMMANDE, "aucune commande n'a servi d'outil : " + " ; ".join(essais)
 
 
@@ -218,12 +239,21 @@ def fragment_claude_code(commande: Sequence[str] | None = None) -> str:
 
 def fragment_cursor(commande: Sequence[str] | None = None) -> str:
     """Bloc `mcpServers` de `.cursor/mcp.json` (ou ~/.cursor/mcp.json)."""
-    return json.dumps(
-        {"mcpServers": {NOM_SERVEUR: {"command": (commande or _COMMANDE)[0],
-                                      "args": list((commande or _COMMANDE)[1:])}}},
-        indent=2,
-        ensure_ascii=False,
-    ) + "\n"
+    return (
+        json.dumps(
+            {
+                "mcpServers": {
+                    NOM_SERVEUR: {
+                        "command": (commande or _COMMANDE)[0],
+                        "args": list((commande or _COMMANDE)[1:]),
+                    }
+                }
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
 
 
 #: Dialecte -> (fichier a creer si absent, fonction de fragment, description pour l'aide).
@@ -240,7 +270,9 @@ DIALECTES: tuple[tuple[str, str | None, str], ...] = (
 def _contenu(dialecte: str, commande: Sequence[str] | None = None) -> str:
     """Le fragment d'un dialecte, en texte pret a coller."""
     if dialecte == "opencode":
-        return json.dumps(fragment_opencode(commande), indent=2, ensure_ascii=False) + "\n"
+        return (
+            json.dumps(fragment_opencode(commande), indent=2, ensure_ascii=False) + "\n"
+        )
     return {
         "hermes": fragment_hermes,
         "codex": fragment_codex,
@@ -254,8 +286,9 @@ def fragments(commande: Sequence[str] | None = None) -> dict[str, str]:
     return {nom: _contenu(nom, commande) for nom, _, _ in DIALECTES}
 
 
-def brancher(racine: Path, dialecte: str = "opencode", *,
-             commande: Sequence[str] | None = None) -> tuple[bool, str]:
+def brancher(
+    racine: Path, dialecte: str = "opencode", *, commande: Sequence[str] | None = None
+) -> tuple[bool, str]:
     """Branche le serveur MCP pour un dialecte. Rend `(ecrit, message)`.
 
     Trois issues, et la troisieme est la plus importante :
@@ -294,16 +327,16 @@ def brancher(racine: Path, dialecte: str = "opencode", *,
     return True, f"{rel} cree — le serveur `{NOM_SERVEUR}` est branche."
 
 
-def _rapport_de_sonde(commande: Sequence[str], delai: float, note: str,
-                      racine: Path | None = None) -> str:
+def _rapport_de_sonde(
+    commande: Sequence[str], delai: float, note: str, racine: Path | None = None
+) -> str:
     """Le texte de la preuve : ce que la commande sert VRAIMENT, et d'ou elle vient."""
     import sys
 
     outils, serveur, detail = _parler_au_serveur(commande, delai, racine)
     if not outils:
-        return (
-            f"  ECHEC : `{' '.join(commande)}` ne sert AUCUN outil.\n"
-            + "\n".join(f"    {ligne[:160]}" for ligne in detail.splitlines()[-5:])
+        return f"  ECHEC : `{' '.join(commande)}` ne sert AUCUN outil.\n" + "\n".join(
+            f"    {ligne[:160]}" for ligne in detail.splitlines()[-5:]
         )
     lignes = [
         f"  `{' '.join(commande)}` sert {len(outils)} outil(s) [version {serveur}] :",
@@ -315,8 +348,11 @@ def _rapport_de_sonde(commande: Sequence[str], delai: float, note: str,
     return "\n".join(lignes)
 
 
-def prouver_branchement(commande: Sequence[str] | None = None, delai: float = 20.0,
-                        racine: Path | None = None) -> str:
+def prouver_branchement(
+    commande: Sequence[str] | None = None,
+    delai: float = 20.0,
+    racine: Path | None = None,
+) -> str:
     """Demarre le serveur MCP et lui parle vraiment (initialize + tools/list).
 
     Pourquoi ce n'est pas une precaution theorique : les fragments nomment
@@ -336,4 +372,3 @@ def prouver_branchement(commande: Sequence[str] | None = None, delai: float = 20
         resolue, note = commande_qui_marche(racine=racine, delai=delai)
         return _rapport_de_sonde(resolue, delai, note, racine)
     return _rapport_de_sonde(commande, delai, "", racine)
-

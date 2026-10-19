@@ -31,13 +31,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
-    "Mesure",
     "SEUILS",
-    "sur_disque",
+    "Mesure",
     "mesurer",
     "mesurer_depuis",
-    "verdict",
     "resume",
+    "sur_disque",
+    "verdict",
 ]
 
 #: Caracteres par jeton, bornes basses et hautes. 4,4 est la valeur usuelle pour de la
@@ -122,9 +122,7 @@ def verdict(mesures: list[Mesure], est_competence=None) -> list[str]:
             depassees.append(mesure)
 
     if depassees:
-        lignes.append(
-            f"  {len(depassees)} fichier(s) DEPASSENT leur budget declare :"
-        )
+        lignes.append(f"  {len(depassees)} fichier(s) DEPASSENT leur budget declare :")
         for mesure in depassees:
             lignes.append(
                 f"    {mesure.chemin} : {mesure.lignes} ligne(s), "
@@ -167,7 +165,9 @@ def resume(mesures: list[Mesure], titre: str, *, total: bool = True) -> list[str
     if total:
         cumul = sum(m.jetons for m in mesures)
         lignes.append("")
-        lignes.append(f"    TOTAL : {len(mesures)} fichier(s), ~{cumul} jetons (estimation)")
+        lignes.append(
+            f"    TOTAL : {len(mesures)} fichier(s), ~{cumul} jetons (estimation)"
+        )
     return lignes
 
 

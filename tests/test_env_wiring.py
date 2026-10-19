@@ -43,6 +43,7 @@ _FAMILLES = (
 def _dans_une_famille(nom: str) -> bool:
     return any(motif.match(nom) for motif in _FAMILLES)
 
+
 _FOREIGN = {
     "OPENROUTER_API_KEY",
     "OPENAI_API_KEY",
@@ -60,7 +61,9 @@ def _sources() -> list[Path]:
     out: list[Path] = []
     for directory in CODE_DIRS:
         out.extend(
-            p for p in directory.rglob("*") if p.suffix in {".py", ".sh"} and "__pycache__" not in p.parts
+            p
+            for p in directory.rglob("*")
+            if p.suffix in {".py", ".sh"} and "__pycache__" not in p.parts
         )
     return sorted(out)
 
@@ -96,7 +99,8 @@ def test_aucune_variable_documentee_nest_morte() -> None:
     # et ne peut pas apparaitre litteralement dans la source.
     families = {name for name in read if name.endswith("_")}
     ghosts = sorted(
-        name for name in documented - read
+        name
+        for name in documented - read
         if not any(name.startswith(prefix) for prefix in families)
     )
 
@@ -191,9 +195,14 @@ def test_un_fournisseur_inconnu_leve_au_lieu_de_rendre_autre_chose() -> None:
         registre.get("pas-un-fournisseur")
     message = str(erreur.value)
     assert "pas-un-fournisseur" in message
-    assert "connus" in message, "l'erreur doit dire ce qui existe, pas seulement ce qui manque"
+    assert "connus" in message, (
+        "l'erreur doit dire ce qui existe, pas seulement ce qui manque"
+    )
 
-def test_une_cli_installee_est_DETECTEE_et_une_inconnue_est_ignoree(monkeypatch) -> None:
+
+def test_une_cli_installee_est_DETECTEE_et_une_inconnue_est_ignoree(
+    monkeypatch,
+) -> None:
     """`detect_clis` : un nom hors du catalogue est IGNORE, jamais une exception.
 
     Mesure a l'origine : `jio mutants` a montre que le `if spec is None: continue` pouvait
@@ -209,7 +218,7 @@ def test_une_cli_installee_est_DETECTEE_et_une_inconnue_est_ignoree(monkeypatch)
 
     assert detect_clis(["nom-qui-nexiste-pas"]) == []
 
-    premier = sorted(KNOWN_CLIS)[0]
+    premier = min(KNOWN_CLIS)
     monkeypatch.setenv(f"JIO_BIN_{premier.upper()}", sys.executable)
     trouvees = detect_clis([premier, "nom-qui-nexiste-pas"])
     assert [p.name for p in trouvees] == [f"cli::{premier}"]
@@ -224,9 +233,15 @@ def test_sans_configuration_aucun_fournisseur_API_n_est_invente(monkeypatch) -> 
     `jio doctor` aurait annonce un modele disponible qui n'existe pas — la faute la plus
     couteuse d'un garde-fou : une confiance fabriquee.
     """
-    for variable in ("JIO_OPENAI_BASE", "JIO_OLLAMA", "JIO_OPENAI_KEY",
-                     "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-                     "DEEPSEEK_API_KEY"):
+    for variable in (
+        "JIO_OPENAI_BASE",
+        "JIO_OLLAMA",
+        "JIO_OPENAI_KEY",
+        "OPENROUTER_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "DEEPSEEK_API_KEY",
+    ):
         monkeypatch.delenv(variable, raising=False)
 
     from jio.providers.registry import from_env

@@ -37,15 +37,26 @@ import os
 import subprocess
 from pathlib import Path
 
-__all__ = ["EXCLUSIONS", "sceau", "revision"]
+__all__ = ["EXCLUSIONS", "revision", "sceau"]
 
 #: Dossiers qui ne sont PAS du travail : etat local, caches, environnements. Les inclure
 #: ferait echouer toute comparaison avant/apres (le simple fait d'executer un test ecrit un
 #: cache) et mesurerait autre chose que le travail de l'utilisateur.
-EXCLUSIONS = frozenset({
-    ".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".ruff_cache",
-    ".mypy_cache", "node_modules", ".jio", "build", "dist",
-})
+EXCLUSIONS = frozenset(
+    {
+        ".git",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        "node_modules",
+        ".jio",
+        "build",
+        "dist",
+    }
+)
 
 
 def _fichiers(racine: Path):
@@ -118,7 +129,11 @@ def revision(racine: Path | str) -> str:
     try:
         resultat = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=Path(racine), capture_output=True, text=True, timeout=15,
+            cwd=Path(racine),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):  # pragma: no cover - git absent
         return ""

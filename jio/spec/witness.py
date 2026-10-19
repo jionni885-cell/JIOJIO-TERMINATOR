@@ -45,8 +45,8 @@ from __future__ import annotations
 import ast
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Mapping, Sequence
 
 from ..core.types import Rule, RuleKind, Spec
 from ..providers.base import Message, Provider
@@ -61,7 +61,10 @@ MAX_LONGUEUR = 600
 #: ecrit par un modele est du contenu non fiable, execute dans le bac a sable.
 #: Il n'a besoin que de l'entree publique et d'assertions — rien d'autre.
 INTERDITS: tuple[tuple[str, str], ...] = (
-    ("import", "un test n'importe rien : seules l'entree publique et les types de base"),
+    (
+        "import",
+        "un test n'importe rien : seules l'entree publique et les types de base",
+    ),
     ("__", "acces a des attributs internes (dunder)"),
     ("open(", "acces au systeme de fichiers"),
     ("exec(", "execution dynamique"),
@@ -128,7 +131,7 @@ SYSTEME_CONTROLE = (
     "The three parts are EXECUTED before anything else:\n"
     "  * `test` must PASS on `reference` — otherwise it contradicts its own reference;\n"
     "  * `test` must FAIL on `contrefacon` — otherwise it proves nothing at all.\n"
-    'A pair that fails either check is discarded. Keep `reference` MINIMAL (the entrypoint\n'
+    "A pair that fails either check is discarded. Keep `reference` MINIMAL (the entrypoint\n"
     "and nothing else) and make `contrefacon` differ in the way the rule talks about.\n"
     "\n"
     "Same constraints as always: no imports in `test`, no files, no network, no time, no\n"
@@ -141,10 +144,12 @@ SYSTEME_CONTROLE = (
 class Temoignage:
     """Ce qu'un modele a su (et n'a pas su) traduire d'une specification."""
 
-    tests: Mapping[str, str] = field(default_factory=dict)     # rule_id -> assertion
-    aveux: Mapping[str, str] = field(default_factory=dict)     # rule_id -> raison
-    refuses: Mapping[str, str] = field(default_factory=dict)   # rule_id -> motif du refus
-    motif: str = ""                                            # echec global eventuel
+    tests: Mapping[str, str] = field(default_factory=dict)  # rule_id -> assertion
+    aveux: Mapping[str, str] = field(default_factory=dict)  # rule_id -> raison
+    refuses: Mapping[str, str] = field(
+        default_factory=dict
+    )  # rule_id -> motif du refus
+    motif: str = ""  # echec global eventuel
     appels: int = 0
     modele: str = ""
     #: Vrai quand il a fallu DEUX appels : le rapport doit pouvoir le dire, parce que
@@ -186,17 +191,24 @@ class Temoignage:
         )
 
 
-def _prompt_utilisateur(spec: Spec, entrypoint: str, objectif: str, regles: Sequence[Rule]) -> str:
+def _prompt_utilisateur(
+    spec: Spec, entrypoint: str, objectif: str, regles: Sequence[Rule]
+) -> str:
     liste = "\n".join(f"- [{r.id}] ({r.kind.value}) {r.statement}" for r in regles)
     negatif = "\n".join(
         f"- [{r.id}] entree qui DOIT echouer : {r.negative_case}"
-        for r in regles if r.negative_case
+        for r in regles
+        if r.negative_case
     )
     return (
         f"TASK:\n{objectif or spec.mission}\n\n"
         f"ENTRYPOINT under test: `{entrypoint or '(a single public function)'}`\n\n"
         f"RULES to turn into executable checks:\n{liste}\n"
-        + (f"\nNEGATIVE CASES (the entrypoint must reject them):\n{negatif}\n" if negatif else "")
+        + (
+            f"\nNEGATIVE CASES (the entrypoint must reject them):\n{negatif}\n"
+            if negatif
+            else ""
+        )
         + "\nReturn the JSON object now."
     )
 
@@ -275,13 +287,25 @@ def _normaliser(data: object) -> dict[str, object] | None:
             rid = next((str(item[c]).strip() for c in _CLES_ID if item.get(c)), "")
             if not rid:
                 continue
-            refus = next((item[c] for c in _CLES_REFUS
-                          if isinstance(item.get(c), str) and item.get(c).strip()), None)
+            refus = next(
+                (
+                    item[c]
+                    for c in _CLES_REFUS
+                    if isinstance(item.get(c), str) and item.get(c).strip()
+                ),
+                None,
+            )
             if refus is not None:
                 out[rid] = {"impossible": str(refus)}
                 continue
-            test = next((item[c] for c in _CLES_TEST
-                         if isinstance(item.get(c), str) and item.get(c).strip()), None)
+            test = next(
+                (
+                    item[c]
+                    for c in _CLES_TEST
+                    if isinstance(item.get(c), str) and item.get(c).strip()
+                ),
+                None,
+            )
             out[rid] = test if test is not None else {"impossible": "aucun test fourni"}
         return out or None
     if isinstance(data, dict):
@@ -368,14 +392,20 @@ def valider_triplet(
     if reference.strip() == contrefacon.strip():
         return False, "reference et contrefacon sont identiques : rien a distinguer"
 
-    sur_reference = sandbox.run_python(f"{reference}\n{test}\n", tag="triplet-reference")
+    sur_reference = sandbox.run_python(
+        f"{reference}\n{test}\n", tag="triplet-reference"
+    )
     if sur_reference.exit_code != 0:
-        detail = _derniere_ligne(sur_reference.stderr) or _derniere_ligne(sur_reference.stdout)
+        detail = _derniere_ligne(sur_reference.stderr) or _derniere_ligne(
+            sur_reference.stdout
+        )
         return False, (
             "le test ECHOUE sur l'implementation de reference fournie avec lui "
             f"(l'instrument se contredit : {detail[:120]})"
         )
-    sur_contrefacon = sandbox.run_python(f"{contrefacon}\n{test}\n", tag="triplet-contrefacon")
+    sur_contrefacon = sandbox.run_python(
+        f"{contrefacon}\n{test}\n", tag="triplet-contrefacon"
+    )
     if sur_contrefacon.exit_code == 0:
         return False, (
             "le test PASSE sur la contrefacon fournie avec lui : il ne distingue pas une "
@@ -415,10 +445,17 @@ def _triplet(valeur: object) -> tuple[str, str, str, str]:
     """
     if isinstance(valeur, dict):
         test = valeur.get("test") or valeur.get("check") or valeur.get("assert")
-        ref = valeur.get("reference") or valeur.get("correct") or valeur.get("reference_ok")
+        ref = (
+            valeur.get("reference")
+            or valeur.get("correct")
+            or valeur.get("reference_ok")
+        )
         faux = (
-            valeur.get("contrefacon") or valeur.get("contrefaçon")
-            or valeur.get("wrong") or valeur.get("faux") or valeur.get("mutation")
+            valeur.get("contrefacon")
+            or valeur.get("contrefaçon")
+            or valeur.get("wrong")
+            or valeur.get("faux")
+            or valeur.get("mutation")
         )
         if isinstance(test, str) and test.strip():
             return (
@@ -470,14 +507,14 @@ def _rappel(motifs: Sequence[str], motif_global: str) -> str:
     """
     lignes = [
         "SYSTEM NOTE: your previous answer was REJECTED by the security gate."
-        if not motif_global else
-        f"SYSTEM NOTE: your previous answer was unusable ({motif_global})."
+        if not motif_global
+        else f"SYSTEM NOTE: your previous answer was unusable ({motif_global})."
     ]
     for m in list(motifs)[:3]:
         lignes.append(f"- {_une_ligne(m)[:200]}")
     lignes.append(
-        "Return ONLY a JSON object: {\"R-XXX\": \"assert ...\"} for every rule, or "
-        "{\"R-XXX\": {\"impossible\": \"why\"}} if the rule genuinely cannot be tested. "
+        'Return ONLY a JSON object: {"R-XXX": "assert ..."} for every rule, or '
+        '{"R-XXX": {"impossible": "why"}} if the rule genuinely cannot be tested. '
         "No prose, no markdown, no explanation."
     )
     return "\n".join(lignes)
@@ -510,13 +547,15 @@ def _tentative(
         utilisateur = f"{utilisateur}\n\n{rappel}"
     try:
         completion = provider.complete(
-            [Message("system", SYSTEME_CONTROLE if controle else SYSTEME),
-             Message("user", utilisateur)],
+            [
+                Message("system", SYSTEME_CONTROLE if controle else SYSTEME),
+                Message("user", utilisateur),
+            ],
             temperature=0.0,
             max_tokens=2048,
             seed=seed,
         )
-    except Exception as exc:  # noqa: BLE001 — une traduction qui echoue est un aveu, pas un plantage
+    except Exception as exc:
         return Temoignage(motif=f"appel de traduction en echec : {exc}")
 
     connues_vrac = {r.id for r in regles}
@@ -584,10 +623,15 @@ def _tentative(
                 # Sans bac a sable, on ne peut pas PROUVER l'instrument : on refuse plutot
                 # que de faire semblant. C'est la doctrine du depot, appliquee au dernier
                 # endroit ou elle pourrait etre oubliee.
-                refuses[rid] = "aucun bac a sable : l'instrument ne peut pas etre mis a l'epreuve"
+                refuses[rid] = (
+                    "aucun bac a sable : l'instrument ne peut pas etre mis a l'epreuve"
+                )
                 continue
             ok, motif = valider_triplet(
-                sandbox, test=test, reference=reference, contrefacon=contrefacon,
+                sandbox,
+                test=test,
+                reference=reference,
+                contrefacon=contrefacon,
                 entrypoint=entrypoint,
             )
             if not ok:
@@ -606,8 +650,14 @@ def _tentative(
         else:
             refuses[rid] = f"{motif} — test : {test[:120]}"
 
-    manquantes = [r.id for r in regles if r.id not in tests and r.id not in aveux
-                  and r.id not in refuses and r.id not in incoherents]
+    manquantes = [
+        r.id
+        for r in regles
+        if r.id not in tests
+        and r.id not in aveux
+        and r.id not in refuses
+        and r.id not in incoherents
+    ]
     for rid in manquantes:
         aveux[rid] = "aucune reponse du modele pour cette regle"
 
@@ -659,8 +709,14 @@ def traduire(
         return Temoignage(motif="aucun modele disponible pour traduire les regles")
 
     temoignage = _tentative(
-        spec, provider, entrypoint=entrypoint, objectif=objectif, regles=regles, seed=seed,
-        controle=controle, sandbox=sandbox,
+        spec,
+        provider,
+        entrypoint=entrypoint,
+        objectif=objectif,
+        regles=regles,
+        seed=seed,
+        controle=controle,
+        sandbox=sandbox,
     )
     if controle and temoignage.incoherents:
         # LA REPARATION DE L'INSTRUMENT. Mesure a l'origine : quand les temoins sont
@@ -674,15 +730,28 @@ def traduire(
         # journalise (`reparations`), parce qu'un instrument repare n'est pas l'instrument du
         # premier essai et qu'un rapport doit pouvoir le dire.
         temoignage = _reparer(
-            spec, provider, entrypoint=entrypoint, objectif=objectif, regles=regles,
-            seed=seed, premier=temoignage, sandbox=sandbox,
+            spec,
+            provider,
+            entrypoint=entrypoint,
+            objectif=objectif,
+            regles=regles,
+            seed=seed,
+            premier=temoignage,
+            sandbox=sandbox,
         )
     if temoignage.tests or temoignage.aveux or temoignage.incoherents:
         return temoignage
 
     temoignage = _relancer(
-        spec, provider, entrypoint=entrypoint, objectif=objectif, regles=regles,
-        seed=seed, premier=temoignage, controle=controle, sandbox=sandbox,
+        spec,
+        provider,
+        entrypoint=entrypoint,
+        objectif=objectif,
+        regles=regles,
+        seed=seed,
+        premier=temoignage,
+        controle=controle,
+        sandbox=sandbox,
     )
     return temoignage
 
@@ -702,7 +771,9 @@ def _rappel_incoherence(premier: Temoignage, regles: Sequence[Rule]) -> str:
     return (
         "YOUR PREVIOUS ATTEMPT WAS REJECTED BY EXECUTION:\n"
         + "\n".join(lignes)
-        + "\n\nRewrite ONLY these rules: " + ids + ".\n"
+        + "\n\nRewrite ONLY these rules: "
+        + ids
+        + ".\n"
         "A check that fails on the reference you wrote yourself, or that passes on your own\n"
         "wrong implementation, is refused before it is ever used. Make the pair COHERENT:\n"
         "the reference must satisfy the rule, the contrefacon must violate it, and the test\n"
@@ -726,10 +797,15 @@ def _reparer(
     if not a_refaire:
         return premier
     seconde = _tentative(
-        spec, provider, entrypoint=entrypoint, objectif=objectif, regles=a_refaire,
+        spec,
+        provider,
+        entrypoint=entrypoint,
+        objectif=objectif,
+        regles=a_refaire,
         seed=None if seed is None else seed + 1,
         rappel=_rappel_incoherence(premier, a_refaire),
-        controle=True, sandbox=sandbox,
+        controle=True,
+        sandbox=sandbox,
     )
     tests = dict(premier.tests)
     tests.update(seconde.tests)
@@ -778,12 +854,17 @@ def _relancer(
     eu lieu fausserait la comparaison a budget egal, qui est la seule qui compte.
     """
     seconde = _tentative(
-        spec, provider, entrypoint=entrypoint, objectif=objectif, regles=regles,
+        spec,
+        provider,
+        entrypoint=entrypoint,
+        objectif=objectif,
+        regles=regles,
         seed=None if seed is None else seed + 1,
         rappel=_rappel(list(premier.refuses.values()), premier.motif),
         # La RELANCE garde le mode : une seconde tentative sans le controle rendrait un temoin
         # non mis a l'epreuve apres avoir refuse le premier pour cette raison precise.
-        controle=controle, sandbox=sandbox,
+        controle=controle,
+        sandbox=sandbox,
     )
     appels = premier.appels + seconde.appels
     if seconde.tests or seconde.aveux:

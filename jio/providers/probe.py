@@ -34,7 +34,8 @@ from ..core.types import Rule, RuleKind, Spec
 from ..providers.base import Message, Provider
 from ..spec.witness import Temoignage, traduire
 
-__all__ = ["Sonde", "spec_sonde", "sonder"]
+__all__ = ["Sonde", "sonder", "spec_sonde"]
+
 
 #: Specification minimale, assez petite pour couter une fraction de centime et assez
 #: complete pour exiger les deux formes de traduction : une egalite et un refus.
@@ -43,8 +44,12 @@ def spec_sonde() -> Spec:
         mission="moyenne de deux nombres : cas nominal et liste vide refusee",
         rules=(
             Rule(id="R-001", statement="La moyenne de [1, 2] vaut 1.5"),
-            Rule(id="R-002", statement="Une liste vide doit lever ValueError",
-                 kind=RuleKind.BOUNDARY, negative_case="[]"),
+            Rule(
+                id="R-002",
+                statement="Une liste vide doit lever ValueError",
+                kind=RuleKind.BOUNDARY,
+                negative_case="[]",
+            ),
         ),
     )
 
@@ -115,14 +120,17 @@ def sonder(provider: Provider, *, timeout_hint: float = 0.0) -> Sonde:
     Un diagnostic qui plante est un diagnostic qu'on ne lance plus. Toute erreur est
     capturee, nommee, et rendue dans le resultat.
     """
-    sonde = Sonde(nom=getattr(provider, "name", "?"), modele=getattr(provider, "model", ""))
+    sonde = Sonde(
+        nom=getattr(provider, "name", "?"), modele=getattr(provider, "model", "")
+    )
     debut = time.perf_counter()
     try:
         completion = provider.complete(
             [Message("user", "Reply with exactly the two letters: OK")],
-            temperature=0.0, max_tokens=16,
+            temperature=0.0,
+            max_tokens=16,
         )
-    except Exception as exc:  # noqa: BLE001 — un fournisseur qui echoue est un RESULTAT
+    except Exception as exc:
         sonde.erreur = f"{type(exc).__name__}: {exc}"
         sonde.latence_s = time.perf_counter() - debut
         return sonde
@@ -135,10 +143,12 @@ def sonder(provider: Provider, *, timeout_hint: float = 0.0) -> Sonde:
     debut = time.perf_counter()
     try:
         sonde.temoignage = traduire(
-            spec_sonde(), provider, entrypoint=ENTRYPOINT_SONDE,
+            spec_sonde(),
+            provider,
+            entrypoint=ENTRYPOINT_SONDE,
             objectif=spec_sonde().mission,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         sonde.erreur_traduction = f"{type(exc).__name__}: {exc}"
     sonde.latence_traduction_s = time.perf_counter() - debut
     return sonde

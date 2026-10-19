@@ -17,9 +17,9 @@ from pathlib import Path
 import pytest
 
 from jio.artifacts.wiring import (
+    _COMMANDE,
     DIALECTES,
     NOM_SERVEUR,
-    _COMMANDE,
     brancher,
     fragment_hermes,
     fragment_opencode,
@@ -40,9 +40,13 @@ def test_le_fragment_opencode_respecte_le_schema_documente() -> None:
     bloc = fragment_opencode()["mcp"][NOM_SERVEUR]
 
     assert bloc["type"] == "local"
-    assert isinstance(bloc["command"], list), "opencode exige un tableau, pas une chaine"
+    assert isinstance(bloc["command"], list), (
+        "opencode exige un tableau, pas une chaine"
+    )
     assert bloc["command"] == list(_COMMANDE)
-    assert bloc["enabled"] is True, "un serveur desactive est un cablage qui ne fait rien"
+    assert bloc["enabled"] is True, (
+        "un serveur desactive est un cablage qui ne fait rien"
+    )
 
 
 def test_le_fragment_hermes_est_du_yaml_sous_la_bonne_cle() -> None:
@@ -179,7 +183,11 @@ def test_le_serveur_repond_au_protocole_utilise_par_la_sonde() -> None:
     )
     resultat = subprocess.run(
         [sys.executable, "-m", "jio.mcp_server"],
-        input=requetes, capture_output=True, text=True, timeout=60, check=False,
+        input=requetes,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
         cwd=REPO,
     )
     reponses = [json.loads(l) for l in resultat.stdout.splitlines() if l.strip()]
@@ -193,6 +201,7 @@ def test_le_serveur_repond_au_protocole_utilise_par_la_sonde() -> None:
     servis = [outil["name"] for outil in reponses[1]["result"]["tools"]]
     assert servis == [outil["name"] for outil in TOOLS]
     assert len(servis) >= 5
+
 
 def test_le_fragment_opencode_ACTIVE_le_serveur_explicitement() -> None:
     """`enabled: true` : un serveur cable mais DESACTIVE serait un cablage qui ne fait rien.
@@ -221,8 +230,12 @@ def test_le_fragment_cursor_est_INDENTE_et_garde_les_accents() -> None:
 
     texte = fragment_cursor()
     assert json.loads(texte)["mcpServers"][NOM_SERVEUR]["command"] == "python3"
-    assert "\n  \"mcpServers\"" in texte, "indent=2 attendu : sinon le fichier est illisible"
-    assert "\\u" not in texte, "ensure_ascii=False attendu : les accents restent lisibles"
+    assert '\n  "mcpServers"' in texte, (
+        "indent=2 attendu : sinon le fichier est illisible"
+    )
+    assert "\\u" not in texte, (
+        "ensure_ascii=False attendu : les accents restent lisibles"
+    )
     assert texte.endswith("\n")
 
 
@@ -237,20 +250,29 @@ def test_la_taille_maximale_de_source_est_declaree_et_respectee() -> None:
     assert MAX_SOURCE == 200_000
 
     def refus(source: str) -> str:
-        reponse = handle({
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": "jio_prove",
-                       "arguments": {"source": source, "checks": {"R-1": "assert True"}}},
-        })
+        reponse = handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "jio_prove",
+                    "arguments": {"source": source, "checks": {"R-1": "assert True"}},
+                },
+            }
+        )
         assert reponse is not None
         resultat = reponse.get("result") or {}
         contenu = resultat.get("content") or [{}]
         return str(contenu[0].get("text", ""))
 
-    assert refus("x = 1") .startswith("REFUS : aucune regle") is False  # une regle est fournie
+    assert (
+        refus("x = 1").startswith("REFUS : aucune regle") is False
+    )  # une regle est fournie
     assert refus("x" * (MAX_SOURCE + 1)).startswith("REFUS : source trop longue")
     # exactement a la borne : ce n'est PAS un refus de taille
     assert not refus("x" * MAX_SOURCE).startswith("REFUS : source trop longue")
+
 
 def test_les_deux_requetes_de_la_sonde_ont_des_identifiants_DISTINCTS() -> None:
     """Deux requetes JSON-RPC en vol ne portent jamais le meme identifiant.
@@ -289,7 +311,9 @@ def test_le_fragment_cursor_lance_la_MEME_commande_que_le_serveur() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_jio_mcp_dans_un_TERMINAL_montre_ce_qu_il_sert_au_lieu_de_bloquer(monkeypatch, capsys):
+def test_jio_mcp_dans_un_TERMINAL_montre_ce_qu_il_sert_au_lieu_de_bloquer(
+    monkeypatch, capsys
+):
     """Un humain qui tape `jio mcp` ne doit pas voir une commande muette qui attend.
 
     `jio mcp` sans argument LANCE un serveur JSON-RPC sur son entree standard. Dans un terminal,
@@ -306,7 +330,7 @@ def test_jio_mcp_dans_un_TERMINAL_montre_ce_qu_il_sert_au_lieu_de_bloquer(monkey
     from jio.cli import main
 
     class _Terminal(io.StringIO):
-        def isatty(self) -> bool:            # noqa: D102 — ce que le vrai terminal repond
+        def isatty(self) -> bool:
             return True
 
     monkeypatch.setattr(_sys, "stdin", _Terminal(""))
@@ -325,7 +349,9 @@ def test_jio_mcp_dans_un_TERMINAL_montre_ce_qu_il_sert_au_lieu_de_bloquer(monkey
         assert outil["name"] in sortie, outil["name"]
 
 
-def test_une_session_MCP_sans_aucun_message_le_DIT_sur_la_sortie_d_erreur(monkeypatch, capsys):
+def test_une_session_MCP_sans_aucun_message_le_DIT_sur_la_sortie_d_erreur(
+    monkeypatch, capsys
+):
     """Zero message traite n'est pas « tout s'est bien passe » : c'est un silence, et il se dit.
 
     Mesure a l'origine : `jio mcp < /dev/null` sortait en 0 avec une sortie VIDE. Un client mal
@@ -346,7 +372,9 @@ def test_une_session_MCP_sans_aucun_message_le_DIT_sur_la_sortie_d_erreur(monkey
     assert "jio mcp --prove" in capture.err
 
 
-def test_une_session_MCP_avec_un_message_ne_dit_RIEN_sur_la_sortie_d_erreur(monkeypatch, capsys):
+def test_une_session_MCP_avec_un_message_ne_dit_RIEN_sur_la_sortie_d_erreur(
+    monkeypatch, capsys
+):
     """Le bruit ne doit apparaitre que dans le cas vide : sinon il pollue un vrai client.
 
     C'est l'autre bord du test precedent, et il compte autant : un avertissement emis a chaque
@@ -380,7 +408,7 @@ def test_la_progression_dit_le_RESTE_sauf_a_la_fin() -> None:
     """
     import io
 
-    from jio.cli import _Progression, _duree
+    from jio.cli import _duree, _Progression
 
     flux = io.StringIO()
     avancer = _Progression(3, quoi="ablation", flux=flux)
@@ -418,6 +446,7 @@ def test_le_banc_borne_par_taches_dit_le_VRAI_nombre_de_taches() -> None:
 # La commande ecrite doit MARCHER sur le projet ou elle est ecrite
 # --------------------------------------------------------------------------- #
 
+
 def test_la_commande_par_defaut_ne_resout_pas_jio_hors_du_depot(tmp_path) -> None:
     """Le defaut, mesure sur un projet ETRANGER — et pourquoi il fallait une sonde.
 
@@ -432,8 +461,15 @@ def test_la_commande_par_defaut_ne_resout_pas_jio_hors_du_depot(tmp_path) -> Non
     from jio.artifacts.wiring import _COMMANDE, commande_qui_marche
 
     # Dans un projet vide, la commande par defaut ne sert aucun outil...
-    essai = subprocess.run(list(_COMMANDE), input="\n", capture_output=True, text=True,
-                           cwd=tmp_path, timeout=60, check=False)
+    essai = subprocess.run(
+        list(_COMMANDE),
+        input="\n",
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        timeout=60,
+        check=False,
+    )
     assert "No module named 'jio'" in (essai.stderr + essai.stdout), (
         "ce test suppose que le dossier courant ne contient pas `jio/`"
     )
@@ -448,7 +484,9 @@ def test_la_commande_par_defaut_ne_resout_pas_jio_hors_du_depot(tmp_path) -> Non
         f"la commande resolue `{' '.join(commande)}` ne sert rien depuis {tmp_path} : {detail}"
     )
     if commande != _COMMANDE:
-        assert "ne sert aucun outil" in note, "la note doit dire pourquoi la defaut a ete ecartee"
+        assert "ne sert aucun outil" in note, (
+            "la note doit dire pourquoi la defaut a ete ecartee"
+        )
 
 
 def test_les_fragments_ecrivent_la_commande_qu_on_leur_donne() -> None:
@@ -460,7 +498,9 @@ def test_les_fragments_ecrivent_la_commande_qu_on_leur_donne() -> None:
     assert commande[0] in textes["opencode"]
     assert commande[0] in textes["hermes"]
     assert commande[0] in textes["codex"]
-    assert commande[0] in textes["claude-code"], "la ligne de commande CLI doit la porter aussi"
+    assert commande[0] in textes["claude-code"], (
+        "la ligne de commande CLI doit la porter aussi"
+    )
     assert commande[0] in textes["cursor"]
     # Et sans commande, la forme canonique est inchangee : c'est ce qui protege les artefacts
     # du depot, verifies a l'octet par `jio coherence`.

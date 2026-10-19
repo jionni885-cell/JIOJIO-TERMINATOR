@@ -27,10 +27,10 @@ import math
 from collections.abc import Sequence
 
 __all__ = [
-    "intervalle_wilson",
-    "intervalle_difference",
     "ecart_a_la_une",
     "essais_necessaires",
+    "intervalle_difference",
+    "intervalle_wilson",
 ]
 
 #: Quantile normal a 95 % — la valeur usuelle, ecrite pour etre lisible.
@@ -51,14 +51,35 @@ def _quantile(seuil: float) -> float:
         raise ValueError("le seuil doit etre strictement entre 0,5 et 1")
     p = 1.0 - (1.0 - seuil) / 2.0
     # Coefficients d'Acklam : `a`/`b` pour le corps, `c`/`d` pour les queues.
-    a = (-3.969683028665376e01, 2.209460984245205e02, -2.759285104469687e02,
-         1.383577518672690e02, -3.066479806614716e01, 2.506628277459239e00)
-    b = (-5.447609879822406e01, 1.615858368580409e02, -1.556989798598866e02,
-         6.680131188771972e01, -1.328068155288572e01)
-    c = (-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e00,
-         -2.549732539343734e00, 4.374664141464968e00, 2.938163982698783e00)
-    d = (7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e00,
-         3.754408661907416e00)
+    a = (
+        -3.969683028665376e01,
+        2.209460984245205e02,
+        -2.759285104469687e02,
+        1.383577518672690e02,
+        -3.066479806614716e01,
+        2.506628277459239e00,
+    )
+    b = (
+        -5.447609879822406e01,
+        1.615858368580409e02,
+        -1.556989798598866e02,
+        6.680131188771972e01,
+        -1.328068155288572e01,
+    )
+    c = (
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e00,
+        -2.549732539343734e00,
+        4.374664141464968e00,
+        2.938163982698783e00,
+    )
+    d = (
+        7.784695709041462e-03,
+        3.224671290700398e-01,
+        2.445134137142996e00,
+        3.754408661907416e00,
+    )
 
     def horner(coefficients, valeur):
         resultat = coefficients[0]
@@ -163,7 +184,6 @@ def ecart_a_la_une(
     return ecart, (bas * 100.0, haut * 100.0), bas > 0.0 or haut < 0.0
 
 
-
 def essais_necessaires(
     p_gauche: float, p_droite: float, puissance: float = 0.80, seuil: float = 0.95
 ) -> int:
@@ -198,4 +218,4 @@ def essais_necessaires(
     z_alpha = _Z if seuil == 0.95 else _quantile(seuil)
     z_beta = _quantile(puissance) if puissance > 0.5 else 0.0
     variance = p_gauche * (1.0 - p_gauche) + p_droite * (1.0 - p_droite)
-    return math.ceil((z_alpha + z_beta) ** 2 * variance / difference ** 2)
+    return math.ceil((z_alpha + z_beta) ** 2 * variance / difference**2)

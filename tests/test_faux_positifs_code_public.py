@@ -42,7 +42,11 @@ import sys
 from pathlib import Path
 
 from jio.cli import main
-from jio.verify.autocheck import _instantiable_without_args, derive, _lie_la_sortie_standard
+from jio.verify.autocheck import (
+    _instantiable_without_args,
+    _lie_la_sortie_standard,
+    derive,
+)
 from jio.verify.imports import check_project
 from jio.verify.linters import LIMITES_DE_L_ANALYSE, LintFinding
 
@@ -115,11 +119,15 @@ def test_une_sortie_liee_a_l_import_est_reconnue() -> None:
     Doctest remplace `sys.stdout` pendant l'execution : l'exemple ecrit dans l'ancien flux,
     doctest ne voit rien et conclut « Got nothing ». C'est la mesure qui est en cause.
     """
-    liee = _fonction("import sys\n\ndef f(file=sys.stdout):\n    print('x', file=file)\n")
+    liee = _fonction(
+        "import sys\n\ndef f(file=sys.stdout):\n    print('x', file=file)\n"
+    )
     assert _lie_la_sortie_standard(liee)
 
     sur = _fonction("def g(file=None):\n    print('x', file=file)\n")
-    assert not _lie_la_sortie_standard(sur), "un flux passe explicitement est capturable"
+    assert not _lie_la_sortie_standard(sur), (
+        "un flux passe explicitement est capturable"
+    )
 
 
 def test_le_controle_accepte_une_CLASSE() -> None:
@@ -141,8 +149,11 @@ def test_le_controle_accepte_une_CLASSE() -> None:
     classe = next(n for n in arbre.body if isinstance(n, ast.ClassDef))
     assert _lie_la_sortie_standard(classe) is True
 
-    hors = next(n for n in ast.parse("class Simple:\n    pass\n").body
-                if isinstance(n, ast.ClassDef))
+    hors = next(
+        n
+        for n in ast.parse("class Simple:\n    pass\n").body
+        if isinstance(n, ast.ClassDef)
+    )
     assert _lie_la_sortie_standard(hors) is False
 
 
@@ -188,23 +199,30 @@ def test_import_etoile_est_une_limite_et_non_une_accusation() -> None:
     Le message de l'outil le dit lui-meme : « unable to detect undefined names ». Accuser un
     projet parce que l'ANALYSEUR n'a pas su suivre les noms est un faux positif.
     """
-    etoile = LintFinding(path=Path("x.py"), line=1, rule="ruff:F403",
-                         message="`from .core import *` used")
+    etoile = LintFinding(
+        path=Path("x.py"),
+        line=1,
+        rule="ruff:F403",
+        message="`from .core import *` used",
+    )
     assert etoile.limite_de_l_analyse, "F403 doit declarer une limite"
     assert "limite de l'outil" in etoile.limite_de_l_analyse
 
-    indefini = LintFinding(path=Path("x.py"), line=2, rule="ruff:F405",
-                           message="`nom` may be undefined")
+    indefini = LintFinding(
+        path=Path("x.py"), line=2, rule="ruff:F405", message="`nom` may be undefined"
+    )
     assert indefini.limite_de_l_analyse, "F405 doit declarer une limite"
 
     # Un vrai bug garde son statut : le filtre ne doit pas devenir un trou.
-    vrai = LintFinding(path=Path("x.py"), line=3, rule="ruff:F821",
-                       message="undefined name `truc`")
+    vrai = LintFinding(
+        path=Path("x.py"), line=3, rule="ruff:F821", message="undefined name `truc`"
+    )
     assert not vrai.limite_de_l_analyse, "F821 est une preuve de defaut, pas une limite"
     # F401 : code mort, pas rupture. Mesure : 41 des 44 constats sur 12 paquets publics
     # etaient des F401 (wcwidth en a 38 a lui seul), qui noyaient les 3 vrais.
-    assert LintFinding(path=Path("x.py"), line=4, rule="ruff:F401",
-                       message="import inutilise").limite_de_l_analyse
+    assert LintFinding(
+        path=Path("x.py"), line=4, rule="ruff:F401", message="import inutilise"
+    ).limite_de_l_analyse
 
 
 def test_le_jeu_de_limites_reste_etroit() -> None:
@@ -219,7 +237,9 @@ def test_le_jeu_de_limites_reste_etroit() -> None:
     )
     # Aucune limite ne doit couvrir les regles qui PROUVENT une rupture.
     for preuve in ("F821", "F811", "F822", "F823", "F701", "F702", "F811"):
-        assert preuve not in LIMITES_DE_L_ANALYSE, f"{preuve} ne peut pas etre une limite"
+        assert preuve not in LIMITES_DE_L_ANALYSE, (
+            f"{preuve} ne peut pas etre une limite"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -239,23 +259,29 @@ def test_un_nom_venu_d_une_etoile_n_est_pas_absent(tmp_path) -> None:
     """Mesure sur `pyparsing` : `common.py` fait `from .helpers import DelimitedList`, et
     `helpers.py` fait `from .core import *`. Le nom existe a l'execution, reste invisible a
     l'analyse : le verificateur accusait deux fois une bibliotheque correcte."""
-    fichiers, racine = _projet(tmp_path, {
-        "pkg/__init__.py": "",
-        "pkg/core.py": "class DelimitedList:\n    pass\n",
-        "pkg/helpers.py": "from .core import *\n",
-        "pkg/common.py": "from .helpers import DelimitedList\n\nx = DelimitedList\n",
-    })
+    fichiers, racine = _projet(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/core.py": "class DelimitedList:\n    pass\n",
+            "pkg/helpers.py": "from .core import *\n",
+            "pkg/common.py": "from .helpers import DelimitedList\n\nx = DelimitedList\n",
+        },
+    )
     assert check_project(fichiers, racine) == []
 
 
 def test_le_meme_nom_absent_sans_etoile_reste_accuse(tmp_path) -> None:
     """Contre-epreuve : sans `import *`, l'absence est une vraie rupture."""
-    fichiers, racine = _projet(tmp_path, {
-        "pkg/__init__.py": "",
-        "pkg/core.py": "class Autre:\n    pass\n",
-        "pkg/helpers.py": "from .core import Autre\n",
-        "pkg/common.py": "from .helpers import DelimitedList\n\nx = DelimitedList\n",
-    })
+    fichiers, racine = _projet(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/core.py": "class Autre:\n    pass\n",
+            "pkg/helpers.py": "from .core import Autre\n",
+            "pkg/common.py": "from .helpers import DelimitedList\n\nx = DelimitedList\n",
+        },
+    )
     trouves = check_project(fichiers, racine)
     assert len(trouves) == 1
     assert "DelimitedList" in trouves[0].message
@@ -263,12 +289,15 @@ def test_le_meme_nom_absent_sans_etoile_reste_accuse(tmp_path) -> None:
 
 def test_l_etoile_est_vue_meme_dans_un_try(tmp_path) -> None:
     """Un `from x import *` ecrit sous `try:` fournit tout autant de noms."""
-    fichiers, racine = _projet(tmp_path, {
-        "pkg/__init__.py": "",
-        "pkg/core.py": "class Chose:\n    pass\n",
-        "pkg/helpers.py": "try:\n    from .core import *\nexcept Exception:\n    pass\n",
-        "pkg/common.py": "from .helpers import Chose\n\nx = Chose\n",
-    })
+    fichiers, racine = _projet(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/core.py": "class Chose:\n    pass\n",
+            "pkg/helpers.py": "try:\n    from .core import *\nexcept Exception:\n    pass\n",
+            "pkg/common.py": "from .helpers import Chose\n\nx = Chose\n",
+        },
+    )
     assert check_project(fichiers, racine) == []
 
 
@@ -325,9 +354,13 @@ def test_un_sous_paquet_n_abandonne_pas_plus_que_son_propre_nom(tmp_path) -> Non
     (paquet / "sous" / "client.py").write_text(
         "from pkg.sous.voisin import disparu\n\nx = disparu\n", encoding="utf-8"
     )
-    (paquet / "sous" / "voisin.py").write_text("def reste():\n    return 1\n", encoding="utf-8")
+    (paquet / "sous" / "voisin.py").write_text(
+        "def reste():\n    return 1\n", encoding="utf-8"
+    )
     trouves = check_project(sorted(paquet.rglob("*.py")), paquet)
-    assert len(trouves) == 1 and "disparu" in trouves[0].message, [p.message for p in trouves]
+    assert len(trouves) == 1 and "disparu" in trouves[0].message, [
+        p.message for p in trouves
+    ]
 
 
 def test_un_import_absolu_DU_PAQUET_EST_encore_verifie(tmp_path) -> None:
@@ -342,7 +375,9 @@ def test_un_import_absolu_DU_PAQUET_EST_encore_verifie(tmp_path) -> None:
         "from pkg.utils import disparu\n\nx = disparu\n", encoding="utf-8"
     )
     trouves = check_project(sorted(paquet.rglob("*.py")), paquet)
-    assert len(trouves) == 1 and "disparu" in trouves[0].message, [p.message for p in trouves]
+    assert len(trouves) == 1 and "disparu" in trouves[0].message, [
+        p.message for p in trouves
+    ]
 
 
 def test_un_import_RELATIF_resout_toujours_le_module_voisin(tmp_path) -> None:
@@ -351,11 +386,14 @@ def test_un_import_RELATIF_resout_toujours_le_module_voisin(tmp_path) -> None:
     La, le nom est construit depuis le paquet du fichier : le module d'un segment est la
     bonne cible. Casser ce cas rendrait le controle muet sur les vrais renommages.
     """
-    fichiers, racine = _projet(tmp_path, {
-        "pkg/__init__.py": "",
-        "pkg/utils.py": "def aide():\n    return 1\n",
-        "pkg/client.py": "from .utils import disparu\n\nx = disparu\n",
-    })
+    fichiers, racine = _projet(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/utils.py": "def aide():\n    return 1\n",
+            "pkg/client.py": "from .utils import disparu\n\nx = disparu\n",
+        },
+    )
     trouves = check_project(fichiers, racine)
     assert len(trouves) == 1 and "disparu" in trouves[0].message
 
@@ -365,20 +403,23 @@ def test_un_fichier_n_importe_pas_d_attribut_de_lui_meme(tmp_path) -> None:
     puis `keras.callbacks.Callback`. Le nom se resolvait sur `tqdm/keras.py` LUI-MEME, d'ou
     deux accusations fausses. Un fichier ne s'importe pas lui-meme sous son nom absolu.
     """
-    fichiers, racine = _projet(tmp_path, {
-        "pkg/__init__.py": "",
-        "pkg/keras.py": (
-            "try:\n"
-            "    import keras\n"
-            "except ImportError:\n"
-            "    keras = None\n"
-            "\n"
-            "\n"
-            "if keras is not None:\n"
-            "    class Callback(keras.callbacks.Callback):\n"
-            "        pass\n"
-        ),
-    })
+    fichiers, racine = _projet(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/keras.py": (
+                "try:\n"
+                "    import keras\n"
+                "except ImportError:\n"
+                "    keras = None\n"
+                "\n"
+                "\n"
+                "if keras is not None:\n"
+                "    class Callback(keras.callbacks.Callback):\n"
+                "        pass\n"
+            ),
+        },
+    )
     assert check_project(fichiers, racine) == []
 
 
@@ -403,9 +444,7 @@ def test_une_dataclass_derivee_n_est_pas_declaree_instanciable() -> None:
         "class Contexte(BaseDuProjet):\n"
         "    actif: bool = True\n"
     )
-    classe = next(
-        n for n in ast.parse(source).body if isinstance(n, ast.ClassDef)
-    )
+    classe = next(n for n in ast.parse(source).body if isinstance(n, ast.ClassDef))
     possible, raison = _instantiable_without_args(classe, {})
     assert not possible, "une dataclass derivee a ete declaree instanciable a vide"
     assert "hors de ce fichier" in raison, raison
@@ -507,13 +546,15 @@ def test_un_exemple_abrege_par_des_points_n_est_pas_une_specification(
         "    identifiant: str = 'abc'\n"
         "\n"
         "    def rendu(self) -> None:\n"
-        "        print(f\"Enveloppe(url={self.url!r}, identifiant={self.identifiant!r})\")\n",
+        '        print(f"Enveloppe(url={self.url!r}, identifiant={self.identifiant!r})")\n',
         encoding="utf-8",
     )
     code = main(["scan", str(tmp_path), "--no-learn", "--no-linters"])
     sortie = capsys.readouterr().out
 
-    assert code == 0, "un exemple abrege ne doit pas faire echouer le scan :\n" + sortie[-800:]
+    assert code == 0, (
+        "un exemple abrege ne doit pas faire echouer le scan :\n" + sortie[-800:]
+    )
     assert "ABREGEE" in sortie, "la limite doit etre SIGNALEE, pas taisee"
     assert "RESERVE(S)" in sortie or "RESERVE" in sortie
 
@@ -575,8 +616,11 @@ def _pas_de_defaut(fichier) -> object:
     source = fichier.read_text(encoding="utf-8")
     derived = derive(source, path=str(fichier))
     resultat = ExecutableProver(sandbox=Sandbox(timeout=60)).prove(
-        source, derived.spec, hidden_checks=derived.checks,
-        entrypoint=derived.entrypoint, preamble=derived.preamble,
+        source,
+        derived.spec,
+        hidden_checks=derived.checks,
+        entrypoint=derived.entrypoint,
+        preamble=derived.preamble,
     )
     temoins = list(resultat.hard_failures) + list(resultat.reservations)
     assert temoins, "aucun temoin : le fichier a ete declare propre sans preuve"
@@ -622,8 +666,11 @@ def test_la_source_s_execute_dans_le_module_pas_dans_le_script() -> None:
     )
     derived = derive(source, entrypoint="verifie")
     resultat = ExecutableProver(sandbox=Sandbox(timeout=60)).prove(
-        source, derived.spec, hidden_checks=derived.checks,
-        entrypoint=derived.entrypoint, preamble=derived.preamble,
+        source,
+        derived.spec,
+        hidden_checks=derived.checks,
+        entrypoint=derived.entrypoint,
+        preamble=derived.preamble,
     )
     assert not resultat.hard_failures, [
         (w.rule_id, (w.stderr or "")[-200:]) for w in resultat.hard_failures
@@ -639,14 +686,17 @@ def test_un_module_qui_fabrique_ses_noms_est_une_limite(tmp_path) -> None:
     """
     from jio.verify.imports import check_project
 
-    fichiers, racine = _projet(tmp_path, {
-        "pkg/__init__.py": "import sys, types\n\n\nclass _auto(types.ModuleType):\n"
-                           "    def __getattr__(self, name):\n        return name\n\n\n"
-                           "newmod = _auto(__name__)\n"
-                           "newmod.__dict__.update(sys.modules[__name__].__dict__)\n"
-                           "sys.modules[__name__] = newmod\n",
-        "pkg/client.py": "from pkg import LexerInconnu\n\nx = LexerInconnu\n",
-    })
+    fichiers, racine = _projet(
+        tmp_path,
+        {
+            "pkg/__init__.py": "import sys, types\n\n\nclass _auto(types.ModuleType):\n"
+            "    def __getattr__(self, name):\n        return name\n\n\n"
+            "newmod = _auto(__name__)\n"
+            "newmod.__dict__.update(sys.modules[__name__].__dict__)\n"
+            "sys.modules[__name__] = newmod\n",
+            "pkg/client.py": "from pkg import LexerInconnu\n\nx = LexerInconnu\n",
+        },
+    )
     limites: list[str] = []
     assert check_project(fichiers, racine, limites=limites) == []
     assert limites and "fabrique ses noms" in limites[0], limites
@@ -821,19 +871,22 @@ def test_un_import_absolu_non_installe_ne_resout_pas_chez_le_voisin(tmp_path) ->
     """
     from jio.verify.imports import check_project
 
-    fichiers, racine = _projet(tmp_path, {
-        "pkg/__init__.py": "",
-        "pkg/abc.py": "class Flux:\n    pass\n",
-        "pkg/sous/__init__.py": "",
-        "pkg/sous/client.py": (
-            "from pkg.abc import Flux\n"
-            "import trio\n"
-            "\n"
-            "\n"
-            "def f() -> None:\n"
-            "    trio.abc.Instrument()\n"
-            "    trio.lowlevel.start_guest_run()\n"
-            "    Flux()\n"
-        ),
-    })
+    fichiers, racine = _projet(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/abc.py": "class Flux:\n    pass\n",
+            "pkg/sous/__init__.py": "",
+            "pkg/sous/client.py": (
+                "from pkg.abc import Flux\n"
+                "import trio\n"
+                "\n"
+                "\n"
+                "def f() -> None:\n"
+                "    trio.abc.Instrument()\n"
+                "    trio.lowlevel.start_guest_run()\n"
+                "    Flux()\n"
+            ),
+        },
+    )
     assert check_project(fichiers, racine) == []

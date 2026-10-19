@@ -34,9 +34,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
 
 from .mutation import mutate
 
@@ -285,7 +285,12 @@ def mesurer(
                 commande = [python, "-m", "pytest", "-q", "-x", "--no-header", *tests]
                 try:
                     resultat = subprocess.run(
-                        commande, cwd=copie, capture_output=True, text=True, timeout=timeout
+                        commande,
+                        cwd=copie,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                        check=False,
                     )
                     sortie = (resultat.stdout or "") + (resultat.stderr or "")
                     tue = resultat.returncode != 0
@@ -293,13 +298,19 @@ def mesurer(
                     # Un mutant qui ne termine pas a fait BOUCLER la suite : c'est un
                     # kill, pas un survivant — mais il faut le dire, parce qu'un test qui
                     # part en boucle coute le temps de tout le monde.
-                    sortie, tue = f"delai depasse ({timeout} s) : la suite a boucle", True
+                    sortie, tue = (
+                        f"delai depasse ({timeout} s) : la suite a boucle",
+                        True,
+                    )
                 if tue:
                     preuve = next(
-                        (l.strip() for l in reversed(sortie.splitlines()) if l.strip()), ""
+                        (l.strip() for l in reversed(sortie.splitlines()) if l.strip()),
+                        "",
                     )[:160]
                 else:
-                    preuve = "la suite passe AVEC le mutant : aucune preuve de cette ligne"
+                    preuve = (
+                        "la suite passe AVEC le mutant : aucune preuve de cette ligne"
+                    )
                 # Le survivant est rejoue sur la suite ENTIERE, et seulement lui. Deux natures de
                 # survivant se ressemblaient dans le rapport :
                 #   * APPARENT  : la selection ne lancait pas le fichier qui le tuait ;
@@ -313,8 +324,20 @@ def mesurer(
                 if not tue and not tous_les_tests:
                     try:
                         complet = subprocess.run(
-                            [python, "-m", "pytest", "-q", "-x", "--no-header", "tests"],
-                            cwd=copie, capture_output=True, text=True, timeout=timeout,
+                            [
+                                python,
+                                "-m",
+                                "pytest",
+                                "-q",
+                                "-x",
+                                "--no-header",
+                                "tests",
+                            ],
+                            cwd=copie,
+                            capture_output=True,
+                            text=True,
+                            timeout=timeout,
+                            check=False,
                         )
                         tue_par_suite = complet.returncode != 0
                     except subprocess.TimeoutExpired:
@@ -326,9 +349,9 @@ def mesurer(
                         mutant.label,
                         tue,
                         preuve,
-                        equivalent="" if tue else EQUIVALENTS.get(
-                            (str(relatif), mutant.label), ""
-                        ),
+                        equivalent=""
+                        if tue
+                        else EQUIVALENTS.get((str(relatif), mutant.label), ""),
                         tue_par_suite_complete=tue_par_suite,
                     )
                 )
@@ -343,8 +366,10 @@ def mesurer(
 def formater(rapport: RapportSuite) -> str:
     """Rapport lisible : le score, les survivants, et ce qu'il faut en faire."""
     lignes = [
-        f"  SCORE DE MUTATION DE LA SUITE  ·  {rapport.tues}/{len(rapport.mutants)} "
-        f"mutants tues  ({rapport.score:.0%})  ·  {rapport.duree_s:.0f} s",
+        (
+            f"  SCORE DE MUTATION DE LA SUITE  ·  {rapport.tues}/{len(rapport.mutants)} "
+            f"mutants tues  ({rapport.score:.0%})  ·  {rapport.duree_s:.0f} s"
+        ),
         "    Lecture : un mutant SURVIVANT est une ligne du depot qu'aucun test ne protege.",
         "    Ce n'est pas une accusation contre le code : c'est une preuve manquante.",
     ]
@@ -373,9 +398,7 @@ def formater(rapport: RapportSuite) -> str:
     for mutant in rapport.equivalents:
         # Une equivalence DECLAREE n'est pas un oubli : elle porte sa raison, ici, dans le
         # rapport — pas dans la tete de quelqu'un.
-        lignes.append(
-            f"    EQUIVALENT DECLARE  {mutant.fichier}  [{mutant.label}]"
-        )
+        lignes.append(f"    EQUIVALENT DECLARE  {mutant.fichier}  [{mutant.label}]")
         lignes.append(f"      raison : {mutant.equivalent}")
     # Le detail par famille : c'est la lecture honnete d'un score global. Un score bas
     # fait de constantes de plafond n'a pas la meme significance qu'un score bas fait de

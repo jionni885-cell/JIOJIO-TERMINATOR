@@ -44,9 +44,9 @@ from dataclasses import dataclass
 
 __all__ = [
     "MAX_QUESTIONS",
-    "Signal",
-    "Question",
     "Analyse",
+    "Question",
+    "Signal",
     "analyser",
     "formater",
     "resume",
@@ -128,35 +128,98 @@ _ACTIONS: dict[str, str] = {
 #: Cette table existe parce que le depot est bilingue : les prompts de ses agents sont en
 #: anglais, et une porte qui ne comprend qu'une langue se tairait sur la moitie des missions.
 _ACTIONS_EN: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\b(fix|fixes|fixed|fixing|repair|repairs|repaired|debug|debugs|debugged)\b"),
-     "correction"),
-    (re.compile(r"\b(add|adds|added|adding|write|writes|writing|created|create|creates|creating|"
-                r"implement|implements|implemented|implementing|generate|generates|generated|"
-                r"generating)\b"), "ecriture"),
-    (re.compile(r"\b(rename|renames|renamed|migrate|migrates|migrated|simplify|simplifies|"
-                r"simplified|delete|deletes|deleted|remove|removes|removed|refactor|refactors|"
-                r"refactored|merge|merges|merged)\b"), "transformation"),
-    (re.compile(r"\b(optimize|optimizes|optimized|optimise|optimised|speed\s+up|accelerate|"
-                r"accelerates|accelerated|reduce|reduces|reduced|reducing)\b"), "performance"),
-    (re.compile(r"\b(analyze|analyzes|analyzed|analyse|analyses|analysed|audit|audits|audited|"
-                r"verify|verifies|verified|measure|measures|measured|compare|compares|compared|"
-                r"review|reviews|reviewed|scan|scans|scanned)\b"), "analyse"),
-    (re.compile(r"\b(explain|explains|explained|document|documents|documented|summarize|"
-                r"summarizes|summarized|describe|describes|described)\b"), "explication"),
-    (re.compile(r"\b(test|tests|tested|testing|cover|covers|covered|covering)\b"), "tests"),
-    (re.compile(r"\b(publish|publishes|published|deploy|deploys|deployed|install|installs|"
-                r"installed|wire\s+up|wires\s+up|wired\s+up)\b"), "livraison"),
-    (re.compile(r"\b(improve|improves|improved|improving|enhance|enhances|enhanced|"
-                r"clean\s+up|cleans\s+up|arrange|arranges|arranged)\b"), "amelioration"),
+    (
+        re.compile(
+            r"\b(fix|fixes|fixed|fixing|repair|repairs|repaired|debug|debugs|debugged)\b"
+        ),
+        "correction",
+    ),
+    (
+        re.compile(
+            r"\b(add|adds|added|adding|write|writes|writing|created|create|creates|creating|"
+            r"implement|implements|implemented|implementing|generate|generates|generated|"
+            r"generating)\b"
+        ),
+        "ecriture",
+    ),
+    (
+        re.compile(
+            r"\b(rename|renames|renamed|migrate|migrates|migrated|simplify|simplifies|"
+            r"simplified|delete|deletes|deleted|remove|removes|removed|refactor|refactors|"
+            r"refactored|merge|merges|merged)\b"
+        ),
+        "transformation",
+    ),
+    (
+        re.compile(
+            r"\b(optimize|optimizes|optimized|optimise|optimised|speed\s+up|accelerate|"
+            r"accelerates|accelerated|reduce|reduces|reduced|reducing)\b"
+        ),
+        "performance",
+    ),
+    (
+        re.compile(
+            r"\b(analyze|analyzes|analyzed|analyse|analyses|analysed|audit|audits|audited|"
+            r"verify|verifies|verified|measure|measures|measured|compare|compares|compared|"
+            r"review|reviews|reviewed|scan|scans|scanned)\b"
+        ),
+        "analyse",
+    ),
+    (
+        re.compile(
+            r"\b(explain|explains|explained|document|documents|documented|summarize|"
+            r"summarizes|summarized|describe|describes|described)\b"
+        ),
+        "explication",
+    ),
+    (
+        re.compile(r"\b(test|tests|tested|testing|cover|covers|covered|covering)\b"),
+        "tests",
+    ),
+    (
+        re.compile(
+            r"\b(publish|publishes|published|deploy|deploys|deployed|install|installs|"
+            r"installed|wire\s+up|wires\s+up|wired\s+up)\b"
+        ),
+        "livraison",
+    ),
+    (
+        re.compile(
+            r"\b(improve|improves|improved|improving|enhance|enhances|enhanced|"
+            r"clean\s+up|cleans\s+up|arrange|arranges|arranged)\b"
+        ),
+        "amelioration",
+    ),
 )
 
 #: Verbes qui, seuls, ne designent RIEN de verifiable. « Ameliore le projet » : ameliorer quoi,
 #: et a quelle aune ? Ces objectifs demandent une question de CIBLE, meme si le verbe existe.
-_VAGUES = frozenset({"ameliorer", "optimise", "optimiser", "simplifier", "nettoyer", "voir",
-                     "regarder", "aider", "arranger",
-                     # Anglais : les formes de la ligne « amelioration » de `_ACTIONS_EN`.
-                     "improve", "improves", "improved", "improving", "enhance", "enhances",
-                     "enhanced", "clean", "cleans", "arrange", "arranges", "arranged"})
+_VAGUES = frozenset(
+    {
+        "ameliorer",
+        "optimise",
+        "optimiser",
+        "simplifier",
+        "nettoyer",
+        "voir",
+        "regarder",
+        "aider",
+        "arranger",
+        # Anglais : les formes de la ligne « amelioration » de `_ACTIONS_EN`.
+        "improve",
+        "improves",
+        "improved",
+        "improving",
+        "enhance",
+        "enhances",
+        "enhanced",
+        "clean",
+        "cleans",
+        "arrange",
+        "arranges",
+        "arranged",
+    }
+)
 
 #: Mots qui designent une CIBLE nommee : un chemin, un module, un objet precis.
 _CIBLES = (
@@ -183,14 +246,60 @@ _DETERMINEE = re.compile(
 #: porte se tairait sur les objectifs les plus ambigus, exactement ceux qu'elle doit arreter.
 #: Mesure a l'origine : `tests/test_clarify.py` et le banc d'objectifs ont montre que
 #: « corrige le bug » et « ajoute des tests » passaient pour des objectifs cibles.
-_NOMS_VAGUES = frozenset({
-    "bug", "bugs", "erreur", "erreurs", "probleme", "problemes", "chose", "choses", "truc",
-    "trucs", "ca", "cela", "projet", "depot", "repo", "code", "fichier", "fichiers",
-    "documentation", "docs", "qualite", "revue", "test", "tests", "performance",
-    "performances", "rapidite", "vitesse", "tout", "tous", "toutes", "ensemble", "partie",
-    "parties", "aspect", "aspects", "point", "points", "zone", "zones", "endroit", "endroits",
-    "thing", "things", "stuff", "issue", "issues", "quality", "review", "everything",
-})
+_NOMS_VAGUES = frozenset(
+    {
+        "bug",
+        "bugs",
+        "erreur",
+        "erreurs",
+        "probleme",
+        "problemes",
+        "chose",
+        "choses",
+        "truc",
+        "trucs",
+        "ca",
+        "cela",
+        "projet",
+        "depot",
+        "repo",
+        "code",
+        "fichier",
+        "fichiers",
+        "documentation",
+        "docs",
+        "qualite",
+        "revue",
+        "test",
+        "tests",
+        "performance",
+        "performances",
+        "rapidite",
+        "vitesse",
+        "tout",
+        "tous",
+        "toutes",
+        "ensemble",
+        "partie",
+        "parties",
+        "aspect",
+        "aspects",
+        "point",
+        "points",
+        "zone",
+        "zones",
+        "endroit",
+        "endroits",
+        "thing",
+        "things",
+        "stuff",
+        "issue",
+        "issues",
+        "quality",
+        "review",
+        "everything",
+    }
+)
 
 
 def _cible_nommee(texte: str) -> str:
@@ -209,8 +318,12 @@ def _cible_nommee(texte: str) -> str:
 
 #: Mots qui annoncent un CRITERE de succes : on saura si c'est fini, et comment.
 _CRITERES = (
-    re.compile(r"\b(sans|zero|aucun|aucune)\s+(erreur|regression|echange|warning|echec)"),
-    re.compile(r"\b(tous?\s+les\s+tests?|les\s+tests?\s+passent|vert|verts|conforme)\b"),
+    re.compile(
+        r"\b(sans|zero|aucun|aucune)\s+(erreur|regression|echange|warning|echec)"
+    ),
+    re.compile(
+        r"\b(tous?\s+les\s+tests?|les\s+tests?\s+passent|vert|verts|conforme)\b"
+    ),
     re.compile(r"\b(en\s+moins\s+de|sous)\s+\d+"),
     re.compile(r"\b\d+\s*(ms|s|secondes?|minutes?|%|points?|lignes?|octets?|ko|mo)\b"),
     # Une borne de BOUCLE est un critere : « jusqu'a ce que 3 cycles ne trouvent plus d'axe » dit
@@ -241,18 +354,24 @@ _CRITERES = (
     # critere. Mesure a l'origine : « mesurer le gain ... en points de reussite » etait juge
     # sans critere, donc la porte demandait « comment saura-t-on ? » a un objectif qui venait
     # de le dire.
-    re.compile(r"\b(?:en|de|par)\s+(?:points?|pour ?cent|%|missions?|tours?|appels?|regles?|"
-               r"tests?|lignes?|secondes?|minutes?|millisecondes?)\b"),
+    re.compile(
+        r"\b(?:en|de|par)\s+(?:points?|pour ?cent|%|missions?|tours?|appels?|regles?|"
+        r"tests?|lignes?|secondes?|minutes?|millisecondes?)\b"
+    ),
     # Le LIVRABLE enonce fait office de critere : « et lister les regles non couvertes »
     # dit ce qui doit exister a la fin.
-    re.compile(r"\b(lister|produire|rendre|fournir|sortir|ecrire|rapporter)\b.*\b(regles?|"
-               r"liste|tableau|rapport|resume|fichiers?|resultats?)\b"),
+    re.compile(
+        r"\b(lister|produire|rendre|fournir|sortir|ecrire|rapporter)\b.*\b(regles?|"
+        r"liste|tableau|rapport|resume|fichiers?|resultats?)\b"
+    ),
     # Anglais : « proving X is idempotent », « the suite must stay green », « within 20 ms ».
     # Mesure a l'origine : deux objectifs anglais parfaitement bornes sortaient avec la
     # question « comment saura-t-on que c'est fini ? » — la porte ne connaissait que le
     # francais, et l'utilisateur ecrit dans les deux langues.
-    re.compile(r"\b(proving|proves|proven|must\s+(stay|remain|pass|be)|should\s+(stay|remain|"
-               r"pass|be)|so\s+that|stay\s+green|passing|green|within\s+\d+)\b"),
+    re.compile(
+        r"\b(proving|proves|proven|must\s+(stay|remain|pass|be)|should\s+(stay|remain|"
+        r"pass|be)|so\s+that|stay\s+green|passing|green|within\s+\d+)\b"
+    ),
     # -- l'anglais, mesure sur le JEU DE CONTROLE (objectifs d'un autre projet) ------------- #
     #
     # Le meme raisonnement que ci-dessus, applique a la seconde langue : la porte connaissait
@@ -263,14 +382,20 @@ _CRITERES = (
     # objectif, et l'utilisateur apprend a ignorer la porte.
     #
     # Bornes quantitatives : « below 200 MB », « in under 60 lines », « at least 90 % ».
-    re.compile(r"\b(below|under|above|over|at\s+most|at\s+least|no\s+more\s+than)\s+\d+"),
+    re.compile(
+        r"\b(below|under|above|over|at\s+most|at\s+least|no\s+more\s+than)\s+\d+"
+    ),
     # Un TEST nomme est un critere verificable : « cover it in tests/test_limits.py »,
     # « test it in `tests/test_deploy.py` ». Le francais avait l'equivalent (« avec un test
     # dans tests/… »), l'anglais ne l'avait pas.
-    re.compile(r"\b(cover(?:ed|ing|s)?|test(?:ed|ing|s)?|check(?:ed|ing|s)?)\s+(?:it\s+)?"
-               r"(?:in|by|with)\s+`?[\w./-]*tests?/"),
+    re.compile(
+        r"\b(cover(?:ed|ing|s)?|test(?:ed|ing|s)?|check(?:ed|ing|s)?)\s+(?:it\s+)?"
+        r"(?:in|by|with)\s+`?[\w./-]*tests?/"
+    ),
     # Un invariant explicite : « keeping `docker compose up` working », « keep the tests green ».
-    re.compile(r"\bkeep(?:ing|s)?\s+[\w`./-]+\s+(working|green|passing|intact|unchanged)\b"),
+    re.compile(
+        r"\bkeep(?:ing|s)?\s+[\w`./-]+\s+(working|green|passing|intact|unchanged)\b"
+    ),
 )
 
 #: Actions dont le RESULTAT est directement observable sur la cible : supprimer X (X a
@@ -287,11 +412,11 @@ _CRITERES = (
 #: « ajoute » en francais, qui, eux, etaient reconnus.
 _CRITERE_IMPLIQUE = {
     "supprimer": r"\b(supprimer|supprime|effacer|efface|retirer|retire|enlever|enleve|"
-                 r"remove|removes|removed|delete|deletes|deleted|drop|drops|dropped)\b",
+    r"remove|removes|removed|delete|deletes|deleted|drop|drops|dropped)\b",
     "renommer": r"\b(renommer|renomme|deplacer|deplace|rename|renames|renamed|move|moves|"
-                r"moved)\b",
+    r"moved)\b",
     "creer": r"\b(ecrire|ecris|creer|cree|generer|genere|ajouter|ajoute|write|writes|written|"
-             r"create|creates|created|generate|generates|generated|add|adds|added)\b",
+    r"create|creates|created|generate|generates|generated|add|adds|added)\b",
 }
 
 
@@ -340,7 +465,12 @@ def _plat(texte: str) -> str:
     """
     plat = (texte or "").lower()
     for accents, simple in (
-        ("àâä", "a"), ("éèêë", "e"), ("îï", "i"), ("ôö", "o"), ("ûü", "u"), ("ç", "c"),
+        ("àâä", "a"),
+        ("éèêë", "e"),
+        ("îï", "i"),
+        ("ôö", "o"),
+        ("ûü", "u"),
+        ("ç", "c"),
     ):
         for lettre in accents:
             plat = plat.replace(lettre, simple)
@@ -357,8 +487,12 @@ def _poursuite(texte: str) -> str:
 _SOURCES = (
     re.compile(r"\b(depuis|d'apres|a partir de|selon|dans)\s+\S"),
     re.compile(r"https?://\S+"),
-    re.compile(r"\b(depot|repo|fichier|journal|log|code|document|donnees|base|corpus)\b"),
-    re.compile(r"\b(mon|ma|mes|notre|nos|le|la|les)\s+(projet|code|repo|fichier|document)\b"),
+    re.compile(
+        r"\b(depot|repo|fichier|journal|log|code|document|donnees|base|corpus)\b"
+    ),
+    re.compile(
+        r"\b(mon|ma|mes|notre|nos|le|la|les)\s+(projet|code|repo|fichier|document)\b"
+    ),
 )
 
 #: Mots qui annoncent un PERIMETRE : ce qu'on ne touche pas.
@@ -372,8 +506,12 @@ _PERIMETRES = (
 
 #: Mots qui annoncent un FORMAT de sortie.
 _FORMATS = (
-    re.compile(r"\b(markdown|md|json|yaml|csv|tableau|diagramme|rapport|resume|patch|diff)\b"),
-    re.compile(r"\b(un|une)\s+(rapport|fichier|document|liste|tableau|script|module|test)\b"),
+    re.compile(
+        r"\b(markdown|md|json|yaml|csv|tableau|diagramme|rapport|resume|patch|diff)\b"
+    ),
+    re.compile(
+        r"\b(un|une)\s+(rapport|fichier|document|liste|tableau|script|module|test)\b"
+    ),
     re.compile(r"\b(en|dans)\s+(francais|anglais|français|english|french)\b"),
 )
 
@@ -422,7 +560,7 @@ class Analyse:
     actionnable: bool = False
     #: Vrai quand on peut avancer malgre les questions (hypotheses DECLAREES).
     avancable: bool = True
-    mode: str = "assume"          # assume | strict
+    mode: str = "assume"  # assume | strict
     motif: str = ""
 
     @property
@@ -752,8 +890,12 @@ def analyser(
             poids=3,
         )
         return Analyse(
-            objectif="", questions=(question,), actionnable=False, avancable=False,
-            mode=mode, motif="objectif vide : rien a analyser",
+            objectif="",
+            questions=(question,),
+            actionnable=False,
+            avancable=False,
+            mode=mode,
+            motif="objectif vide : rien a analyser",
         )
 
     texte = brut + "\n" + (contexte or "")
@@ -790,21 +932,27 @@ def analyser(
     # puisse la contester. Sans elle, la porte demandait « sur quoi exactement ? » a un utilisateur
     # qui venait de dire « continue » : la question la plus inutile de tout le catalogue.
     cible_du_mandat = cible or (
-        f"heritee du mandat : « {poursuite} » renvoie a la mission en cours" if poursuite else ""
+        f"heritee du mandat : « {poursuite} » renvoie a la mission en cours"
+        if poursuite
+        else ""
     )
     signaux = (
         Signal("action", bool(action), indice_action),
         Signal("cible", bool(cible_du_mandat), cible_du_mandat),
         Signal("critere", bool(critere or implique), critere or implique),
         Signal("source", bool(_cherche(_SOURCES, texte)), _cherche(_SOURCES, brut)),
-        Signal("perimetre", bool(_cherche(_PERIMETRES, texte)), _cherche(_PERIMETRES, brut)),
+        Signal(
+            "perimetre", bool(_cherche(_PERIMETRES, texte)), _cherche(_PERIMETRES, brut)
+        ),
         Signal("format", bool(_cherche(_FORMATS, brut)), _cherche(_FORMATS, brut)),
     )
     presents = {s.nom: s.present for s in signaux}
     # Le trio qui rend un objectif TRAVAILLABLE : une action, une cible, un critere. Les
     # trois autres amenent du confort ou une securite, pas la possibilite de commencer.
     noyau = ("action", "cible", "critere")
-    actionnable = all(presents[nom] for nom in noyau) and not action.startswith("vague:")
+    actionnable = all(presents[nom] for nom in noyau) and not action.startswith(
+        "vague:"
+    )
     manquants = tuple(s.nom for s in signaux if not s.present)
     questions = (
         []
@@ -840,10 +988,14 @@ def analyser(
 
 
 def _puce(signal: Signal) -> str:
-    return f"{'oui' if signal.present else 'NON':<3} {signal.nom:<10} {signal.indice[:70]}"
+    return (
+        f"{'oui' if signal.present else 'NON':<3} {signal.nom:<10} {signal.indice[:70]}"
+    )
 
 
-def _enroule(texte: str, *, largeur: int, debut: str = "", suite: str = "") -> list[str]:
+def _enroule(
+    texte: str, *, largeur: int, debut: str = "", suite: str = ""
+) -> list[str]:
     """Enroule un texte long en lignes indentees plutot que de le TRONQUER.
 
     Mesure a l'origine : la premiere version coupait a 100 caracteres. Les questions
@@ -854,8 +1006,12 @@ def _enroule(texte: str, *, largeur: int, debut: str = "", suite: str = "") -> l
     import textwrap
 
     return textwrap.wrap(
-        texte, width=max(20, largeur - len(suite)), initial_indent=debut,
-        subsequent_indent=suite or debut, break_long_words=False, break_on_hyphens=False,
+        texte,
+        width=max(20, largeur - len(suite)),
+        initial_indent=debut,
+        subsequent_indent=suite or debut,
+        break_long_words=False,
+        break_on_hyphens=False,
     ) or [debut.rstrip()]
 
 
@@ -884,12 +1040,24 @@ def formater(analyse: Analyse, *, largeur: int = 100) -> str:
     ]
     for i, question in enumerate(analyse.questions, 1):
         prefixe = f"    {i}. "
-        lignes += _enroule(question.question, largeur=largeur - 8, debut=prefixe,
-                           suite=" " * len(prefixe))
-        lignes += _enroule(question.pourquoi, largeur=largeur - 8,
-                           debut="       pourquoi : ", suite="         ")
-        lignes += _enroule("defaut sans reponse : " + question.defaut, largeur=largeur - 8,
-                           debut="       ", suite="         ")
+        lignes += _enroule(
+            question.question,
+            largeur=largeur - 8,
+            debut=prefixe,
+            suite=" " * len(prefixe),
+        )
+        lignes += _enroule(
+            question.pourquoi,
+            largeur=largeur - 8,
+            debut="       pourquoi : ",
+            suite="         ",
+        )
+        lignes += _enroule(
+            "defaut sans reponse : " + question.defaut,
+            largeur=largeur - 8,
+            debut="       ",
+            suite="         ",
+        )
         lignes.append("")
     lignes += [
         "    Si tu reponds : relance la mission avec ta reponse. Si tu ne reponds pas, les",
@@ -908,6 +1076,9 @@ def resume(analyse: Analyse) -> str:
     return (
         f"{len(analyse.questions)} question(s) essentielle(s) ({signaux}) ; "
         f"mode {analyse.mode} : "
-        + ("mission BLOQUEE tant qu'elles n'ont pas de reponse" if analyse.bloquant
-           else "hypotheses DECLAREES et mission poursuivie")
+        + (
+            "mission BLOQUEE tant qu'elles n'ont pas de reponse"
+            if analyse.bloquant
+            else "hypotheses DECLAREES et mission poursuivie"
+        )
     )

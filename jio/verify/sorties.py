@@ -117,9 +117,11 @@ class Divergence:
     obtenu: str
 
     def __str__(self) -> str:
-        return (f"ligne {self.ligne} · {self.commande} · {self.motif}\n"
-                f"      le document montre : {self.attendu[:120] or '(rien)'}\n"
-                f"      l'outil rend        : {self.obtenu[:120] or '(rien)'}")
+        return (
+            f"ligne {self.ligne} · {self.commande} · {self.motif}\n"
+            f"      le document montre : {self.attendu[:120] or '(rien)'}\n"
+            f"      l'outil rend        : {self.obtenu[:120] or '(rien)'}"
+        )
 
 
 def blocs(texte: str) -> list[Bloc]:
@@ -128,8 +130,14 @@ def blocs(texte: str) -> list[Bloc]:
     for m in _MOTIF.finditer(texte):
         ligne = texte.count("\n", 0, m.start()) + 1
         corps = _corps(m.group("corps"), m.group("indent"))
-        out.append(Bloc(ligne=ligne, commande=m.group("cmd").strip(), corps=corps,
-                        exact=m.group("type") == "sortie-exacte"))
+        out.append(
+            Bloc(
+                ligne=ligne,
+                commande=m.group("cmd").strip(),
+                corps=corps,
+                exact=m.group("type") == "sortie-exacte",
+            )
+        )
     return out
 
 
@@ -149,7 +157,7 @@ def _corps(brut: str, indent: str) -> tuple[str, ...]:
         lignes = lignes[1:-1]
     prefixe = indent if indent else "    "
     if lignes and all(not l.strip() or l.startswith(prefixe) for l in lignes):
-        lignes = [l[len(prefixe):] if l.startswith(prefixe) else l for l in lignes]
+        lignes = [l.removeprefix(prefixe) for l in lignes]
     return tuple(l.rstrip() for l in lignes)
 
 
@@ -176,7 +184,7 @@ def commande_refusee(commande: str) -> str | None:
     """
     try:
         mots = shlex.split(commande)
-    except ValueError as exc:                       # guillemet non ferme
+    except ValueError as exc:  # guillemet non ferme
         return f"commande illisible ({exc})"
     if not mots or mots[0] != "jio":
         return "seul le programme `jio` est execute depuis un document"
@@ -190,7 +198,9 @@ def commande_refusee(commande: str) -> str | None:
     return None
 
 
-def executer(commande: str, racine: Path | str, delai: int = 120) -> tuple[int, tuple[str, ...]]:
+def executer(
+    commande: str, racine: Path | str, delai: int = 120
+) -> tuple[int, tuple[str, ...]]:
     """Lance la commande depuis la racine du depot et rend `(code, sortie normalisee)`.
 
     `subprocess` recoit une LISTE d'arguments : le shell n'intervient jamais, donc rien de ce
@@ -206,9 +216,15 @@ def executer(commande: str, racine: Path | str, delai: int = 120) -> tuple[int, 
     # peut etre interprete, puisqu'il n'y a pas de shell.
     resultat = subprocess.run(
         [sys.executable, "-m", *shlex.split(commande)],
-        cwd=str(racine), capture_output=True, text=True, timeout=delai, check=False,
+        cwd=str(racine),
+        capture_output=True,
+        text=True,
+        timeout=delai,
+        check=False,
     )
-    melange = resultat.stdout + ("\n" + resultat.stderr if resultat.stderr.strip() else "")
+    melange = resultat.stdout + (
+        "\n" + resultat.stderr if resultat.stderr.strip() else ""
+    )
     return resultat.returncode, normaliser(melange, racine)
 
 
@@ -262,7 +278,10 @@ def _extrait(corps: tuple[str, ...], sortie: tuple[str, ...]) -> tuple[int, str]
             return (min(depart, max(0, len(sortie) - 1)), segment[0])
         trouve = None
         for debut in range(depart, len(sortie) - len(segment) + 1):
-            if all(segment[i].strip() == sortie[debut + i].strip() for i in range(len(segment))):
+            if all(
+                segment[i].strip() == sortie[debut + i].strip()
+                for i in range(len(segment))
+            ):
                 trouve = debut
                 break
         if trouve is None:
@@ -279,52 +298,84 @@ def verifier(texte: str, racine: Path | str, delai: int = 120) -> list[Divergenc
     for bloc in blocs(texte):
         refus = commande_refusee(bloc.commande)
         if refus:
-            divergences.append(Divergence(bloc.ligne, bloc.commande, f"REFUS : {refus}", "", ""))
+            divergences.append(
+                Divergence(bloc.ligne, bloc.commande, f"REFUS : {refus}", "", "")
+            )
             continue
         try:
             code, sortie = executer(bloc.commande, racine, delai)
         except subprocess.TimeoutExpired:
-            divergences.append(Divergence(bloc.ligne, bloc.commande,
-                                          f"la commande n'a pas rendu la main en {delai}s",
-                                          "", ""))
+            divergences.append(
+                Divergence(
+                    bloc.ligne,
+                    bloc.commande,
+                    f"la commande n'a pas rendu la main en {delai}s",
+                    "",
+                    "",
+                )
+            )
             continue
         if code != 0 and not sortie:
-            divergences.append(Divergence(
-                bloc.ligne, bloc.commande, f"la commande sort en {code} sans rien dire",
-                bloc.corps[0] if bloc.corps else "", ""))
+            divergences.append(
+                Divergence(
+                    bloc.ligne,
+                    bloc.commande,
+                    f"la commande sort en {code} sans rien dire",
+                    bloc.corps[0] if bloc.corps else "",
+                    "",
+                )
+            )
             continue
         if bloc.exact:
             if tuple(l.strip() for l in bloc.corps) != tuple(l.strip() for l in sortie):
                 index = 0
-                while (index < len(bloc.corps) and index < len(sortie)
-                       and bloc.corps[index].strip() == sortie[index].strip()):
+                while (
+                    index < len(bloc.corps)
+                    and index < len(sortie)
+                    and bloc.corps[index].strip() == sortie[index].strip()
+                ):
                     index += 1
-                divergences.append(Divergence(
-                    bloc.ligne, bloc.commande,
-                    f"sortie EXACTE divergente a la ligne {index + 1} "
-                    f"({len(bloc.corps)} ligne(s) montree(s), {len(sortie)} rendue(s))",
-                    bloc.corps[index] if index < len(bloc.corps) else "(rien de plus)",
-                    sortie[index] if index < len(sortie) else "(rien de plus)",
-                ))
+                divergences.append(
+                    Divergence(
+                        bloc.ligne,
+                        bloc.commande,
+                        f"sortie EXACTE divergente a la ligne {index + 1} "
+                        f"({len(bloc.corps)} ligne(s) montree(s), {len(sortie)} rendue(s))",
+                        bloc.corps[index]
+                        if index < len(bloc.corps)
+                        else "(rien de plus)",
+                        sortie[index] if index < len(sortie) else "(rien de plus)",
+                    )
+                )
             continue
         rupture = _extrait(bloc.corps, sortie)
         if rupture is not None:
             index, ligne = rupture
             obtenu = sortie[index] if index < len(sortie) else "(rien)"
-            divergences.append(Divergence(
-                bloc.ligne, bloc.commande,
-                "l'extrait ne se retrouve pas dans la sortie reelle", ligne, obtenu))
+            divergences.append(
+                Divergence(
+                    bloc.ligne,
+                    bloc.commande,
+                    "l'extrait ne se retrouve pas dans la sortie reelle",
+                    ligne,
+                    obtenu,
+                )
+            )
     return divergences
 
 
 def liste(texte: str) -> list[str]:
     """Ce que le document promet, en une ligne par bloc — de quoi verifier sans executer."""
-    return [f"ligne {b.ligne:>5}  {'EXACTE ' if b.exact else 'extrait'}  "
-            f"{len(b.corps):>3} ligne(s)  {b.commande}" for b in blocs(texte)]
+    return [
+        f"ligne {b.ligne:>5}  {'EXACTE ' if b.exact else 'extrait'}  "
+        f"{len(b.corps):>3} ligne(s)  {b.commande}"
+        for b in blocs(texte)
+    ]
 
 
-def reparer(chemin: Path | str, racine: Path | str,
-            delai: int = 120) -> tuple[int, list[str], str]:
+def reparer(
+    chemin: Path | str, racine: Path | str, delai: int = 120
+) -> tuple[int, list[str], str]:
     """Reecrit les blocs `sortie-exacte` perimes. Rend `(code, signalements, message)`.
 
     Les extraits perimes ne sont PAS reecrits : choisir les lignes a montrer demanderait de
@@ -349,7 +400,8 @@ def reparer(chemin: Path | str, racine: Path | str,
         if code != 0:
             signalements.append(
                 f"ligne {bloc.ligne} : la commande sort en {code}, le bloc n'est PAS reecrit "
-                f"(reecrire une sortie d'erreur la presenterait comme un resultat)")
+                f"(reecrire une sortie d'erreur la presenterait comme un resultat)"
+            )
             continue
         ancien = "\n".join(bloc.corps)
         if ancien:
@@ -366,8 +418,10 @@ def reparer(chemin: Path | str, racine: Path | str,
         sauvegarde = chemin.with_name(chemin.name + ".avant-jio")
         shutil.copyfile(chemin, sauvegarde)
         chemin.write_text(texte, encoding="utf-8")
-        message = (f"{corriges} bloc(s) reecrit(s) dans {chemin.name} · sauvegarde : "
-                   f"{sauvegarde.name}")
+        message = (
+            f"{corriges} bloc(s) reecrit(s) dans {chemin.name} · sauvegarde : "
+            f"{sauvegarde.name}"
+        )
     else:
         message = f"aucun bloc a reecrire dans {chemin.name}"
     restants = verifier(chemin.read_text(encoding="utf-8"), racine, delai)

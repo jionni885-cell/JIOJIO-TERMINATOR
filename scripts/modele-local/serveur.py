@@ -24,7 +24,6 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import torch
-
 from entrainer import ModeleDeCode
 
 
@@ -131,7 +130,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(corps)
 
-    def do_GET(self) -> None:  # noqa: N802 — impose par http.server
+    def do_GET(self) -> None:
         if self.path.rstrip("/") in ("/v1/models", "/models"):
             self._json(200, {"object": "list", "data": [{"id": "modele-local-char",
                                                          "object": "model"}]})
@@ -140,7 +139,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._json(404, {"error": {"message": f"chemin inconnu : {self.path}"}})
 
-    def do_POST(self) -> None:  # noqa: N802 — impose par http.server
+    def do_POST(self) -> None:
         if self.path.rstrip("/").split("/")[-1] != "completions":
             self._json(404, {"error": {"message": f"chemin inconnu : {self.path}"}})
             return
@@ -190,7 +189,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> int:
     parseur = argparse.ArgumentParser(description="Sert le modele local (API OpenAI).")
     parseur.add_argument("--modele", default="modele/modele.pt")
-    parseur.add_argument("--hote", default="0.0.0.0")  # noqa: S104 — accessible depuis la sandbox
+    parseur.add_argument("--hote", default="0.0.0.0")
     parseur.add_argument("--port", type=int, default=8088)
     args = parseur.parse_args()
 

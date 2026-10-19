@@ -16,9 +16,10 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any
 
 from .errors import IntegrityViolation
 from .types import TrustLevel, digest_of, now
@@ -51,8 +52,12 @@ class Event:
 
 
 def _compute_digest(
-    seq: int, ts: float, kind: str, payload: Mapping[str, Any],
-    trust: TrustLevel, prev_hash: str,
+    seq: int,
+    ts: float,
+    kind: str,
+    payload: Mapping[str, Any],
+    trust: TrustLevel,
+    prev_hash: str,
 ) -> str:
     return digest_of(seq, round(ts, 6), kind, payload, trust.value, prev_hash)
 
@@ -106,7 +111,9 @@ class Journal:
                 return
             text = self.path.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
-            self.notices.append(f"journal illisible ({exc}) : une chaine neuve commence")
+            self.notices.append(
+                f"journal illisible ({exc}) : une chaine neuve commence"
+            )
             return
 
         existing = Journal.from_jsonl(text)
@@ -131,7 +138,9 @@ class Journal:
         deux finirait par supprimer ce que l'autre conserve.
         """
         assert self.path is not None
-        quarantine = self.path.with_name(f"{self.path.name}.corrompu-{int(time.time())}")
+        quarantine = self.path.with_name(
+            f"{self.path.name}.corrompu-{int(time.time())}"
+        )
         try:
             self.path.rename(quarantine)
         except OSError as exc:
@@ -168,7 +177,9 @@ class Journal:
             if not ligne.strip():
                 continue
             try:
-                return str(json.loads(ligne.decode("utf-8", "replace")).get("digest", ""))
+                return str(
+                    json.loads(ligne.decode("utf-8", "replace")).get("digest", "")
+                )
             except (ValueError, AttributeError):
                 return ""
         return ""
@@ -210,9 +221,13 @@ class Journal:
             return
         existant = Journal.from_jsonl(text)
         ok, _bad = existant.verify_chain()
-        prefixe = ok and len(existant._events) >= len(self._events) and all(
-            autre.digest == notre.digest
-            for autre, notre in zip(existant._events, self._events)
+        prefixe = (
+            ok
+            and len(existant._events) >= len(self._events)
+            and all(
+                autre.digest == notre.digest
+                for autre, notre in zip(existant._events, self._events)
+            )
         )
         if prefixe:
             self._events = existant._events
@@ -233,7 +248,9 @@ class Journal:
             from .monde import revision, sceau
 
             return {"sceau": sceau(self.racine), "revision": revision(self.racine)}
-        except Exception:  # pragma: no cover - un journal ne doit jamais echouer sur ceci
+        except (
+            Exception
+        ):  # pragma: no cover - un journal ne doit jamais echouer sur ceci
             return {"sceau": "", "revision": ""}
 
     def mondes(self) -> list[dict[str, Any]]:
@@ -252,10 +269,13 @@ class Journal:
                     entree["evenements"].append(evenement.seq)
                     break
             else:
-                vus.append({
-                    "sceau": marque[0], "revision": marque[1],
-                    "evenements": [evenement.seq],
-                })
+                vus.append(
+                    {
+                        "sceau": marque[0],
+                        "revision": marque[1],
+                        "evenements": [evenement.seq],
+                    }
+                )
         return vus
 
     def append(
@@ -332,7 +352,7 @@ class Journal:
             prev = ev.digest
         return True, None
 
-    def replay(self) -> "Journal":
+    def replay(self) -> Journal:
         """Reconstruit un journal neuf a partir des evenements, puis verifie.
 
         Detecte toute falsification : si un `payload` a ete modifie apres coup,
@@ -340,25 +360,28 @@ class Journal:
         """
         clone = Journal()
         for ev in self._events:
-            clone._events.append(ev)  # noqa: SLF001 — copie fidele volontaire
+            clone._events.append(ev)
         return clone
 
     # -- export ------------------------------------------------------------ #
 
     def to_jsonl(self) -> str:
         return "\n".join(
-            json.dumps(e.as_dict(), ensure_ascii=False, default=str) for e in self._events
+            json.dumps(e.as_dict(), ensure_ascii=False, default=str)
+            for e in self._events
         )
 
     @classmethod
-    def from_jsonl(cls, text: str, path: str | os.PathLike[str] | None = None) -> "Journal":
+    def from_jsonl(
+        cls, text: str, path: str | os.PathLike[str] | None = None
+    ) -> Journal:
         j = cls(path=path)
         for line in text.splitlines():
             line = line.strip()
             if not line:
                 continue
             raw = json.loads(line)
-            j._events.append(  # noqa: SLF001
+            j._events.append(
                 Event(
                     seq=int(raw["seq"]),
                     ts=float(raw["ts"]),
@@ -408,12 +431,14 @@ class Journal:
             # jamais bloquer une mission, mais il ne doit pas non plus disparaitre
             # en silence.
             return cls._quarantaine(chemin, f"illisible ({exc})", quarantine)
-        if not journal._events:  # noqa: SLF001 — meme classe
+        if not journal._events:
             return journal
         ok, bad = journal.verify_chain()
         if ok:
             return journal
-        return cls._quarantaine(chemin, f"chaine cassee a l'evenement {bad}", quarantine)
+        return cls._quarantaine(
+            chemin, f"chaine cassee a l'evenement {bad}", quarantine
+        )
 
     @classmethod
     def _quarantaine(cls, chemin: Path, motif: str, quarantine: bool) -> Journal:
@@ -445,7 +470,6 @@ class Journal:
         )
         return vide
 
-
     def summary(self) -> dict[str, Any]:
         counts: dict[str, int] = {}
         for ev in self._events:
@@ -460,4 +484,4 @@ class Journal:
         }
 
 
-__all__ = ["Event", "Journal", "GENESIS"]
+__all__ = ["GENESIS", "Event", "Journal"]

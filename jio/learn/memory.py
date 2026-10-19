@@ -30,6 +30,10 @@ mesure du classement existe separement (`tests/test_memory_recall.py`) et reste 
 demeure : elle couvre le regime que le banc d'effet ne peut pas voir.
 
 Un souvenir est un PRIOR, jamais une preuve : si le code a change, on re-mesure.
+Un echec dont le remede n'a pas encore ete observe reste en QUARANTAINE et n'entre
+pas dans les prompts. Seule une resolution apres succes le rend rappelable : une
+hypothese de cause ne devient donc pas une instruction persistante par simple
+accumulation.
 """
 
 from __future__ import annotations
@@ -40,9 +44,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.journal import Journal
-from .recall import normalized_bm25, terms as _termes
+from .recall import normalized_bm25
+from .recall import terms as _termes
 
-__all__ = ["FailureRecord", "FailureMemory", "fingerprint"]
+__all__ = ["FailureMemory", "FailureRecord", "fingerprint"]
 
 _WORD = re.compile(r"[a-z0-9_]{3,}")
 
@@ -89,7 +94,11 @@ def _tokens(text: str) -> set[str]:
 
 def fingerprint(objective: str, symptom: str = "") -> str:
     """Empreinte stable d'un echec : objectif normalise + nature du symptome."""
-    basis = " ".join(sorted(_tokens(objective))) + "|" + " ".join(sorted(_tokens(symptom))[:12])
+    basis = (
+        " ".join(sorted(_tokens(objective)))
+        + "|"
+        + " ".join(sorted(_tokens(symptom))[:12])
+    )
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
 
 
@@ -98,11 +107,11 @@ class FailureRecord:
     """Un echec paye, sa cause, et le garde qui l'empeche de revenir."""
 
     fingerprint: str
-    symptom: str            # ce qui a ete observe
-    root_cause: str         # la cause REELLE, pas le symptome
-    wrong_fix: str          # ce qui a ete tente et n'a pas marche
-    correct_fix: str        # ce qui a marche
-    guard: str              # le controle qui echoue si l'erreur revient
+    symptom: str  # ce qui a ete observe
+    root_cause: str  # la cause REELLE, pas le symptome
+    wrong_fix: str  # ce qui a ete tente et n'a pas marche
+    correct_fix: str  # ce qui a marche
+    guard: str  # le controle qui echoue si l'erreur revient
     objective: str = ""
     mission_id: str = ""
     seq: int = 0
@@ -128,8 +137,7 @@ class FailureRecord:
         # pas un : un modele reel ne peut rien en faire, et un relecteur non plus.
         remede = self.correct_fix or "inconnu (aucun remede observe pour l'instant)"
         return (
-            tete
-            + f"  SYMPTOM: {self.symptom}\n"
+            tete + f"  SYMPTOM: {self.symptom}\n"
             f"  CAUSE: {self.root_cause}\n"
             f"  WRONG FIX (do not repeat): {self.wrong_fix or 'n/a'}\n"
             f"  RIGHT FIX: {remede}\n"
@@ -193,22 +201,30 @@ class FailureMemory:
             objective=objective,
             mission_id=mission_id,
         )
-        event = self.journal.append("failure", {
-            "fingerprint": rec.fingerprint,
-            "symptom": rec.symptom,
-            "root_cause": rec.root_cause,
-            "wrong_fix": rec.wrong_fix,
-            "correct_fix": rec.correct_fix,
-            "guard": rec.guard,
-            "objective": objective,
-            "mission_id": mission_id,
-        })
+        event = self.journal.append(
+            "failure",
+            {
+                "fingerprint": rec.fingerprint,
+                "symptom": rec.symptom,
+                "root_cause": rec.root_cause,
+                "wrong_fix": rec.wrong_fix,
+                "correct_fix": rec.correct_fix,
+                "guard": rec.guard,
+                "objective": objective,
+                "mission_id": mission_id,
+            },
+        )
         rec = FailureRecord(**{**rec.__dict__, "seq": event.seq})
         self._records.append(rec)
         return rec
 
     def resoudre(
-        self, *, objective: str, correct_fix: str, mission_id: str = "", symptom: str = ""
+        self,
+        *,
+        objective: str,
+        correct_fix: str,
+        mission_id: str = "",
+        symptom: str = "",
     ) -> int:
         """Enregistre le REMEDE qui a fonctionne, sur les echecs encore ouverts.
 
@@ -227,24 +243,31 @@ class FailureMemory:
         if not remede:
             return 0
         ouverts = [
-            rec for rec in self._records
-            if rec.objective == objective and not rec.correct_fix
+            rec
+            for rec in self._records
+            if rec.objective == objective
+            and not rec.correct_fix
             and (not symptom or rec.symptom == symptom)
         ]
         if not ouverts:
             return 0
-        self.journal.append("resolution", {
-            "fingerprint": ouverts[0].fingerprint,
-            "correct_fix": remede,
-            "objective": objective,
-            "mission_id": mission_id,
-            "symptom": ouverts[0].symptom,
-        })
+        self.journal.append(
+            "resolution",
+            {
+                "fingerprint": ouverts[0].fingerprint,
+                "correct_fix": remede,
+                "objective": objective,
+                "mission_id": mission_id,
+                "symptom": ouverts[0].symptom,
+            },
+        )
         from dataclasses import replace as _replace
 
         for i, rec in enumerate(self._records):
             if rec in ouverts:
-                self._records[i] = _replace(rec, correct_fix=remede, mission_id=mission_id)
+                self._records[i] = _replace(
+                    rec, correct_fix=remede, mission_id=mission_id
+                )
         return len(ouverts)
 
     @property
@@ -254,9 +277,9 @@ class FailureMemory:
 
     # -- lecture ------------------------------------------------------------ #
 
-    def recall(self, objective: str, *, limit: int = 3, min_score: float = 0.08) -> list[
-        FailureRecord
-    ]:
+    def recall(
+        self, objective: str, *, limit: int = 3, min_score: float = 0.08
+    ) -> list[FailureRecord]:
         """Souvenirs pertinents pour un objectif, du plus proche au plus lointain.
 
         Le score est un BM25 **normalise dans [0, 1]** (`jio/learn/recall.py`) : il vaut
@@ -268,14 +291,21 @@ class FailureMemory:
         requete = _termes(objective)
         if not requete:
             return []
+        # Admission pre-commit : un echec sans remede verifie reste visible dans le
+        # journal et le compteur `en_attente`, mais il ne peut pas encore orienter une
+        # autre mission. Une cause derivee d'un stderr peut etre fausse; la propager
+        # avant une reussite confirmee cree une chaine de contamination irreversible.
+        actifs = [rec for rec in self._records if rec.correct_fix.strip()]
+        if not actifs:
+            return []
         documents = [
-            _termes(f"{rec.objective} {rec.symptom} {rec.root_cause}")
-            for rec in self._records
+            _termes(f"{rec.objective} {rec.symptom} {rec.root_cause} {rec.correct_fix}")
+            for rec in actifs
         ]
         scores = normalized_bm25(requete, documents)
         classables = [
             (score, rec.seq, rec)
-            for score, rec in zip(scores, self._records)
+            for score, rec in zip(scores, actifs)
             if score >= min_score
         ]
         classables.sort(key=lambda item: (item[0], item[1]), reverse=True)
@@ -327,7 +357,8 @@ class FailureMemory:
                         from dataclasses import replace as _replace
 
                         out[i] = _replace(
-                            rec, correct_fix=str(event.payload.get("correct_fix", "")),
+                            rec,
+                            correct_fix=str(event.payload.get("correct_fix", "")),
                             mission_id=str(event.payload.get("mission_id", "")),
                         )
                         break
@@ -354,8 +385,10 @@ class FailureMemory:
         ok, bad = self.verify()
         resolus = self.size - self.en_attente
         lines = [
-            f"memoire : {self.size} echec(s) enregistre(s) "
-            f"({resolus} avec un remede OBSERVE, {self.en_attente} en attente)",
+            (
+                f"memoire : {self.size} echec(s) enregistre(s) "
+                f"({resolus} avec un remede OBSERVE, {self.en_attente} en attente)"
+            ),
             f"integrite : {'chaine valide' if ok else f'CHAINE CASSEE @ {bad}'}",
             f"tete : {self.head}",
         ]
@@ -378,5 +411,7 @@ class FailureMemory:
             lines.append(
                 "Aucun echec enregistre. Une memoire vide est un etat legitime au debut :"
             )
-            lines.append("le systeme n'invente pas de mises en garde qu'il n'a pas payees.")
+            lines.append(
+                "le systeme n'invente pas de mises en garde qu'il n'a pas payees."
+            )
         return "\n".join(lines)

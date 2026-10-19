@@ -7,9 +7,15 @@
 * **Aucun secret ne fuit vers le code testé** : la Sandbox (`jio/verify/executable.py`)
   exécute les preuves avec un environnement minimal — toute variable dont le nom contient
   KEY, TOKEN, SECRET, PASSWORD, CREDENTIAL ou AUTH est retirée avant l'exécution ;
-* **Timeout dur** : le code testé ne peut pas bloquer la mission (boucle infinie = coupure) ;
-* **Répertoire de travail dédié** + sortie plafonnée (au-delà de 20 000 caractères, le
-  contenu est écrit sur disque et remplacé par une référence) ;
+* **Timeout dur avec arrêt des descendants sous POSIX** : les preuves démarrent dans un
+  nouveau groupe de processus ; à l'expiration, tout le groupe est tué (pas seulement le
+  processus parent). Sous Windows, seul le processus direct est arrêté ;
+* **Sorties bornées par flux** : les pipes sont vidés en continu, avec un maximum de 2 Mo
+  capturés par stdout/stderr. Un flux qui dépasse cette limite arrête le groupe POSIX (code 125),
+  au lieu d'être accepté avec une preuve tronquée. Au-delà de 20 000 caractères, la sortie
+  capturée est offloadée vers le répertoire configuré ou tronquée avec une indication ;
+* **Répertoire de travail dédié** : utile pour limiter les écritures attendues, mais ne bloque
+  pas les accès à d'autres chemins.
 * **Le serveur MCP est stdio uniquement** : il n'ouvre aucun port réseau, il ne répond
   qu'au client qui l'a lancé sur ta machine ;
 * **Aucune clé API** n'est requise ni stockée par le dépôt ; `.env` est ignoré par git,

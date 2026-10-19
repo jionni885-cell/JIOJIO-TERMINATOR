@@ -32,16 +32,18 @@ from pathlib import Path
 RACINE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RACINE))
 
-import jio.skills.router as R  # noqa: E402
-from jio.skills import banc as B  # noqa: E402
-from jio.skills.controle import JEUX  # noqa: E402
+import jio.skills.router as R
+from jio.skills import banc as B
+from jio.skills.controle import JEUX
 
 BASE = copy.deepcopy(R.catalogue_du_depot())
 
 JEUX_MESURE: list[tuple[str, list[tuple[str, str, str]]]] = [
     (j.nom, list(j.cas)) for j in JEUX
 ]
-JEUX_MESURE.append(("banc", [(o.texte, sorted(o.attendu)[0], "") for o in B.BANC if o.attendu]))
+JEUX_MESURE.append(
+    ("banc", [(o.texte, min(o.attendu), "") for o in B.BANC if o.attendu])
+)
 
 
 def requete_de(objectif: str) -> Counter[str]:
@@ -58,9 +60,17 @@ def requete_de(objectif: str) -> Counter[str]:
     return requete
 
 
-def bm25f(cat, nom: str, requete: Counter[str], *, poids_tiers: float = 1.0,
-          poids_corps: float = 0.75, idf_maximum: bool = False,
-          b_tiers: float = 0.75, b_corps: float = 0.75) -> float:
+def bm25f(
+    cat,
+    nom: str,
+    requete: Counter[str],
+    *,
+    poids_tiers: float = 1.0,
+    poids_corps: float = 0.75,
+    idf_maximum: bool = False,
+    b_tiers: float = 0.75,
+    b_corps: float = 0.75,
+) -> float:
     """BM25F canonique : tf combine AVANT saturation, normalisation de longueur par champ."""
     tf_t = cat._termes.get(nom, {})
     tf_c = cat._termes_corps.get(nom, {})
@@ -113,20 +123,31 @@ def ligne_pour(cat, etiquette: str) -> None:
             total_justes += justes
             total_cas += len(positifs)
         ligne += f"{justes:>3}/{len(positifs):<3}"
-    print(ligne + f" | jeux {total_justes}/{total_cas} = {total_justes/total_cas:5.1%}")
+    print(
+        ligne + f" | jeux {total_justes}/{total_cas} = {total_justes / total_cas:5.1%}"
+    )
 
 
 def catalogue_repetition(poids: int):
     """R2 : la repetition des champs courts du tiers 0, sans toucher au depot."""
     origine = R.Document.__dict__["indexable"]
     R.Document.indexable = property(
-        lambda self, _p=poids: " ".join([self.nom] * _p + list(self.tags) * _p
-                                        + [self.description, self.categorie])
+        lambda self, _p=poids: " ".join(
+            [self.nom] * _p + list(self.tags) * _p + [self.description, self.categorie]
+        )
     )
     try:
         cat = R.Catalogue.depuis(
-            [R.Document(nom=d.nom, categorie=d.categorie, description=d.description,
-                        tags=d.tags, corps=d.corps) for d in BASE.documents]
+            [
+                R.Document(
+                    nom=d.nom,
+                    categorie=d.categorie,
+                    description=d.description,
+                    tags=d.tags,
+                    corps=d.corps,
+                )
+                for d in BASE.documents
+            ]
         )
     finally:
         R.Document.indexable = origine
@@ -134,22 +155,38 @@ def catalogue_repetition(poids: int):
 
 
 def main() -> int:
-    print("  CLASSEMENT SEUL, sans porte d'abstention — le premier choix du score brut\n")
+    print(
+        "  CLASSEMENT SEUL, sans porte d'abstention — le premier choix du score brut\n"
+    )
     print(f"  {'variante':34}" + "".join(f"{n:>7}" for n, _ in JEUX_MESURE))
-    ligne_pour(catalogue_patche(
-        lambda self, nom, requete: reference(self, nom, requete)), "R0 etat actuel (deux champs)")
+    ligne_pour(
+        catalogue_patche(lambda self, nom, requete: reference(self, nom, requete)),
+        "R0 etat actuel (deux champs)",
+    )
     for poids in (0.5, 0.75, 1.0, 1.5, 2.0):
-        ligne_pour(catalogue_patche(
-            lambda self, nom, requete, _p=poids: bm25f(self, nom, requete, poids_corps=_p)),
-            f"R1 BM25F canonique, corps {poids}")
-    ligne_pour(catalogue_patche(
-        lambda self, nom, requete: bm25f(self, nom, requete, idf_maximum=True)),
-        "R3 BM25F, idf = max des deux champs")
+        ligne_pour(
+            catalogue_patche(
+                lambda self, nom, requete, _p=poids: bm25f(
+                    self, nom, requete, poids_corps=_p
+                )
+            ),
+            f"R1 BM25F canonique, corps {poids}",
+        )
+    ligne_pour(
+        catalogue_patche(
+            lambda self, nom, requete: bm25f(self, nom, requete, idf_maximum=True)
+        ),
+        "R3 BM25F, idf = max des deux champs",
+    )
     for poids in (1, 2, 3, 4, 5):
         ligne_pour(catalogue_repetition(poids), f"R2 tiers 0 repete x{poids}")
     print()
-    print("  Le banc est la colonne de droite : il a REGLE le routeur, donc un gain chez lui")
-    print("  sans gain sur les quatre jeux serait de l'ajustement, pas une amelioration.")
+    print(
+        "  Le banc est la colonne de droite : il a REGLE le routeur, donc un gain chez lui"
+    )
+    print(
+        "  sans gain sur les quatre jeux serait de l'ajustement, pas une amelioration."
+    )
     return 0
 
 

@@ -24,43 +24,64 @@ from pathlib import Path
 RACINE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RACINE))
 
-from jio.skills import banc as B  # noqa: E402
-from jio.skills.controle import JEUX  # noqa: E402
-from jio.skills.router import catalogue_du_depot, choisir, jetons, stem  # noqa: E402
+from jio.skills import banc as B
+from jio.skills.controle import JEUX
+from jio.skills.router import catalogue_du_depot, choisir, jetons, stem
 
 
 def diagnostic(objectif: str, cat) -> tuple[int, float, float, str | None]:
     """(nombre de mots de domaine, idf cumule, meilleur score, premier choix)."""
     from jio.skills.lexique import CONCEPT
 
-    mots = [m for m in jetons(objectif)
-            if m in CONCEPT or m in cat._vocabulaire or stem(m) in cat._vocabulaire]
+    mots = [
+        m
+        for m in jetons(objectif)
+        if m in CONCEPT or m in cat._vocabulaire or stem(m) in cat._vocabulaire
+    ]
     idf = sum(cat._idf.get(stem(m) if stem(m) in cat._idf else m, 0.0) for m in mots)
     choix = choisir(objectif, maximum=3)
     score = choix[0].score if choix else 0.0
-    return len(set(stem(m) for m in mots)), round(idf, 2), score, (choix[0].nom if choix else None)
+    return (
+        len({stem(m) for m in mots}),
+        round(idf, 2),
+        score,
+        (choix[0].nom if choix else None),
+    )
 
 
 def main() -> int:
     cat = catalogue_du_depot()
     jeux = [(f"jeu {j.nom}", list(j.cas), list(j.hors_sujet)) for j in JEUX]
-    jeux.append(("banc", [(o.texte, sorted(o.attendu)[0] if o.attendu else "", "") for o in B.BANC
-                          if o.attendu if o.attendu],
-                 [o.texte for o in B.BANC if not o.attendu]))
+    jeux.append(
+        (
+            "banc",
+            [
+                (o.texte, min(o.attendu) if o.attendu else "", "")
+                for o in B.BANC
+                if o.attendu
+                if o.attendu
+            ],
+            [o.texte for o in B.BANC if not o.attendu],
+        )
+    )
 
     for nom, positifs, negatifs in jeux:
-        print(f"\n=== {nom} : {len(positifs)} objectifs, {len(negatifs)} hors sujet ===")
+        print(
+            f"\n=== {nom} : {len(positifs)} objectifs, {len(negatifs)} hors sujet ==="
+        )
         abstenus = []
         for texte, attendu, _ in positifs:
-            mots, idf, score, premier = diagnostic(texte, cat)
+            mots, idf, _score, premier = diagnostic(texte, cat)
             if premier is None:
                 abstenus.append((texte, mots, idf))
-        print(f"  abstentions sur des objectifs du domaine : {len(abstenus)}/{len(positifs)}")
+        print(
+            f"  abstentions sur des objectifs du domaine : {len(abstenus)}/{len(positifs)}"
+        )
         for texte, mots, idf in abstenus[:12]:
             print(f"     [{mots} mot(s), idf {idf:5.2f}] {texte[:66]}")
         faux = []
         for texte in negatifs:
-            mots, idf, score, premier = diagnostic(texte, cat)
+            mots, idf, _score, premier = diagnostic(texte, cat)
             if premier is not None:
                 faux.append((texte, mots, idf, premier))
         print(f"  hors sujet charges : {len(faux)}/{len(negatifs)}")
@@ -70,14 +91,30 @@ def main() -> int:
     # Ce qui distingue les deux populations : le nombre de mots, et l'idf cumule.
     def population(positifs, negatifs):
         d = {
-            "positifs servis": [(m, i) for t, a, _ in positifs
-                                for m, i, s, p in [diagnostic(t, cat)] if p is not None],
-            "positifs abstenus": [(m, i) for t, a, _ in positifs
-                                  for m, i, s, p in [diagnostic(t, cat)] if p is None],
-            "hors sujet refuses": [(m, i) for t in negatifs
-                                   for m, i, s, p in [diagnostic(t, cat)] if p is None],
-            "hors sujet charges": [(m, i) for t in negatifs
-                                   for m, i, s, p in [diagnostic(t, cat)] if p is not None],
+            "positifs servis": [
+                (m, i)
+                for t, a, _ in positifs
+                for m, i, s, p in [diagnostic(t, cat)]
+                if p is not None
+            ],
+            "positifs abstenus": [
+                (m, i)
+                for t, a, _ in positifs
+                for m, i, s, p in [diagnostic(t, cat)]
+                if p is None
+            ],
+            "hors sujet refuses": [
+                (m, i)
+                for t in negatifs
+                for m, i, s, p in [diagnostic(t, cat)]
+                if p is None
+            ],
+            "hors sujet charges": [
+                (m, i)
+                for t in negatifs
+                for m, i, s, p in [diagnostic(t, cat)]
+                if p is not None
+            ],
         }
         return d
 
@@ -91,8 +128,10 @@ def main() -> int:
         mots = Counter(m for m, _ in valeurs)
         idfs = [i for _, i in valeurs]
         moyenne = sum(idfs) / len(idfs)
-        print(f"  {nom:22} : {len(valeurs):3} cas · mots {dict(sorted(mots.items()))} · "
-              f"idf moyen {moyenne:5.2f} · idf min {min(idfs):5.2f} · idf max {max(idfs):5.2f}")
+        print(
+            f"  {nom:22} : {len(valeurs):3} cas · mots {dict(sorted(mots.items()))} · "
+            f"idf moyen {moyenne:5.2f} · idf min {min(idfs):5.2f} · idf max {max(idfs):5.2f}"
+        )
     return 0
 
 
@@ -111,9 +150,8 @@ def second_rapport() -> int:
     from jio.skills.controle import JEUX
     from jio.skills.router import choisir
 
-    cat = catalogue_du_depot()
-    refuses_bon = []      # objectifs du domaine, refuses : (texte, attendu, top1, score)
-    refuses_faux = []     # hors sujet refuses : (texte, top1, score)
+    refuses_bon = []  # objectifs du domaine, refuses : (texte, attendu, top1, score)
+    refuses_faux = []  # hors sujet refuses : (texte, top1, score)
     jeux = [(j.nom, list(j.cas), list(j.hors_sujet)) for j in JEUX]
 
     for nom, positifs, negatifs in jeux:
@@ -128,26 +166,42 @@ def second_rapport() -> int:
             if choisir(texte, maximum=3):
                 continue
             choix = choisir(texte, maximum=3, seuil=0)
-            refuses_faux.append((nom, texte, choix[0].nom if choix else None,
-                                 choix[0].score if choix else 0.0))
+            refuses_faux.append(
+                (
+                    nom,
+                    texte,
+                    choix[0].nom if choix else None,
+                    choix[0].score if choix else 0.0,
+                )
+            )
 
     justes = sum(1 for _, _, attendu, premier, _ in refuses_bon if premier == attendu)
     print("\n=== la liste rendue quand la porte se ferme ===")
     print(f"  objectifs du domaine refuses : {len(refuses_bon)}")
-    print(f"    premier de la liste JUSTE : {justes}/{len(refuses_bon)} "
-          f"({justes/len(refuses_bon):.0%}) — hasard 8 % (1 sur 12)")
+    print(
+        f"    premier de la liste JUSTE : {justes}/{len(refuses_bon)} "
+        f"({justes / len(refuses_bon):.0%}) — hasard 8 % (1 sur 12)"
+    )
     for nom, texte, attendu, premier, score in refuses_bon[:6]:
         marque = "ok " if premier == attendu else "   "
-        print(f"     [{marque}] attendu {attendu:22} | liste : {premier} ({score:.2f}) "
-              f"| {texte[:44]}")
+        print(
+            f"     [{marque}] attendu {attendu:22} | liste : {premier} ({score:.2f}) "
+            f"| {texte[:44]}"
+        )
     scores_bon = sorted(s for *_, s in refuses_bon)
-    print(f"    score du premier : median {scores_bon[len(scores_bon)//2]:.2f}, "
-          f"max {max(scores_bon):.2f}")
+    print(
+        f"    score du premier : median {scores_bon[len(scores_bon) // 2]:.2f}, "
+        f"max {max(scores_bon):.2f}"
+    )
     if refuses_faux:
         scores_faux = sorted(s for *_, s in refuses_faux)
-        print(f"  hors sujet refuses : {len(refuses_faux)} · score du premier : "
-              f"median {scores_faux[len(scores_faux)//2]:.2f}, max {max(scores_faux):.2f}")
-        print("    (si les deux distributions se recouvrent, une seconde porte sur le score")
+        print(
+            f"  hors sujet refuses : {len(refuses_faux)} · score du premier : "
+            f"median {scores_faux[len(scores_faux) // 2]:.2f}, max {max(scores_faux):.2f}"
+        )
+        print(
+            "    (si les deux distributions se recouvrent, une seconde porte sur le score"
+        )
         print("     laisserait entrer les faux positifs avec les faux negatifs)")
     return 0
 

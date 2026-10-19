@@ -26,14 +26,14 @@ des choses.
 
 from __future__ import annotations
 
+import ast
 import json
 import shutil
 import subprocess
 import sys
-import ast
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
 
 __all__ = ["LintFinding", "LinterReport", "analyse", "constat_a_tort"]
 
@@ -84,6 +84,7 @@ def plain_french(code: str) -> str:
             }[prefix]
     return ""
 
+
 #: Regles qui expriment une LIMITE DE L'ANALYSEUR, et non un defaut du code.
 #:
 #: Mesure sur du code public : `pyparsing` (3.3.3) etait declare fautif cinq fois, uniquement
@@ -120,6 +121,7 @@ LIMITES_DE_L_ANALYSE: dict[str, str] = {
     ),
 }
 
+
 def _version_cible() -> str:
     """Version de Python annoncee a l'analyseur : celle de l'INTERPRETE COURANT.
 
@@ -147,7 +149,7 @@ MAX_FINDINGS = 200
 class LintFinding:
     path: Path
     line: int
-    rule: str        # ex. "ruff:F821"
+    rule: str  # ex. "ruff:F821"
     message: str
 
     @property
@@ -174,9 +176,9 @@ class LintFinding:
 @dataclass
 class LinterReport:
     findings: list[LintFinding]
-    tool: str = ""       # l'outil reellement utilise, "" si aucun
-    note: str = ""       # ce qu'il faut dire a l'utilisateur
-    truncated: int = 0   # constats au-dela du plafond
+    tool: str = ""  # l'outil reellement utilise, "" si aucun
+    note: str = ""  # ce qu'il faut dire a l'utilisateur
+    truncated: int = 0  # constats au-dela du plafond
     #: Constats d'un outil EXTERNE ecartes apres lecture du fichier, avec leur raison.
     #: Un ecart muet serait pire que le faux positif : l'utilisateur doit pouvoir
     #: verifier que la lecture a bien eu lieu, et pourquoi.
@@ -228,7 +230,13 @@ def _noms_lies(arbre: ast.Module) -> set[str]:
         elif isinstance(node, ast.NamedExpr):
             _cibles(node.target)
         elif isinstance(node, ast.arguments):
-            for arg in [*node.posonlyargs, *node.args, *node.kwonlyargs, node.vararg, node.kwarg]:
+            for arg in [
+                *node.posonlyargs,
+                *node.args,
+                *node.kwonlyargs,
+                node.vararg,
+                node.kwarg,
+            ]:
                 if arg is not None:
                     noms.add(arg.arg)
     return noms
@@ -311,7 +319,8 @@ def constat_a_tort(fichier: Path, code: str, ligne: int) -> str:
                 for cible in ast.walk(arbre)
                 if isinstance(cible, ast.Assign)
                 and any(
-                    isinstance(t, ast.Name) and t.id in node.names for t in cible.targets
+                    isinstance(t, ast.Name) and t.id in node.names
+                    for t in cible.targets
                 )
             ]
             if cibles:
@@ -397,9 +406,9 @@ def _parse_concise(stdout: str, tool: str) -> list[LintFinding]:
         path, line, _col, rest = parts
         rest = rest.strip()
         code, _, message = rest.partition(" ")
-        if not message:  # pyflakes sans code de regle
-            code, message = "pyflakes", rest
-        elif not code[:1].isalpha() or not any(c.isdigit() for c in code):
+        if (
+            not message or not code[:1].isalpha() or not any(c.isdigit() for c in code)
+        ):  # pyflakes sans code de regle
             code, message = "pyflakes", rest
         try:
             number = int(line)
@@ -444,7 +453,9 @@ def analyse(
     propre parce qu'on n'a rien regarde.
     """
     if prefer in {"", "off", "0", "none"}:
-        return LinterReport([], note="analyseurs standards desactives (JIO_LINTERS=off)")
+        return LinterReport(
+            [], note="analyseurs standards desactives (JIO_LINTERS=off)"
+        )
 
     files = [str(p) for p in paths]
     if not files:
@@ -453,8 +464,15 @@ def analyse(
     ruff = _ruff_command() if prefer in {"auto", "ruff"} else None
     if ruff is not None:
         cmd = [
-            *ruff, "check", "--select", BUG_RULES, "--output-format", "json",
-            "--target-version", _version_cible(), *files,
+            *ruff,
+            "check",
+            "--select",
+            BUG_RULES,
+            "--output-format",
+            "json",
+            "--target-version",
+            _version_cible(),
+            *files,
         ]
         tool = "ruff"
     else:
@@ -481,7 +499,9 @@ def analyse(
         # se place a la racine scannee.
         pass
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
+        )
     except (subprocess.TimeoutExpired, OSError) as exc:
         return LinterReport([], tool=tool, note=f"{tool} n'a pas pu s'executer : {exc}")
 

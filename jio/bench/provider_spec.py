@@ -38,8 +38,19 @@ __all__ = ["Fournisseur", "disponibles", "resoudre", "resoudre_liste"]
 
 #: Modele simule : accepte sous plusieurs noms, parce qu'un utilisateur ne doit pas avoir
 #: a deviner lequel est le bon.
-_SIMULE = frozenset({"", "simule", "simulé", "sim", "simulation", "defaut", "défaut",
-                     "deterministe", "déterministe"})
+_SIMULE = frozenset(
+    {
+        "",
+        "simule",
+        "simulé",
+        "sim",
+        "simulation",
+        "defaut",
+        "défaut",
+        "deterministe",
+        "déterministe",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -47,7 +58,7 @@ class Fournisseur:
     """Ce qui a ete demande, et ce qui a ete obtenu."""
 
     spec: str
-    genre: str                      # "simule" | "cli" | "openai"
+    genre: str  # "simule" | "cli" | "openai"
     provider: Provider | None = None
     #: Plusieurs instances du meme modele : la boucle tire des candidats dans `generators`,
     #: et le panel a besoin d'autant de critiques que de personas.
@@ -85,7 +96,10 @@ def _cli(nom: str) -> Provider:
     if spec is not None:
         binaire = _env_cli(nom, "BIN") or nom
         return CliProvider(
-            binary=binaire, argv_template=spec["argv"], name=f"cli:{nom}", model=spec["model"]
+            binary=binaire,
+            argv_template=spec["argv"],
+            name=f"cli:{nom}",
+            model=spec["model"],
         )
 
     # Un outil inconnu reste utilisable : il suffit de donner sa ligne de commande, avec
@@ -103,7 +117,10 @@ def _cli(nom: str) -> Provider:
         )
     binaire = _env_cli(nom, "BIN") or nom
     return CliProvider(
-        binary=binaire, argv_template=gabarit, name=f"cli:{nom}", model=f"{nom}/default",
+        binary=binaire,
+        argv_template=gabarit,
+        name=f"cli:{nom}",
+        model=f"{nom}/default",
         use_stdin="{prompt}" not in gabarit,
     )
 
@@ -114,14 +131,19 @@ def resoudre(spec: str) -> Fournisseur:
 
     if brut.lower() in _SIMULE:
         return Fournisseur(
-            spec="simule", genre="simule", instances=1, provider=None,
+            spec="simule",
+            genre="simule",
+            instances=1,
+            provider=None,
             note="reponses simulees deterministes ; la verification, elle, est reelle",
         )
 
     if brut.startswith("cli:"):
         nom = brut[4:].strip()
         if not nom:
-            raise ProviderError("specification incomplete : `cli:<nom>` attend un binaire")
+            raise ProviderError(
+                "specification incomplete : `cli:<nom>` attend un binaire"
+            )
         provider = _cli(nom)
         if not shutil.which(provider.binary):  # type: ignore[attr-defined]
             raise ProviderError(
@@ -131,11 +153,14 @@ def resoudre(spec: str) -> Fournisseur:
                 "modele demande serait un mensonge."
             )
         return Fournisseur(
-            spec=brut, genre="cli", provider=provider, instances=5,
+            spec=brut,
+            genre="cli",
+            provider=provider,
+            instances=5,
             note=f"votre CLI {nom}, authentifie par vous ; 5 instances pour le panel",
         )
 
-    if brut.startswith("openai:") or brut.startswith("openai-compat:"):
+    if brut.startswith(("openai:", "openai-compat:")):
         from dataclasses import replace as _replace
 
         from ..providers.openai_compat import OpenAiCompatProvider
@@ -157,7 +182,9 @@ def resoudre(spec: str) -> Fournisseur:
                 "authentifie. Aucun repli sur la simulation."
             )
         return Fournisseur(
-            spec=brut, genre="openai", instances=5,
+            spec=brut,
+            genre="openai",
+            instances=5,
             provider=_replace(candidats[0], model=modele),
             note=f"point d'acces compatible OpenAI, modele {modele}",
         )
@@ -196,5 +223,10 @@ def disponibles() -> list[tuple[str, bool]]:
     etat: list[tuple[str, bool]] = []
     for nom, spec in sorted(KNOWN_CLIS.items()):
         binaire = os.environ.get(f"JIO_BIN_{nom.upper()}") or nom
-        etat.append((f"cli:{nom} ({spec['model']}) -> {binaire}", shutil.which(binaire) is not None))
+        etat.append(
+            (
+                f"cli:{nom} ({spec['model']}) -> {binaire}",
+                shutil.which(binaire) is not None,
+            )
+        )
     return etat

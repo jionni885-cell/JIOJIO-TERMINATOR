@@ -9,8 +9,9 @@ mélangees avec du contenu EXTERNAL. La separation est structurelle.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Mapping, Protocol, Sequence, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from ..core.types import TrustLevel
 
@@ -19,7 +20,7 @@ from ..core.types import TrustLevel
 class Message:
     """Un message adresse a un modele, avec son niveau de confiance."""
 
-    role: str                       # system | user | assistant
+    role: str  # system | user | assistant
     content: str
     trust: TrustLevel = TrustLevel.USER
 
@@ -124,4 +125,4 @@ def render(messages: Sequence[Message]) -> str:
     return "\n\n".join(f"<{m.role}>\n{m.content}\n</{m.role}>" for m in messages)
 
 
-__all__ = ["Message", "Completion", "Provider", "ProviderError", "render"]
+__all__ = ["Completion", "Message", "Provider", "ProviderError", "render"]

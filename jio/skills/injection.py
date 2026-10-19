@@ -27,10 +27,10 @@ categorie, pour qu'une relecture du prompt permette de dire d'ou vient chaque ph
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
-from .router import SEUIL_CONCEPTS, Choix, Catalogue, catalogue_du_depot
+from .router import SEUIL_CONCEPTS, Catalogue, Choix, catalogue_du_depot
 
 __all__ = ["Injection", "bloc", "refusees_par_l_audit"]
 
@@ -107,14 +107,19 @@ class Injection:
             if self.refusees:
                 base += f" ({len(self.refusees)} refusee(s) par l'audit)"
             return base
-        base = (f"{len(self.completes)} procedure(s) chargee(s) — "
-                f"{', '.join(self.completes)} — {self.cout_jetons} jetons")
+        base = (
+            f"{len(self.completes)} procedure(s) chargee(s) — "
+            f"{', '.join(self.completes)} — {self.cout_jetons} jetons"
+        )
         if self.ecartees:
-            base += (f" · {len(self.ecartees)} ecartee(s) par le budget de "
-                     f"{BUDGET_DEFAUT} jetons : {', '.join(self.ecartees)}")
+            base += (
+                f" · {len(self.ecartees)} ecartee(s) par le budget de "
+                f"{BUDGET_DEFAUT} jetons : {', '.join(self.ecartees)}"
+            )
         if self.refusees:
-            base += (f" · {len(self.refusees)} REFUSEE(S) par l'audit : "
-                     + ", ".join(nom for nom, _ in self.refusees))
+            base += f" · {len(self.refusees)} REFUSEE(S) par l'audit : " + ", ".join(
+                nom for nom, _ in self.refusees
+            )
         return base
 
 

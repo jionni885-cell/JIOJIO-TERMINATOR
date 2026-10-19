@@ -57,6 +57,13 @@ def test_le_nom_du_dossier_racine_ne_compte_pas(tmp_path: pathlib.Path) -> None:
     assert not _est_ignore(cible, racine)
 
 
+def test_etat_des_mandats_damelioration_est_ignore_du_scan_source(
+    tmp_path: pathlib.Path,
+) -> None:
+    assert _est_ignore(tmp_path / ".jio/improve/round-0001/agents/a.md", tmp_path)
+    assert not _est_ignore(tmp_path / ".jio/ACTIVE.md", tmp_path)
+
+
 def test_un_chemin_hors_racine_nest_jamais_ignore(tmp_path: pathlib.Path) -> None:
     assert not _est_ignore(pathlib.Path("/autre/endroit/x.py"), tmp_path)
 

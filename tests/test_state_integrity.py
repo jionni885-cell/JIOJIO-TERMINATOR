@@ -24,7 +24,9 @@ SYNC = REPO / "scripts" / "sync.sh"
 
 
 def _run(argv, cwd):
-    return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=60)
+    return subprocess.run(
+        argv, cwd=cwd, capture_output=True, text=True, timeout=60, check=False
+    )
 
 
 def _git(cwd, *argv):
@@ -55,6 +57,7 @@ def _sync(travail: pathlib.Path, *args: str):
 # scripts/sync.sh
 # --------------------------------------------------------------------------- #
 
+
 def test_sync_refuse_de_toucher_a_un_arbre_modifie(tmp_path):
     """Regle numero un : jamais de destruction de travail non enregistre."""
     travail = _init_repo(tmp_path)
@@ -71,8 +74,10 @@ def test_sync_refuse_de_toucher_a_un_arbre_modifie(tmp_path):
 def test_sync_avance_rapidement_sans_perdre_aucun_commit(tmp_path):
     """Le seul cas ou l'operation ne peut rien detruire : le local est en retard pur."""
     travail = _init_repo(tmp_path)
-    autre = _run(["git", "clone", "-q", str(tmp_path / "origin.git"), str(tmp_path / "autre")],
-                 tmp_path).returncode
+    autre = _run(
+        ["git", "clone", "-q", str(tmp_path / "origin.git"), str(tmp_path / "autre")],
+        tmp_path,
+    ).returncode
     assert autre == 0
     autre = tmp_path / "autre"
     _git(autre, "config", "user.email", "t@exemple.invalid")
@@ -159,6 +164,7 @@ def test_sync_est_idempotent(tmp_path):
 # jio doctor : dire ce qu'on ne peut pas savoir
 # --------------------------------------------------------------------------- #
 
+
 def test_doctor_detecte_le_retard_sur_le_distant(tmp_path):
     """Un depot en retard doit etre SIGNALE, avec la commande de reparation."""
     travail = _init_repo(tmp_path)
@@ -184,7 +190,7 @@ def test_doctor_detecte_le_retard_sur_le_distant(tmp_path):
         os.chdir(ancien)
 
     assert etat is not None
-    branche, avance, recul, distant, distant_existe = etat
+    _branche, avance, recul, distant, distant_existe = etat
     assert distant is True and distant_existe is True
     assert recul == 1 and avance == 0, etat
 
@@ -266,7 +272,7 @@ def test_un_distant_configure_sans_reference_comparable_est_distingue(tmp_path):
         os.chdir(ancien)
 
     assert etat is not None
-    branche, avance, recul, distant, distant_existe = etat
+    branche, _avance, _recul, distant, distant_existe = etat
     assert distant is False, "sans reference locale, impossible de comparer"
     assert distant_existe is True, "mais le distant existe : le diagnostic doit le dire"
     assert branche == "main"

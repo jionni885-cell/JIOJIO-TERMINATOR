@@ -69,7 +69,7 @@ Ceux-ci ne sont pas décoratifs : chacun est implémenté par un composant préc
 |---|---|---|---|
 | 1 | **Décorrélation** | Théorie de l'information (erreurs corrélées) | `BlindReview`, registre de diversité |
 | 2 | **Redondance + distance** | Codes correcteurs, distance de Hamming | Consensus n agents, `HammingGate` |
-| 3 | **Quorum byzantin** | `n ≥ 3f+1` (Lamport) | `ConsensusEngine` : seuil dynamique selon f estimé |
+| 3 | **Quorum prudent (heuristique)** | `n ≥ 3f+1` comme signal de taille, sans garantie formelle | `ConsensusEngine` : estimation de désaccord, vote indisponible bloquant |
 | 4 | **Couverture garantie** | Prédiction conforme (Vovk) | `ConformalGate` : `Pr[erreur ∧ accepté] ≤ α` |
 | 5 | **Entropie sémantique** | Shannon sur clusters de sens | `SemanticEntropy` (clustering par entailment bidirectionnel) |
 | 6 | **Invariance métamorphique** | Test métamorphique (Chen, 1998) | `MetaQA` : 12 mutants de requête, échec si non-invariance |

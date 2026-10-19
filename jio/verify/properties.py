@@ -46,17 +46,26 @@ import re
 from dataclasses import dataclass
 
 __all__ = [
-    "DerivedProperty",
-    "docstring_examples",
-    "derive_properties",
-    "generate_inputs",
     "MUTABLE_TYPES",
+    "DerivedProperty",
+    "derive_properties",
+    "docstring_examples",
+    "generate_inputs",
 ]
 
 #: Types dont une fonction ne devrait pas modifier l'argument. On ne teste que
 #: ceux-la : un entier ne peut pas etre mute, le verifier serait du bruit.
 MUTABLE_TYPES = frozenset(
-    {"list", "dict", "set", "bytearray", "deque", "Counter", "defaultdict", "OrderedDict"}
+    {
+        "list",
+        "dict",
+        "set",
+        "bytearray",
+        "deque",
+        "Counter",
+        "defaultdict",
+        "OrderedDict",
+    }
 )
 
 #: Paires de noms qui promettent un aller-retour. Deduites du NOM, jamais devinees :
@@ -105,7 +114,10 @@ def _annonce(nom: str, promesses: tuple[str, ...]) -> bool:
     de programmation, et `_` est justement ce sur quoi `_mots` separe.
     """
     mots = _mots(nom)
-    return any(promesse in mots or promesse in nom.lower().split("_") for promesse in promesses)
+    return any(
+        promesse in mots or promesse in nom.lower().split("_") for promesse in promesses
+    )
+
 
 #: Noms qui degradent la fidelite (dedoublonnage volontaire) : le multiensemble n'est
 #: alors PAS cense etre preserve. `sort_unique(x)` a le droit de rendre moins
@@ -122,9 +134,24 @@ _DEDUPE_CLAIMS = ("dedupe", "dedup", "unique", "uniq", "distinct", "nub")
 #: place » (`sort_in_place`, `fill`, `update`) mute par conception : la declarer
 #: fautive serait une fausse alerte sur du code parfaitement correct.
 _IN_PLACE_NAMES = (
-    "in_place", "inplace", "sort_in", "fill", "update", "set_", "append", "extend",
-    "clear", "pop", "push", "insert", "remove", "discard", "add_", "merge_into",
-    "apply_", "mutate",
+    "in_place",
+    "inplace",
+    "sort_in",
+    "fill",
+    "update",
+    "set_",
+    "append",
+    "extend",
+    "clear",
+    "pop",
+    "push",
+    "insert",
+    "remove",
+    "discard",
+    "add_",
+    "merge_into",
+    "apply_",
+    "mutate",
 )
 
 _ROUND_TRIP_PREFIXES: tuple[tuple[str, str], ...] = (
@@ -142,7 +169,7 @@ class DerivedProperty:
     name: str
     statement: str
     check: str
-    kind: str = "property"   # property | advisory
+    kind: str = "property"  # property | advisory
 
 
 # --------------------------------------------------------------------------- #
@@ -164,7 +191,7 @@ def _annotation_text(node: ast.expr | None) -> str:
 
 def _elements(inner: str) -> str:
     """Type des elements d'une annotation generique (`list[int]` -> `int`)."""
-    head, _, rest = inner.partition("[")
+    _head, _, rest = inner.partition("[")
     return rest.rstrip("]") or "int"
 
 
@@ -189,9 +216,22 @@ def _value_for(kind: str, rng: random.Random, depth: int = 0) -> object:
         # entrees testees faisaient 4 caracteres ou moins.
         return rng.choice(
             (
-                "", "a", "ab", "abc", "aa", " ", "0", "test",
-                "abcdef", "abcabc", "a" * 16, "0123456789", "  espaces  ",
-                "a,b", "a/b", "a b",
+                "",
+                "a",
+                "ab",
+                "abc",
+                "aa",
+                " ",
+                "0",
+                "test",
+                "abcdef",
+                "abcabc",
+                "a" * 16,
+                "0123456789",
+                "  espaces  ",
+                "a,b",
+                "a/b",
+                "a b",
             )
         )
     if base in {"list", "tuple", "set", "frozenset", "Sequence", "Iterable", "deque"}:
@@ -201,7 +241,11 @@ def _value_for(kind: str, rng: random.Random, depth: int = 0) -> object:
         size = rng.choice((0, 1, 1, 2, 3, 5))
         items = [_value_for(inner, rng, depth + 1) for _ in range(size)]
         if base in {"set", "frozenset"}:
-            return base if not items else (set(items) if base == "set" else frozenset(items))
+            return (
+                base
+                if not items
+                else (set(items) if base == "set" else frozenset(items))
+            )
         return items if base != "tuple" else tuple(items)
     if base in {"dict", "Mapping", "Counter", "defaultdict", "OrderedDict"}:
         if depth >= 2 or "[" not in flat:
@@ -232,9 +276,24 @@ def generate_inputs(
     if not base:
         return None
     if base not in {
-        "int", "float", "str", "bool", "list", "tuple", "set", "frozenset", "dict",
-        "Sequence", "Iterable", "Mapping", "deque", "Counter", "defaultdict",
-        "OrderedDict", "Any", "object",
+        "int",
+        "float",
+        "str",
+        "bool",
+        "list",
+        "tuple",
+        "set",
+        "frozenset",
+        "dict",
+        "Sequence",
+        "Iterable",
+        "Mapping",
+        "deque",
+        "Counter",
+        "defaultdict",
+        "OrderedDict",
+        "Any",
+        "object",
     }:
         return None
     if mutable_only and base not in MUTABLE_TYPES:
@@ -327,7 +386,7 @@ def _jio_shrink(case):
 '''
 
 _NON_MUTATION = (
-    '''
+    """
 import copy as _jio_copy
 
 _jio_fn = globals().get({name!r})
@@ -353,19 +412,19 @@ def _jio_violated(case):
 
 
 _jio_failed = [c for c in _jio_cases if _jio_violated(tuple(c))]
-'''
+"""
     + _SHRINKER
-    + '''
+    + """
 assert not _jio_failed, (
     "l'argument a ete MODIFIE par {name} : le plus petit contre-exemple est "
     f"{{_jio_shrink(_jio_failed[0])!r}}. Une fonction qui modifie ce qu'on lui passe "
     "surprend l'appelant (et `return liste.sort()` renvoie None en plus de tout casser)."
 )
-'''
+"""
 )
 
 _IDEMPOTENCE = (
-    '''
+    """
 import copy as _jio_copy
 
 _jio_fn = globals().get({name!r})
@@ -388,19 +447,19 @@ def _jio_violated(case):
 
 
 _jio_failed = [c for c in _jio_cases if _jio_violated(tuple(c))]
-'''
+"""
     + _SHRINKER
-    + '''
+    + """
 assert not _jio_failed, (
     "appliquer {name} deux fois ne donne pas le meme resultat qu'une fois : plus petit "
     f"contre-exemple {{_jio_shrink(_jio_failed[0])!r}}. Une operation idempotente qui ne "
     "l'est pas trahit une accumulation ou une double transformation."
 )
-'''
+"""
 )
 
 _SORTED = (
-    '''
+    """
 import copy as _jio_copy
 
 _jio_fn = globals().get({name!r})
@@ -443,19 +502,19 @@ def _jio_violated(case):
 
 
 _jio_failed = [c for c in _jio_cases if _jio_violated(tuple(c))]
-'''
+"""
     + _SHRINKER
-    + '''
+    + """
 assert not _jio_failed, (
     "{name} ne tient pas la promesse de son nom : plus petit contre-exemple "
     f"{{_jio_shrink(_jio_failed[0])!r}}. Une sortie non triee — ou un element perdu, ou "
     "invente, au passage — est un defaut silencieux : l'appelant ne verifie pas."
 )
-'''
+"""
 )
 
 _DEDUPE = (
-    '''
+    """
 import copy as _jio_copy
 
 _jio_fn = globals().get({name!r})
@@ -485,19 +544,19 @@ def _jio_violated(case):
 
 
 _jio_failed = [c for c in _jio_cases if _jio_violated(tuple(c))]
-'''
+"""
     + _SHRINKER
-    + '''
+    + """
 assert not _jio_failed, (
     "{name} perd ou invente des elements : plus petit contre-exemple "
     f"{{_jio_shrink(_jio_failed[0])!r}}. Un dedoublonnage doit retirer les REPETITIONS, "
     "jamais une valeur qui n'apparaissait qu'une seule fois."
 )
-'''
+"""
 )
 
 _ROUND_TRIP = (
-    '''
+    """
 import copy as _jio_copy
 
 _jio_fwd = globals().get({forward!r})
@@ -517,15 +576,15 @@ def _jio_violated(case):
 
 
 _jio_failed = [c for c in _jio_cases if _jio_violated(tuple(c))]
-'''
+"""
     + _SHRINKER
-    + '''
+    + """
 assert not _jio_failed, (
     "'{backward}({forward}(x))' ne rend pas x : plus petit contre-exemple "
     f"{{_jio_shrink(_jio_failed[0])!r}}. Un aller-retour qui perd de l'information est "
     "un defaut silencieux : chaque usage croyait pouvoir revenir en arriere."
 )
-'''
+"""
 )
 
 
@@ -533,7 +592,10 @@ assert not _jio_failed, (
 # Inference statique
 # --------------------------------------------------------------------------- #
 
-def _mutable_parameters(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tuple[int, str]]:
+
+def _mutable_parameters(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[tuple[int, str]]:
     """(index, annotation) des parametres mutables declares."""
     args = node.args
     positional = list(args.posonlyargs) + list(args.args)
@@ -549,7 +611,7 @@ def _mutable_parameters(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tu
     for arg in args.kwonlyargs:
         text = _annotation_text(arg.annotation)
         if text.replace(" ", "").split("[", 1)[0] in MUTABLE_TYPES:
-            out.append((-1, text))   # nomme : index inconnu dans un appel positionnel
+            out.append((-1, text))  # nomme : index inconnu dans un appel positionnel
     return out
 
 
@@ -557,13 +619,38 @@ def _mutable_parameters(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tu
 #: Liste volontairement courte et justifiee — chaque entree est une affirmation de
 #: l'auteur du code, pas une supposition de notre part.
 _IDEMPOTENT_NAMES = (
-    "normalize", "normalise", "normalize_", "sanitize", "sanitise", "clean", "cleanup",
-    "canonical", "canonicalize", "dedupe", "unique", "uniq", "flatten", "strip",
-    "clip", "clamp", "round", "quantize", "simplify", "compact", "squeeze", "dedup",
+    "normalize",
+    "normalise",
+    "normalize_",
+    "sanitize",
+    "sanitise",
+    "clean",
+    "cleanup",
+    "canonical",
+    "canonicalize",
+    "dedupe",
+    "unique",
+    "uniq",
+    "flatten",
+    "strip",
+    "clip",
+    "clamp",
+    "round",
+    "quantize",
+    "simplify",
+    "compact",
+    "squeeze",
+    "dedup",
 )
 
 #: Mots de la docstring qui affirment la meme chose.
-_IDEMPOTENT_WORDS = ("idempotent", "idempotente", "normalis", "canoniqu", "sans effet si repete")
+_IDEMPOTENT_WORDS = (
+    "idempotent",
+    "idempotente",
+    "normalis",
+    "canoniqu",
+    "sans effet si repete",
+)
 
 
 def _claims_idempotence(node: ast.FunctionDef) -> bool:
@@ -575,7 +662,10 @@ def _claims_idempotence(node: ast.FunctionDef) -> bool:
     jours : cette fonction est ce qui l'empeche.
     """
     name = node.name.lower()
-    if any(name == candidate or name.startswith(candidate) for candidate in _IDEMPOTENT_NAMES):
+    if any(
+        name == candidate or name.startswith(candidate)
+        for candidate in _IDEMPOTENT_NAMES
+    ):
         return True
     doc = ast.get_docstring(node) or ""
     low = doc.lower()
@@ -687,7 +777,9 @@ def _doctest_seeds(node: ast.FunctionDef, limit: int = 4) -> list[tuple[object, 
     return seeds
 
 
-def _seed_variants(seed: tuple[object, ...], limit: int = 8) -> list[tuple[object, ...]]:
+def _seed_variants(
+    seed: tuple[object, ...], limit: int = 8
+) -> list[tuple[object, ...]]:
     """Deformations structurelles d'un temoin valide.
 
     L'exemple de l'auteur couvre un point du domaine ; les defauts vivent aux bords.
@@ -732,7 +824,9 @@ def _cases_from_annotations(
             return []
         columns[index] = values
     smallest = min((len(v) for v in columns.values()), default=0)
-    return [tuple(columns[i][k] for i in range(len(positional))) for k in range(smallest)]
+    return [
+        tuple(columns[i][k] for i in range(len(positional))) for k in range(smallest)
+    ]
 
 
 def _cases_for(
@@ -745,7 +839,9 @@ def _cases_for(
     n'avoir aucun doublon, et un tri qui perd les doublons (`sorted(set(x))`) passe
     inapercu. Defaut constate au banc, corrige ici.
     """
-    cases = _cases_from_annotations(node, positional, [a.arg for a in positional], inputs, seed)
+    cases = _cases_from_annotations(
+        node, positional, [a.arg for a in positional], inputs, seed
+    )
     if cases:
         enriched: list[tuple[object, ...]] = []
         seen: set[str] = set()
@@ -799,7 +895,7 @@ def _round_trip_candidates(names: set[str]) -> list[tuple[str, str, int | None]]
     for prefix, inverse in _ROUND_TRIP_PREFIXES:
         for name in names:
             if name.startswith(prefix) and len(name) > len(prefix):
-                twin = inverse + name[len(prefix):]
+                twin = inverse + name[len(prefix) :]
                 if twin in names:
                     pairs.append((name, twin, None))
     # Variantes par suffixe : `url_encode`/`url_decode`, `json_dump`/`json_load`.
@@ -831,14 +927,16 @@ def derive_properties(
     desactive. Deterministe, sans modele, sans reseau.
     """
     out: list[DerivedProperty] = []
-    if not isinstance(node, ast.FunctionDef):   # les fonctions async ont un autre contrat
+    if not isinstance(
+        node, ast.FunctionDef
+    ):  # les fonctions async ont un autre contrat
         return out
 
     positional = list(node.args.posonlyargs) + list(node.args.args)
     if positional and positional[0].arg in {"self", "cls"}:
         return out
 
-    cases, provenance = _cases_for(node, positional, inputs, seed)
+    cases, _provenance = _cases_for(node, positional, inputs, seed)
 
     # --- P-001 non-mutation ------------------------------------------------ #
     # Deux garde-fous contre la fausse alerte, avant meme de regarder la signature :
@@ -854,7 +952,9 @@ def derive_properties(
         or not _returns_a_value(node)
     )
     if cases and not mutation_plausible:
-        rendered = ", ".join("(" + ", ".join(repr(v) for v in case) + ",)" for case in cases)
+        rendered = ", ".join(
+            "(" + ", ".join(repr(v) for v in case) + ",)" for case in cases
+        )
         out.append(
             DerivedProperty(
                 id="P-001",
@@ -891,7 +991,9 @@ def derive_properties(
     # le nom s'engage — une fonction de tri maison appelee `arrange` ne sera jamais
     # accusee sur une promesse qu'elle n'a pas faite.
     if cases and len(positional) >= 1:
-        rendered = ", ".join("(" + ", ".join(repr(v) for v in case) + ",)" for case in cases)
+        rendered = ", ".join(
+            "(" + ", ".join(repr(v) for v in case) + ",)" for case in cases
+        )
         if _annonce(node.name, _SORT_CLAIMS):
             lossy = _annonce(node.name, _LOSSY_CLAIMS)
             ascending = not _annonce(node.name, _SORT_DESCENDING)
@@ -939,7 +1041,9 @@ def derive_properties(
             continue
         fwd_node = functions.get(forward)
         bwd_node = functions.get(backward)
-        if not isinstance(fwd_node, ast.FunctionDef) or not isinstance(bwd_node, ast.FunctionDef):
+        if not isinstance(fwd_node, ast.FunctionDef) or not isinstance(
+            bwd_node, ast.FunctionDef
+        ):
             continue
         fwd_args = list(fwd_node.args.posonlyargs) + list(fwd_node.args.args)
         bwd_args = list(bwd_node.args.posonlyargs) + list(bwd_node.args.args)
@@ -969,7 +1073,8 @@ def derive_properties(
                     forward=forward,
                     backward=backward,
                     cases=", ".join(
-                        "(" + ", ".join(repr(v) for v in case) + ",)" for case in pair_cases
+                        "(" + ", ".join(repr(v) for v in case) + ",)"
+                        for case in pair_cases
                     ),
                 ),
             )

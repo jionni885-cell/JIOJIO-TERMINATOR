@@ -32,7 +32,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
-__all__ = ["Arm", "TrustRouter", "DEFAULT_ARMS", "task_class"]
+__all__ = ["DEFAULT_ARMS", "Arm", "TrustRouter", "task_class"]
 
 
 # --------------------------------------------------------------------------- #
@@ -45,11 +45,11 @@ class Arm:
     """Une configuration de verification. `cost` est en unites arbitraires."""
 
     name: str
-    candidates: int          # candidats generes par tour
-    rounds: int              # tours maximum
-    panel_size: int          # critiques independants
-    alpha: float             # risque d'erreur accepte par la porte conforme
-    cost: float              # cout relatif (appels + verifications)
+    candidates: int  # candidats generes par tour
+    rounds: int  # tours maximum
+    panel_size: int  # critiques independants
+    alpha: float  # risque d'erreur accepte par la porte conforme
+    cost: float  # cout relatif (appels + verifications)
 
     @property
     def budget_calls(self) -> int:
@@ -83,7 +83,8 @@ def task_class(objective: str, domain: str = "") -> str:
     }
     low = f"{domain} {objective}".lower()
     scores = {
-        label: sum(1 for word in words if word in low) for label, words in keywords.items()
+        label: sum(1 for word in words if word in low)
+        for label, words in keywords.items()
     }
     # A egalite, l'ordre de priorite tranche — PAS l'ordre alphabetique. Sans cela,
     # « write a function that sums even numbers » tombait dans `writing` parce que
@@ -144,7 +145,12 @@ class TrustRouter:
         return best[1]
 
     def observe(
-        self, objective: str, arm: Arm | str, *, success: bool, cost: float | None = None
+        self,
+        objective: str,
+        arm: Arm | str,
+        *,
+        success: bool,
+        cost: float | None = None,
     ) -> float:
         """Enregistre le resultat d'un essai et renvoie la recompense attribuee."""
         name = arm.name if isinstance(arm, Arm) else arm
@@ -199,7 +205,9 @@ class TrustRouter:
             "cost_weight": self.cost_weight,
             "stats": {f"{k[0]}|{k[1]}": v for k, v in self.stats.items()},
         }
-        self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     def load(self) -> None:
         if self.path is None or not self.path.exists():
@@ -221,10 +229,14 @@ class TrustRouter:
                 "Aucune observation. Le routeur explore : chaque configuration sera\n"
                 "essayee avant d'etre jugee (c'est le principe d'UCB, pas une lacune)."
             )
-        out = [f"{'classe':<10} {'bras':<10} {'tirages':>8} {'recompense':>11} {'cout':>6}"]
+        out = [
+            f"{'classe':<10} {'bras':<10} {'tirages':>8} {'recompense':>11} {'cout':>6}"
+        ]
         out.append("-" * 50)
         for klass, name, pulls, mean, cost in rows:
-            out.append(f"{klass:<10} {name:<10} {pulls:>8.0f} {mean:>11.3f} {cost:>6.1f}")
+            out.append(
+                f"{klass:<10} {name:<10} {pulls:>8.0f} {mean:>11.3f} {cost:>6.1f}"
+            )
         out.append("")
         out.append(
             f"recompense = succes - {self.cost_weight:.2f} x cout normalise. "

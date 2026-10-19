@@ -34,7 +34,7 @@ from pathlib import Path
 
 from .artifacts.definitions import AGENTS, SKILLS
 
-__all__ = ["Chiffre", "Ecart", "CHIFFRES", "mesurer", "ecarts", "reparer"]
+__all__ = ["CHIFFRES", "Chiffre", "Ecart", "ecarts", "mesurer", "reparer"]
 
 
 #: Une zone de texte volontairement hors controle, entre ces deux marqueurs. Elle sert a
@@ -144,7 +144,7 @@ CHIFFRES: tuple[Chiffre, ...] = (
         # les proteger. Un motif large se paie toujours quelque part : ici, il faut nommer
         # chaque contexte qui parle d'un autre nombre.
         motif=r"(\d+) objectifs(?! de routage| de contr| du jeu de contr| d'un projet| hors sujet"
-              r"| pertinents| jamais vus| du banc| d'essai)",
+        r"| pertinents| jamais vus| du banc| d'essai)",
         # La phrase qui parle du banc de la porte : c'est la SEULE ou ce nombre a un sens.
         # « 24 objectifs jamais vus », « 24 objectifs, ecrit avant la retouche » parlent du
         # routeur de competences et ne doivent pas etre touches.
@@ -194,12 +194,12 @@ CHIFFRES: tuple[Chiffre, ...] = (
     # publie (« 11 000 radicaux ») engage la ressource livree, donc elle se surveille comme les
     # autres. Le mot « radicaux » et non « mots » : la table est indexee par RADICAL, et un motif
     # plus large attraperait n'importe quel compte de mots du document.
-        Chiffre(
+    Chiffre(
         nom="entreprise",
         motif=r"entreprise de (\d+) agents",
         description="les postes de l'entreprise de verification (jio/entreprise.py)",
     ),
-Chiffre(
+    Chiffre(
         nom="vecteurs",
         motif=r"(\d+) radicaux",
         description="la table de vecteurs embarquee (jio/skills/vecteurs/)",
@@ -236,7 +236,9 @@ class Ecart:
         return self.ligne > 0
 
     def __str__(self) -> str:  # pragma: no cover - confort d'affichage
-        return f"ligne {self.ligne} : {self.ancien} -> {self.nouveau}  ({self.contexte})"
+        return (
+            f"ligne {self.ligne} : {self.ancien} -> {self.nouveau}  ({self.contexte})"
+        )
 
 
 def mesurer(racine: Path | str) -> dict[str, int]:
@@ -250,14 +252,15 @@ def mesurer(racine: Path | str) -> dict[str, int]:
     # `objectifs` : import LOCAL, comme partout ailleurs dans ce depot. Le banc d'objectifs
     # importe la porte de clarification, qui importe ce qu'elle veut de verifier : un import
     # en tete de module ferait dependre le comptage des chiffres de toute la chaine.
+    from .bench.controle_clarify import CAS as CAS_CLARIFY
     from .bench.objectifs import CORPUS
+
     # `skills` : import LOCAL pour la meme raison. Le routeur lit les definitions des
     # competences et rien d'autre ; le faire remonter en tete de module coupleraient les
     # chiffres a l'index, qui depend lui-meme des artefacts.
-    from .skills.banc import BANC, mesurer as mesurer_le_routage
-    from .skills.controle import JEUX
-    from .bench.controle_clarify import CAS as CAS_CLARIFY
-    from .skills.controle import CAS
+    from .skills.banc import BANC
+    from .skills.banc import mesurer as mesurer_le_routage
+    from .skills.controle import CAS, JEUX
 
     return {
         "tests": _compter_tests(racine),
@@ -308,7 +311,11 @@ def _compter_tests(racine: Path) -> int:
     """
     resultat = subprocess.run(
         [sys.executable, "-m", "pytest", "--collect-only", "-q"],
-        cwd=racine, capture_output=True, text=True, timeout=600,
+        cwd=racine,
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
     )
     texte = resultat.stdout
 
@@ -362,28 +369,33 @@ def ecarts(texte: str, mesures: dict[str, int]) -> list[Ecart]:
                 valeur = int(correspondance.group(1))
                 attendue = mesures[chiffre.nom]
                 if valeur != attendue:
-                    trouves.append(Ecart(
-                        nom=chiffre.nom,
-                        ligne=indice,
-                        ancien=correspondance.group(0),
-                        nouveau=correspondance.group(0).replace(
-                            correspondance.group(1), str(attendue), 1
-                        ),
-                        contexte=chiffre.description,
-                    ))
+                    trouves.append(
+                        Ecart(
+                            nom=chiffre.nom,
+                            ligne=indice,
+                            ancien=correspondance.group(0),
+                            nouveau=correspondance.group(0).replace(
+                                correspondance.group(1), str(attendue), 1
+                            ),
+                            contexte=chiffre.description,
+                        )
+                    )
         if not vu_quelque_part:
-            trouves.append(Ecart(
-                nom=chiffre.nom,
-                ligne=0,
-                ancien="(aucune mention)",
-                nouveau=f"les {mesures[chiffre.nom]} {chiffre.nom}"
-                if chiffre.nom != "tests" else f"{mesures[chiffre.nom]} tests verts",
-                contexte=(
-                    f"{chiffre.description} : ce chiffre n'apparait plus sous la forme "
-                    "surveillee. Le remettre (ou retirer ce controle) — un controle qui ne "
-                    "trouve plus rien a verifier devient vert sans rien prouver."
-                ),
-            ))
+            trouves.append(
+                Ecart(
+                    nom=chiffre.nom,
+                    ligne=0,
+                    ancien="(aucune mention)",
+                    nouveau=f"les {mesures[chiffre.nom]} {chiffre.nom}"
+                    if chiffre.nom != "tests"
+                    else f"{mesures[chiffre.nom]} tests verts",
+                    contexte=(
+                        f"{chiffre.description} : ce chiffre n'apparait plus sous la forme "
+                        "surveillee. Le remettre (ou retirer ce controle) — un controle qui ne "
+                        "trouve plus rien a verifier devient vert sans rien prouver."
+                    ),
+                )
+            )
     return trouves
 
 
@@ -419,26 +431,42 @@ def reparer(
     # corrige pour la meme raison, disait « hors de portee ». Deux commandes qui mesurent la
     # meme chose ne peuvent pas rendre deux verdicts opposes — celle qu'on mettrait dans un
     # pre-commit serait celle qui crie a tort.
-    if trouves and not reparables and not any(chiffre.annonce(original) for chiffre in CHIFFRES):
-        return 0, trouves, (
-            f"hors de portee : {chemin.name} n'annonce aucun chiffre surveille — rien a "
-            "confronter. Les grandeurs mesurees sont affichees ci-dessus ; pour que le controle "
-            "s'applique, ecrivez-en une sous la forme surveillee."
+    if (
+        trouves
+        and not reparables
+        and not any(chiffre.annonce(original) for chiffre in CHIFFRES)
+    ):
+        return (
+            0,
+            trouves,
+            (
+                f"hors de portee : {chemin.name} n'annonce aucun chiffre surveille — rien a "
+                "confronter. Les grandeurs mesurees sont affichees ci-dessus ; pour que le controle "
+                "s'applique, ecrivez-en une sous la forme surveillee."
+            ),
         )
     if not reparables:
         if not trouves:
             return 0, [], f"aucun ecart : {chemin.name} dit vrai."
-        return 1, trouves, (
-            f"rien a corriger dans {chemin.name} : les valeurs annoncees sont justes, mais "
-            f"{len(trouves)} chiffre(s) n'apparaisse(nt) plus sous la forme surveillee — "
-            "a ecrire, ou a retirer du controle. Un controle qui ne trouve plus rien a "
-            "verifier devient vert sans rien prouver."
+        return (
+            1,
+            trouves,
+            (
+                f"rien a corriger dans {chemin.name} : les valeurs annoncees sont justes, mais "
+                f"{len(trouves)} chiffre(s) n'apparaisse(nt) plus sous la forme surveillee — "
+                "a ecrire, ou a retirer du controle. Un controle qui ne trouve plus rien a "
+                "verifier devient vert sans rien prouver."
+            ),
         )
 
     if not ecrire:
-        return 1, trouves, (
-            f"{len(trouves)} ecart(s) dans {chemin.name} — relancez avec `--appliquer` "
-            "pour ecrire les valeurs mesurees."
+        return (
+            1,
+            trouves,
+            (
+                f"{len(trouves)} ecart(s) dans {chemin.name} — relancez avec `--appliquer` "
+                "pour ecrire les valeurs mesurees."
+            ),
         )
 
     lignes = original.splitlines(keepends=True)
@@ -465,7 +493,9 @@ def reparer(
             if not motif.search(ligne):
                 continue
 
-            def _corriger(correspondance: re.Match[str], attendue: int = attendue) -> str:
+            def _corriger(
+                correspondance: re.Match[str], attendue: int = attendue
+            ) -> str:
                 # Ne toucher QUE ce qui est faux. La premiere version remplacait aussi les
                 # mentions deja justes (« les 11 competences » -> « les 11 competences ») :
                 # le compte ne tombait plus juste, et une reparation qui reecrit du texte
@@ -488,18 +518,26 @@ def reparer(
 
     attendus = sum(1 for ecart in trouves if ecart.reparable)
     if remplacements != attendus:
-        return 1, trouves, (
-            f"renonce a ecrire : {remplacements} remplacement(s) calcule(s) pour "
-            f"{attendus} ecart(s) localise(s). Une reparation qui ne comprend pas ce "
-            "qu'elle corrige doit s'arreter."
+        return (
+            1,
+            trouves,
+            (
+                f"renonce a ecrire : {remplacements} remplacement(s) calcule(s) pour "
+                f"{attendus} ecart(s) localise(s). Une reparation qui ne comprend pas ce "
+                "qu'elle corrige doit s'arreter."
+            ),
         )
 
     produit = "".join(lignes)
     restants = [ecart for ecart in ecarts(produit, mesures) if ecart.reparable]
     if restants:
-        return 1, restants, (
-            "renonce a ecrire : le texte corrige porte encore "
-            f"{len(restants)} ecart(s). Le fichier n'a pas ete modifie."
+        return (
+            1,
+            restants,
+            (
+                "renonce a ecrire : le texte corrige porte encore "
+                f"{len(restants)} ecart(s). Le fichier n'a pas ete modifie."
+            ),
         )
     # Les signalements survivent a la correction : ils ne se reparent pas, ils se lisent.
     signalements = [ecart for ecart in ecarts(produit, mesures) if not ecart.reparable]
@@ -513,8 +551,12 @@ def reparer(
     relu = chemin.read_text(encoding="utf-8")
     if [ecart for ecart in ecarts(relu, mesures) if ecart.reparable]:
         chemin.write_text(original, encoding="utf-8")
-        return 1, [], (
-            "la relecture du fichier ecrit contredit la correction : restaure a l'identique."
+        return (
+            1,
+            [],
+            (
+                "la relecture du fichier ecrit contredit la correction : restaure a l'identique."
+            ),
         )
 
     message = (
@@ -527,7 +569,10 @@ def reparer(
         if len(corrections) > len(montres):
             message += f"\n    ... et {len(corrections) - len(montres)} autre(s)"
     if raisons:
-        message += f" · {len(raisons)} zone(s) hors controle, declaree(s) : " + " | ".join(raisons)
+        message += (
+            f" · {len(raisons)} zone(s) hors controle, declaree(s) : "
+            + " | ".join(raisons)
+        )
     if signalements:
         message += (
             f" · {len(signalements)} chiffre(s) reste(nt) sans mention surveillee "

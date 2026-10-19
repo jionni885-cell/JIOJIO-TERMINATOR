@@ -35,16 +35,16 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 
 @dataclass(frozen=True)
 class Calibration:
     """Un point de calibration."""
 
-    score: float      # confiance dans [0, 1]
+    score: float  # confiance dans [0, 1]
     correct: bool
 
 
@@ -62,7 +62,9 @@ class ConformalGate:
     # -- alimentation -------------------------------------------------------- #
 
     def observe(self, score: float, correct: bool) -> None:
-        self.calibration.append(Calibration(score=max(0.0, min(1.0, score)), correct=correct))
+        self.calibration.append(
+            Calibration(score=max(0.0, min(1.0, score)), correct=correct)
+        )
         self._tau = None  # invalider le cache
 
     def observe_many(self, points: Iterable[Calibration]) -> None:
@@ -116,7 +118,7 @@ class ConformalGate:
             risk = (wrong + 1) / (len(accepted) + 1)
             if risk <= self.alpha:
                 best = min(best, tau)
-        self._tau = best if best < 1.0 else 1.0
+        self._tau = min(1.0, best)
         return self._tau
 
     # -- decision ------------------------------------------------------------ #
@@ -128,8 +130,10 @@ class ConformalGate:
             return True, f"score {score:.3f} >= seuil calibre {tau:.3f}"
         return (
             False,
-            f"score {score:.3f} < seuil {tau:.3f} "
-            f"({'calibre sur ' + str(len(self.calibration)) + ' exemples' if self.calibrated else 'par defaut, NON calibre'})",
+            (
+                f"score {score:.3f} < seuil {tau:.3f} "
+                f"({'calibre sur ' + str(len(self.calibration)) + ' exemples' if self.calibrated else 'par defaut, NON calibre'})"
+            ),
         )
 
     # -- diagnostics --------------------------------------------------------- #

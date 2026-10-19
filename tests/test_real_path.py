@@ -74,13 +74,16 @@ print(json.dumps({{"type": "text", "text": "```python\\n" + CODE + "```\\n"}}))
 '''
 
 
-def _installer_agents(tmp_path: Path, noms: tuple[str, ...], *,
-                      stub: str | None = None) -> dict[str, str]:
+def _installer_agents(
+    tmp_path: Path, noms: tuple[str, ...], *, stub: str | None = None
+) -> dict[str, str]:
     """Cree un faux binaire par agent et retourne les variables JIO_BIN_* associees."""
     env: dict[str, str] = {}
     for nom in noms:
         binaire = tmp_path / nom
-        binaire.write_text((stub or STUB).format(python=sys.executable), encoding="utf-8")
+        binaire.write_text(
+            (stub or STUB).format(python=sys.executable), encoding="utf-8"
+        )
         binaire.chmod(binaire.stat().st_mode | stat.S_IEXEC)
         env[f"JIO_BIN_{nom.upper()}"] = str(binaire)
     return env
@@ -103,13 +106,18 @@ def _mission(tmp_path: Path, monkeypatch, agents: tuple[str, ...]) -> object:
     engine = _real_engine(journal_path=tmp_path / "journal.jsonl", max_rounds=3)
     return engine.run(
         Mission(objective=task.objective, max_rounds=3),
-        WorkItem(objective=task.objective, entrypoint=task.entrypoint,
-                 checks=task.checks, spec=task.spec()),
+        WorkItem(
+            objective=task.objective,
+            entrypoint=task.entrypoint,
+            checks=task.checks,
+            spec=task.spec(),
+        ),
     )
 
 
-def _mission_sans_oracle(tmp_path: Path, monkeypatch, agents: tuple[str, ...],
-                         *, stub: str | None = None) -> object:
+def _mission_sans_oracle(
+    tmp_path: Path, monkeypatch, agents: tuple[str, ...], *, stub: str | None = None
+) -> object:
     """Meme chemin reel, mais la mission ne fournit AUCUN test — cas de toute mission reelle."""
     for key in list(os.environ):
         if key.startswith("JIO_BIN_"):
@@ -127,7 +135,9 @@ def _mission_sans_oracle(tmp_path: Path, monkeypatch, agents: tuple[str, ...],
     engine = _real_engine(journal_path=tmp_path / "journal.jsonl", max_rounds=3)
     return engine.run(
         Mission(objective=task.objective, max_rounds=3),
-        WorkItem(objective=task.objective, entrypoint=task.entrypoint, spec=task.spec()),
+        WorkItem(
+            objective=task.objective, entrypoint=task.entrypoint, spec=task.spec()
+        ),
     )
 
 
@@ -142,16 +152,18 @@ def test_chemin_reel_sans_oracle_la_cli_traduit_les_regles_en_temoins(
     securite, que les assertions deviennent des temoins executes dans le bac a
     sable, et que la mission est livree sur cette preuve.
     """
-    report = _mission_sans_oracle(tmp_path, monkeypatch, ("opencode", "hermes", "claude"))
+    report = _mission_sans_oracle(
+        tmp_path, monkeypatch, ("opencode", "hermes", "claude")
+    )
 
     assert report.status is MissionStatus.DELIVERED, report.abstention_reason
     assert report.total_checks >= 3, "les regles doivent etre devenues des temoins"
     assert report.passed == report.total_checks
     # La PROVENANCE de la preuve est declaree : elle vient d'une traduction, pas
     # d'un oracle fourni.
-    assert any(f.agent == "temoins" and "TRADUIT" in f.message for f in report.findings), (
-        [f.message for f in report.findings]
-    )
+    assert any(
+        f.agent == "temoins" and "TRADUIT" in f.message for f in report.findings
+    ), [f.message for f in report.findings]
 
 
 def test_chemin_reel_une_cli_qui_repond_le_format_du_compilateur(
@@ -168,10 +180,11 @@ def test_chemin_reel_une_cli_qui_repond_le_format_du_compilateur(
     tableau = STUB.replace(
         'print(json.dumps(dict(type="text", text=json.dumps(rendu))))',
         'print(json.dumps(dict(type="text", text=json.dumps([dict(id=k, test=v) '
-        'for k, v in rendu.items()]))))',
+        "for k, v in rendu.items()]))))",
     )
-    report = _mission_sans_oracle(tmp_path, monkeypatch, ("opencode", "hermes", "claude"),
-                                  stub=tableau)
+    report = _mission_sans_oracle(
+        tmp_path, monkeypatch, ("opencode", "hermes", "claude"), stub=tableau
+    )
 
     assert report.status is MissionStatus.DELIVERED, report.abstention_reason
     assert report.passed == report.total_checks
@@ -190,8 +203,9 @@ def test_chemin_reel_sans_oracle_une_cli_qui_ne_sait_pas_traduire_le_dit(
         'if "You turn enumerated RULES into executable checks" in prompt:',
         'if False and "You turn enumerated RULES into executable checks" in prompt:',
     )
-    report = _mission_sans_oracle(tmp_path, monkeypatch, ("opencode", "hermes", "claude"),
-                                  stub=muet)
+    report = _mission_sans_oracle(
+        tmp_path, monkeypatch, ("opencode", "hermes", "claude"), stub=muet
+    )
 
     assert report.status is MissionStatus.ABSTAINED, report.status.value
     assert any(f.agent == "temoins" for f in report.findings), (
@@ -218,13 +232,17 @@ def test_un_seul_agent_est_denonce_comme_un_echo(tmp_path: Path, monkeypatch) ->
 
     assert report.status is MissionStatus.DELIVERED_WITH_RESERVATION
     assert "echo" in report.abstention_reason
-    assert report.passed == report.total_checks, "le travail est bon : c'est le consensus qui manque"
+    assert report.passed == report.total_checks, (
+        "le travail est bon : c'est le consensus qui manque"
+    )
 
 
-def test_deux_agents_expliquent_le_plafond_et_la_solution(tmp_path: Path, monkeypatch) -> None:
+def test_deux_agents_expliquent_le_plafond_et_la_solution(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Un refus doit etre calculable et actionnable, pas seulement honnete.
 
-    Avec deux couples (modele, verdict) distincts, la decorrelation vaut
+    Avec deux sources de modèle distinctes, la decorrelation vaut
     0.55 + 0.15*2 = 0.85 : une mission PARFAITE plafonne a 0.85, sous le seuil non
     calibre de 0.90. Aucune amelioration du travail ne peut livrer. Sans cette
     explication, l'utilisateur conclut que l'outil est casse.
@@ -234,11 +252,15 @@ def test_deux_agents_expliquent_le_plafond_et_la_solution(tmp_path: Path, monkey
     assert report.status is MissionStatus.DELIVERED_WITH_RESERVATION
     motif = report.abstention_reason
     assert "PLAFOND INATTEIGNABLE" in motif
-    assert "3e modele" in motif, "la solution doit etre donnee, pas seulement le constat"
+    assert "3e modele" in motif, (
+        "la solution doit etre donnee, pas seulement le constat"
+    )
     assert "decompte" in motif, "le calcul doit etre verifiable"
 
 
-@pytest.mark.parametrize("agents", [("opencode",), ("opencode", "hermes"), ("opencode", "hermes", "claude")])
+@pytest.mark.parametrize(
+    "agents", [("opencode",), ("opencode", "hermes"), ("opencode", "hermes", "claude")]
+)
 def test_la_cli_est_detectee_via_la_variable_documentee(
     tmp_path: Path, monkeypatch, agents: tuple[str, ...]
 ) -> None:
@@ -287,7 +309,7 @@ def _sonde_avec(tmp_path: Path, monkeypatch, stub_source: str, nom: str = "openc
     return sonder(fournisseurs[0])
 
 
-CAPABLE = '''#!{python}
+CAPABLE = """#!{python}
 import json
 import sys
 
@@ -301,9 +323,9 @@ if "You turn enumerated RULES into executable checks" in prompt:
     print(json.dumps({{"type": "text", "text": json.dumps(rendu)}}))
     sys.exit(0)
 print(json.dumps({{"type": "text", "text": "OK"}}))
-'''
+"""
 
-AVEU = '''#!{python}
+AVEU = """#!{python}
 import json
 import sys
 
@@ -313,9 +335,9 @@ if "You turn enumerated RULES into executable checks" in prompt:
     print(json.dumps({{"type": "text", "text": json.dumps(rendu)}}))
     sys.exit(0)
 print(json.dumps({{"type": "text", "text": "OK"}}))
-'''
+"""
 
-HOSTILE = '''#!{python}
+HOSTILE = """#!{python}
 import json
 import sys
 
@@ -325,20 +347,24 @@ if "You turn enumerated RULES into executable checks" in prompt:
     print(json.dumps({{"type": "text", "text": json.dumps(rendu)}}))
     sys.exit(0)
 print(json.dumps({{"type": "text", "text": "OK"}}))
-'''
+"""
 
-MORT = '''#!{python}
+MORT = """#!{python}
 import sys
 sys.stderr.write("authentication required: run `login` first\\n")
 sys.exit(1)
-'''
+"""
 
 
-def test_sonde_reconnait_un_fournisseur_capable_de_prouver(tmp_path: Path, monkeypatch) -> None:
+def test_sonde_reconnait_un_fournisseur_capable_de_prouver(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Le fournisseur traduit les regles : c'est cette capacite qui rend la preuve possible."""
     sonde = _sonde_avec(tmp_path, monkeypatch, CAPABLE)
     assert sonde.vivant, sonde.erreur
-    assert sonde.traduit, sonde.temoignage.resume() if sonde.temoignage else sonde.erreur_traduction
+    assert sonde.traduit, (
+        sonde.temoignage.resume() if sonde.temoignage else sonde.erreur_traduction
+    )
     assert len(sonde.temoignage.tests) == 2
     assert sonde.verdict == "CAPABLE DE PROUVER SANS ORACLE"
 
@@ -356,7 +382,9 @@ def test_sonde_distingue_un_aveu_dune_incapacite(tmp_path: Path, monkeypatch) ->
     assert "NE SAIT PAS TRADUIRE" in sonde.verdict
 
 
-def test_sonde_applique_la_porte_de_securite_sans_indulgence(tmp_path: Path, monkeypatch) -> None:
+def test_sonde_applique_la_porte_de_securite_sans_indulgence(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Un test hostile propose par un fournisseur REEL doit etre refuse, pas compte.
 
     La sonde n'est pas plus clemente qu'une mission : la porte de securite est celle
@@ -365,7 +393,9 @@ def test_sonde_applique_la_porte_de_securite_sans_indulgence(tmp_path: Path, mon
     """
     sonde = _sonde_avec(tmp_path, monkeypatch, HOSTILE)
     assert sonde.vivant
-    assert not sonde.traduit, "un test avec `import` ne doit jamais compter comme un temoin"
+    assert not sonde.traduit, (
+        "un test avec `import` ne doit jamais compter comme un temoin"
+    )
     assert sonde.temoignage is not None and sonde.temoignage.refuses
     assert "fragment interdit" in next(iter(sonde.temoignage.refuses.values()))
 
@@ -384,7 +414,7 @@ def test_la_commande_providers_ne_plante_jamais(monkeypatch, capsys) -> None:
     import argparse
 
     for cle in list(os.environ):
-        if cle.startswith("JIO_BIN_") or cle.startswith("JIO_OPENAI"):
+        if cle.startswith(("JIO_BIN_", "JIO_OPENAI")):
             monkeypatch.delenv(cle, raising=False)
 
     from jio.cli import cmd_providers
@@ -502,9 +532,9 @@ def _gabarit(stub: str, tmp_path: Path) -> str:
     gabarit = stub.replace("#!SHEBANG", "#!{python}", 1)
     gabarit = gabarit.replace("{", "{{").replace("}", "}}")
     gabarit = gabarit.replace("{{python}}", "{python}")
-    return (gabarit
-            .replace("__MARQUE__", repr(str(tmp_path / "marque-traduction")))
-            .replace("__APPELS__", repr(str(tmp_path / "appels-traduction.txt"))))
+    return gabarit.replace(
+        "__MARQUE__", repr(str(tmp_path / "marque-traduction"))
+    ).replace("__APPELS__", repr(str(tmp_path / "appels-traduction.txt")))
 
 
 def test_chemin_reel_une_traduction_RATEE_est_relancee_et_la_mission_est_livree(
@@ -518,13 +548,16 @@ def test_chemin_reel_une_traduction_RATEE_est_relancee_et_la_mission_est_livree(
     rate la premiere traduction ; la seconde, relancee AVEC le motif du rejet, reussit.
     """
     stub = _gabarit(STUB_UNE_FOIS, tmp_path)
-    report = _mission_sans_oracle(tmp_path, monkeypatch, ("opencode", "hermes", "claude"),
-                                  stub=stub)
+    report = _mission_sans_oracle(
+        tmp_path, monkeypatch, ("opencode", "hermes", "claude"), stub=stub
+    )
 
     # UNE traduction de regles par mission (elle est memoisee), donc DEUX appels :
     # la reponse inexploitable, puis la relance.
     appels = (tmp_path / "appels-traduction.txt").read_text(encoding="utf-8")
-    assert appels.count("traduction") == 2, "une tentative ratee, une relance, et rien de plus"
+    assert appels.count("traduction") == 2, (
+        "une tentative ratee, une relance, et rien de plus"
+    )
     assert report.status.value.startswith("delivered"), report.abstention_reason
     assert report.passed == report.total_checks
 
@@ -538,8 +571,9 @@ def test_chemin_reel_un_AVEU_honnete_ne_declenche_AUCUNE_relance(
     donc les appels de TRADUCTION : un seul par agent, malgre l'absence complete de temoins.
     """
     stub = _gabarit(STUB_AVEU, tmp_path)
-    report = _mission_sans_oracle(tmp_path, monkeypatch, ("opencode", "hermes", "claude"),
-                                  stub=stub)
+    report = _mission_sans_oracle(
+        tmp_path, monkeypatch, ("opencode", "hermes", "claude"), stub=stub
+    )
 
     # UNE traduction de regles par mission, et AUCUNE relance : ce modele a repondu.
     appels = (tmp_path / "appels-traduction.txt").read_text(encoding="utf-8")

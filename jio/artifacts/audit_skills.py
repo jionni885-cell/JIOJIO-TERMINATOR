@@ -37,7 +37,11 @@ import re
 from dataclasses import dataclass
 
 __all__ = [
-    "Risque", "MOTIFS", "analyser_texte", "analyser_artefacts", "artefacts_analyses",
+    "MOTIFS",
+    "Risque",
+    "analyser_artefacts",
+    "analyser_texte",
+    "artefacts_analyses",
 ]
 
 #: Taille maximale d'une competence, alignee sur le budget de contexte (jio/artifacts/budget).
@@ -62,31 +66,66 @@ MOTIFS: tuple[tuple[str, str, str], ...] = (
     # entre les mailles), « Oublie les consignes », « Fais abstraction des regles ci-dessus »,
     # « Ignore the above instructions », « Forget your previous rules ». Les verbes sont donc
     # tous la, et les mots parasites (toutes, ces, vos, above, your) sont explicitement toleres.
-    (r"(?i)\b(ignore[zr]?|oublie[rz]?|fais\s+abstraction\s+(?:de|des|du))\b"
-     r"[^\n]{0,30}?\b(instructions?|consignes?|regles?|directives?|ordres?)\b",
-     "instructions de contournement des consignes recues", "haute"),
-    (r"(?i)\b(disregard|forget|ignore)\b[^\n]{0,30}?"
-     r"\b(instructions?|rules?|directives?|orders?|prompts?)\b",
-     "instructions de contournement des consignes recues", "haute"),
+    (
+        (
+            r"(?i)\b(ignore[zr]?|oublie[rz]?|fais\s+abstraction\s+(?:de|des|du))\b"
+            r"[^\n]{0,30}?\b(instructions?|consignes?|regles?|directives?|ordres?)\b"
+        ),
+        "instructions de contournement des consignes recues",
+        "haute",
+    ),
+    (
+        (
+            r"(?i)\b(disregard|forget|ignore)\b[^\n]{0,30}?"
+            r"\b(instructions?|rules?|directives?|orders?|prompts?)\b"
+        ),
+        "instructions de contournement des consignes recues",
+        "haute",
+    ),
     (r"--no-verify", "contournement d'un garde-fou git", "haute"),
-    (r"(?i)(desactive|disable|skip|bypass|contourn\w*)\s+(la\s+|le\s+|les\s+)?"
-     r"(verification|verifications|checks?|gate|garde[- ]fous?)",
-     "contournement d'un garde-fou", "haute"),
+    (
+        (
+            r"(?i)(desactive|disable|skip|bypass|contourn\w*)\s+(la\s+|le\s+|les\s+)?"
+            r"(verification|verifications|checks?|gate|garde[- ]fous?)"
+        ),
+        "contournement d'un garde-fou",
+        "haute",
+    ),
     (r"(?i)\brm\s+-rf\s+/(?!tmp)", "commande destructive", "haute"),
     (r"(?i)\bchmod\s+777\b", "permissions ouvertes a tous", "moyenne"),
-    (r"(?i)(curl|wget)[^|\n]{0,120}\|\s*(sudo\s+)?(ba|z)?sh\b",
-     "execution de code telecharge sans verification", "haute"),
+    (
+        r"(?i)(curl|wget)[^|\n]{0,120}\|\s*(sudo\s+)?(ba|z)?sh\b",
+        "execution de code telecharge sans verification",
+        "haute",
+    ),
     (r"(?i)\beval\s*\(", "evaluation dynamique de code", "moyenne"),
     (r"(?i)base64\s+(-d|--decode)", "charge utile obfusquee", "moyenne"),
-    (r"(?i)(exfiltre|exfiltrate|envoie|send|upload)[^\n]{0,60}"
-     r"(cle|key|token|secret|credential|mot\s+de\s+passe|password)",
-     "exfiltration d'un secret", "haute"),
-    (r"(?i)(cat|read|open|lire)\s+[^\n]{0,30}\.env\b", "lecture d'un fichier de secrets",
-     "moyenne"),
-    (r"(?i)(fais[- ]moi\s+confiance|trust\s+me|pas\s+besoin\s+de\s+verifier)",
-     "invitation a baisser la garde", "moyenne"),
-    (r"(?i)(ne\s+signale\s+pas|do\s+not\s+report|sans\s+le\s+signaler|hide\s+the\s+error|"
-     r"silencieusement)", "invitation a taire une erreur", "moyenne"),
+    (
+        (
+            r"(?i)(exfiltre|exfiltrate|envoie|send|upload)[^\n]{0,60}"
+            r"(cle|key|token|secret|credential|mot\s+de\s+passe|password)"
+        ),
+        "exfiltration d'un secret",
+        "haute",
+    ),
+    (
+        r"(?i)(cat|read|open|lire)\s+[^\n]{0,30}\.env\b",
+        "lecture d'un fichier de secrets",
+        "moyenne",
+    ),
+    (
+        r"(?i)(fais[- ]moi\s+confiance|trust\s+me|pas\s+besoin\s+de\s+verifier)",
+        "invitation a baisser la garde",
+        "moyenne",
+    ),
+    (
+        (
+            r"(?i)(ne\s+signale\s+pas|do\s+not\s+report|sans\s+le\s+signaler|hide\s+the\s+error|"
+            r"silencieusement)"
+        ),
+        "invitation a taire une erreur",
+        "moyenne",
+    ),
 )
 
 
@@ -116,14 +155,16 @@ def analyser_texte(texte: str, nom: str = "(sans nom)") -> list[Risque]:
             correspondance = re.search(motif, ligne)
             if not correspondance:
                 continue
-            trouves.append(Risque(
-                artefact=nom,
-                ligne=indice,
-                gravite=gravite,
-                nature=nature,
-                extrait=ligne.strip()[:120],
-                mise_en_garde=bool(_NEGATIONS.search(ligne)),
-            ))
+            trouves.append(
+                Risque(
+                    artefact=nom,
+                    ligne=indice,
+                    gravite=gravite,
+                    nature=nature,
+                    extrait=ligne.strip()[:120],
+                    mise_en_garde=bool(_NEGATIONS.search(ligne)),
+                )
+            )
     return trouves
 
 
@@ -156,4 +197,6 @@ def artefacts_analyses() -> list[str]:
     """
     from .definitions import AGENTS, SKILLS
 
-    return [f"competence:{s.name}" for s in SKILLS] + [f"agent:{a.name}" for a in AGENTS]
+    return [f"competence:{s.name}" for s in SKILLS] + [
+        f"agent:{a.name}" for a in AGENTS
+    ]

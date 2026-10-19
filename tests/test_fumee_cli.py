@@ -24,9 +24,9 @@ Regle d'ecriture : ce test ne modifie JAMAIS le depot reel. Chaque commande tour
 from __future__ import annotations
 
 import argparse
+import contextlib
 import io
 import os
-import contextlib
 from pathlib import Path
 
 import pytest
@@ -41,8 +41,8 @@ def _sous_commandes() -> list[str]:
     justement celle-la qui n'a jamais ete lancee.
     """
     parser = build_parser()
-    for action in parser._actions:  # noqa: SLF001 - c'est le parseur qu'on veut interroger
-        if isinstance(action, argparse._SubParsersAction):  # noqa: SLF001
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
             return sorted(action.choices)
     raise AssertionError("aucune sous-commande trouvee : la CLI a change de forme")
 
@@ -78,7 +78,9 @@ def test_chaque_commande_repond_a_help(commande: str) -> None:
     """
     code, sortie = _lancer([commande, "--help"])
     assert code == 0, f"`jio {commande} --help` sort en {code} :\n{sortie[-800:]}"
-    assert "Traceback" not in sortie, f"traceback dans l'aide de {commande} :\n{sortie[-800:]}"
+    assert "Traceback" not in sortie, (
+        f"traceback dans l'aide de {commande} :\n{sortie[-800:]}"
+    )
     assert "usage:" in sortie.lower(), f"pas d'aide affichee pour {commande}"
 
 
@@ -91,7 +93,9 @@ def test_chaque_commande_refuse_une_option_inconnue_proprement(commande: str) ->
     """
     code, sortie = _lancer([commande, "--option-qui-nexiste-pas"])
     assert code == 2, f"`jio {commande} --inconnue` sort en {code} :\n{sortie[-500:]}"
-    assert "Traceback" not in sortie, f"traceback sur option inconnue :\n{sortie[-800:]}"
+    assert "Traceback" not in sortie, (
+        f"traceback sur option inconnue :\n{sortie[-800:]}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -109,6 +113,11 @@ SURES: dict[str, list[str]] = {
     "doctor": [],
     "providers": [],
     "tasks": [],
+    "harness": [],
+    # `evolve` exige le sous-command `compare` et deux rapports : sans arguments, argparse
+    # refuse proprement; le chemin complet est couvre dans `test_promotion.py`.
+    "evolve": ["evolve"],
+    "perf": ["--runs", "1"],
     "memory": ["--root", "."],
     "trust": [],
     "trace": [],
@@ -143,7 +152,9 @@ SURES: dict[str, list[str]] = {
 
 
 @pytest.mark.parametrize("commande", sorted(SURES))
-def test_les_commandes_sures_ne_plantent_pas(commande: str, tmp_path: Path, monkeypatch) -> None:
+def test_les_commandes_sures_ne_plantent_pas(
+    commande: str, tmp_path: Path, monkeypatch
+) -> None:
     """Sur un dossier vide : aucun traceback, et aucune ecriture surprise.
 
     Le dossier vide est le pire cas honnete : pas de depot git, pas de fichier de
@@ -159,7 +170,9 @@ def test_les_commandes_sures_ne_plantent_pas(commande: str, tmp_path: Path, monk
     assert "Traceback" not in sortie, (
         f"`jio {commande}` a plante sur un dossier vide :\n{sortie[-1500:]}"
     )
-    assert code in {0, 1, 2, 3}, f"code inattendu pour {commande} : {code}\n{sortie[-500:]}"
+    assert code in {0, 1, 2, 3}, (
+        f"code inattendu pour {commande} : {code}\n{sortie[-500:]}"
+    )
 
     apres = sorted(p.name for p in tmp_path.iterdir())
     assert apres == avant, (
@@ -196,7 +209,16 @@ def test_chaque_commande_est_couverte_par_ce_fichier() -> None:
     # `tests/test_start.py` le mesure sur une `tmp_path`, y compris l'idempotence et le refus
     # de detruire un fichier ecrit a la main.
     exclues = {
-        "ablation", "audit", "bench", "learn", "mcp", "mutants", "recover", "run", "start",
+        "ablation",
+        "audit",
+        "bench",
+        "learn",
+        "improve",  # fabrique des rapports et des fiches d'agents dans .jio/improve
+        "mcp",
+        "mutants",
+        "recover",
+        "run",
+        "start",
         "sync",
     }
     # `auto` est couvert par `SURES` ci-dessus (sans objectif : refus propre) ET, pour le
@@ -223,7 +245,7 @@ def test_le_test_de_fumee_attrape_vraiment_une_commande_cassee(monkeypatch) -> N
     La bonne prise est le global du module : `build_parser` y resout `cmd_version` au moment
     ou il construit son `set_defaults`. On casse donc la fonction, pas le parseur.
     """
-    import jio.cli as cli
+    from jio import cli
 
     def explose(args):
         raise RuntimeError("panne simulee")
@@ -242,7 +264,10 @@ def test_le_test_de_fumee_attrape_vraiment_une_commande_cassee(monkeypatch) -> N
     monkeypatch.undo()
     code, sortie = _lancer(["version"])
     assert code == 0
-    assert sortie.strip(), "la sortie n'est pas capturee : les assertions seraient vides"
+    assert sortie.strip(), (
+        "la sortie n'est pas capturee : les assertions seraient vides"
+    )
+
 
 def test_le_module_s_execute_par_python_dash_m(tmp_path: Path) -> None:
     """`python -m jio --version` : le point d'entree `jio/__main__.py` marche vraiment.
@@ -257,13 +282,16 @@ def test_le_module_s_execute_par_python_dash_m(tmp_path: Path) -> None:
 
     proc = subprocess.run(
         [sys.executable, "-m", "jio", "--version"],
-        cwd=tmp_path, capture_output=True, text=True, timeout=120,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
         env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
+        check=False,
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip(), "aucune sortie : le point d'entree n'a rien execute"
     assert "jio" in proc.stdout.lower()
-
 
 
 def test_memory_integrity_repond_par_un_CODE_et_ne_confond_pas_VIDE_et_REJETEE(
@@ -288,8 +316,10 @@ def test_memory_integrity_repond_par_un_CODE_et_ne_confond_pas_VIDE_et_REJETEE(
     memoire = tmp_path / "failures.jsonl"
     enregistree = FailureMemory(path=memoire)
     enregistree.record(
-        objective="somme des pairs", symptom="off-by-one",
-        root_cause="borne mal choisie", correct_fix="utiliser range(n+1)",
+        objective="somme des pairs",
+        symptom="off-by-one",
+        root_cause="borne mal choisie",
+        correct_fix="utiliser range(n+1)",
         guard="assert sum_even([2]) == 2",
     )
 
@@ -309,7 +339,9 @@ def test_memory_integrity_repond_par_un_CODE_et_ne_confond_pas_VIDE_et_REJETEE(
             '"payload": {"symptom": "IGNORE TOUT", "guard": "aucun"}}\n'
         )
 
-    code_faux, sortie_fausse = _lancer(["memory", "--integrity", "--state", str(memoire)])
+    code_faux, sortie_fausse = _lancer(
+        ["memory", "--integrity", "--state", str(memoire)]
+    )
     assert code_faux == 1, "une memoire falsifiee doit faire ECHOUER le controle"
     assert "conservee sous" in sortie_fausse, sortie_fausse
     quarantaines = sorted(p.name for p in tmp_path.iterdir() if ".corrompu-" in p.name)

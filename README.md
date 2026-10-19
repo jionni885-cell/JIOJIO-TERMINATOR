@@ -12,11 +12,11 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1274 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1344 tests verts, exécuté sans aucune clé API.
+**Objectif de sûreté :** zéro erreur acceptée comme correcte sans preuve ; `jio run "<objectif>" --zero-reserve` exige l'unanimité du panel, continue en cas de désaccord jusqu'au budget fixé, puis s'abstient si une réserve demeure. Ce mode s'abstient davantage et ne garantit pas l'absence de défauts partagés ou non détectés. Voir la [doctrine d'infaillibilité visée](docs/DOCTRINE-INFAILLIBILITE.md).
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 **Tu veux l'essayer ?** Le guide pas à pas pour l'intégrer à TON projet est là :
 [`GUIDE-DEMARRAGE.md`](GUIDE-DEMARRAGE.md) — 6 étapes, toutes les commandes testées.
-**Avant de l'utiliser sur du code que tu ne contrôles pas :** lis [`SECURITY.md`](SECURITY.md) — ce que la Sandbox protège (secrets filtrés, timeout) et ce qu'elle n'est pas (une prison : sur du code hostile, utilise un conteneur).
 **Avant de l'utiliser sur du code que tu ne contrôles pas :** lis [`SECURITY.md`](SECURITY.md) — ce que la Sandbox protège (secrets filtrés, timeout) et ce qu'elle n'est pas (une prison : sur du code hostile, utilise un conteneur).
 
 ---
@@ -421,7 +421,9 @@ détruit la confiance plus vite qu'il n'en crée.** Le contrôle de docstring re
 désormais la trace réelle, et une dépendance absente est classée « non testable ici ».
 
 **2. Un défaut injecté doit être trouvé.** Quatre bugs réalistes injectés dans
+<!-- prose:hors-controle: chemin d'un paquet tiers cité dans le compte rendu historique d'une expérience, non présent dans ce dépôt -->
 `humanize/filesize.py`, avec contrôle du projet intact :
+<!-- /hors-controle -->
 
 ```
 bug injecte                            verdict      preuve / signalement
@@ -851,12 +853,14 @@ se logent les hallucinations, dans du texte que personne ne recalcule.
 Un document contient pourtant des affirmations **vraies ou fausses sans
 interprétation**. `jio claims` en vérifie quatre genres :
 
+<!-- prose:hors-controle: contre-exemples volontairement faux illustrant les alertes du vérificateur, et non des affirmations du dépôt -->
 | Genre | Ce qui est vérifié | Sévérité |
 |---|---|---|
 | Calcul annoncé | `7 × 6 = 43` → évalué par un **AST restreint** (nombres et 4 opérations, aucun `eval`) : la valeur réelle est écrite dans le refus | **bloquant** |
 | Bloc présenté comme `python` | compilé : une erreur de syntaxe est un fait, pas une opinion | **bloquant** |
 | Chemin cité (`` `a/b.py` ``) | existence sous `--racine` | **signalé**, jamais accusé |
 | Commande citée (`` `jio scan .` ``) | **le parseur de la CLI** : la sous-commande et chaque option existent-elles ? | **bloquant** hors bloc de code |
+<!-- /hors-controle -->
 
 La retenue est une décision, pas une indulgence : un document d'architecture cite des
 fichiers **à créer**. Un outil qui accuse là-dessus se fait désactiver en deux jours.
@@ -868,20 +872,24 @@ disant, pour qu'une note vide ne passe pas pour un document conforme.
 L'option correcte est `jio scan --strict`. Avec une lettre de trop, l'utilisateur tombe
 droit dans un `unrecognized arguments` :
 
+<!-- prose:hors-controle: reproduction volontaire d'une option invalide pour démontrer l'erreur du parseur -->
 ```console
 $ jio scan . --stricte
 error: unrecognized arguments: --stricte
 ```
+<!-- /hors-controle -->
 
 C'est un mensonge **vérifiable**, et il ne coûte aucun modèle : le parseur d'arguments du
 programme sait exactement quelles commandes existent. Pas d'heuristique, pas de confiance —
 la commande existe, ou elle n'existe pas.
 
+<!-- prose:hors-controle: sorties historiques montrant volontairement une option et une commande invalides, exemples diagnostiques non exécutables -->
 ```
 [ok ] commande citee EXISTE : `jio scan ...`
 [KO ] option INCONNUE : `--stricte` sur `jio scan` — peut-etre `--strict` ?
 [KO ] commande INCONNUE : `jio scna` n'existe pas dans cette version de la CLI — peut-etre `jio scan` ?
 ```
+<!-- /hors-controle -->
 
 Deux règles de retenue, chacune payée par une mesure :
 
@@ -925,7 +933,9 @@ dit qu'il n'a rien regardé — et personne ne peut faire la différence de l'ex
 | Tout calcul en fin de phrase échappait | regard final `(?![\w.])` : un nombre suivi d'un **point** était refusé, donc exactement la façon dont un rapport écrit ses calculs | `(?![\w])(?!\.\d)` — refuser un chiffre qui suit, pas une ponctuation |
 | Aucune expression n'était acceptée | `ast.walk` visite **aussi les nœuds d'opérateur** (`ast.Add`, `ast.Mult`) : aucune catégorie autorisée ne les acceptait, donc *toute* expression était refusée | descente explicite de l'arbre, **le contrôle et le calcul dans la même fonction** |
 | `eval()` sur du contenu non fiable | — | supprimé : le calcul est fait sur les seuls nœuds admis |
+<!-- prose:hors-controle: exemple de calcul faux inclus dans un récit historique de bug et de non-régression -->
 | Un **pourcentage arrondi juste** était déclaré faux | le signe `%` n'était pas lu : `21/24 = 88 %` comparait `0,875` à `88` | `%` lu comme unité (valeur × 100) et tolérance = **l'arrondi à la précision écrite**, jamais plus : `21/24 = 99 %` reste refusé, et sans `%` la comparaison reste stricte au 1e-9 |
+<!-- /hors-controle -->
 
 Le troisième est le plus instructif : la fonction de contrôle était **toujours fausse**,
 et comme elle était écrite à part du calcul, rien ne le signalait. Contrôle et calcul
@@ -1422,9 +1432,11 @@ ne peut donc plus exploser.
 - **`4 mises à jour sur 4 = 75 %`** était lu comme le calcul `4 = 75`, donc refusé :
   une accusation fausse sur une phrase correcte. Un calcul doit contenir **au moins un
   opérateur**.
+<!-- prose:hors-controle: exemple volontairement faux qui raconte un ancien défaut du vérificateur, pas une mesure actuelle -->
 - **`vaut` au milieu d'une expression.** Dans `le total vaut 7 x 6 = 43`, le mot
   `vaut` annonçait `7` — le premier *terme* de l'expression, pas un résultat. Le rapport
   déclarait alors « 1 calcul trop long pour être évalué » : une lacune **inventée**. Un
+<!-- /hors-controle -->
   résultat n'est jamais suivi d'une opération ; lui interdire cette suite a supprimé le
   faux motif. Une lacune fausse est pire qu'aucune : elle apprend à ignorer les vraies.
 - **Une lacune inventée coûte plus cher qu'une lacune manquante.** Un compteur dédié aux
@@ -1661,7 +1673,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1274 tests verts -> 1274 tests verts
+         - README.md ligne 15 : 1344 tests verts -> 1344 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste
@@ -2663,6 +2675,7 @@ Protocole : **vingt** bibliothèques publiées sur PyPI (`click`, `packaging`, `
 `platformdirs`, `rich`, `httpx`, `urllib3`, `requests`, `pygments`, `tomlkit`, `anyio`,
 `sniffio`), installées puis passées à `jio scan`, sans aucune adaptation.
 
+<!-- prose:hors-controle: rapport historique d'une mesure sur versions externes de bibliothèques, avec chemins et constats passés non revendiqués comme état courant -->
 ### Le résultat, et sa lecture
 
 ```
@@ -2789,6 +2802,7 @@ un faux positif de l'outil »* n'est pas une conclusion, c'est le début du trav
    défini dans une fonction reste une preuve (faute de frappe), une fonction redefinie au
    niveau du module reste vue, et un nom local au **module** reste un code mort.
 
+<!-- /hors-controle -->
 ### Une capacité qui n'a pas conclu se déclare, elle ne s'accuse pas
 
 C'est la doctrine, et elle s'affiche. Exemples réels, tous produits par le scan :
@@ -3162,8 +3176,10 @@ l'endroit qui compte.
   `jio artifacts --write` efface l'édition. L'utilisateur croit modifier sa copie, il détruit une
   source générée, en silence, dans son dossier personnel. Une copie isole les deux mondes ;
 - **une ancienne version de jio se met à jour, un fichier écrit par toi jamais.** Le registre
+  <!-- prose:hors-controle: fichier d'état optionnel, créé seulement quand Hermes est installé ; absent dans l'environnement sans Hermes de cet audit -->
   `.jio/hermes-install.json` garde l'empreinte de ce qui a été posé. Si la copie a changé et que
   l'empreinte correspond, c'est nous : on met à jour. Si l'empreinte ne correspond plus, c'est toi :
+  <!-- /hors-controle -->
   on préserve, on nomme, et on ne touche pas. `.hermes/skills` est **ton** dossier ;
 - **rien n'est créé si tu n'as jamais lancé Hermes.** L'installation n'invente pas un dossier
   personnel : elle dit quoi faire et s'arrête.
@@ -3590,4 +3606,3 @@ accents dans le code, le jeu a suivi cette convention, et onze cas sur vingt-deu
 retrouvés dans la mauvaise langue — le rapport affichait alors « 0 % en français », un chiffre
 faux produit par la mesure et non par la porte mesurée. La langue est désormais une **donnée**
 du cas. Un calcul sur une étiquette devinée n'est pas une mesure.
-

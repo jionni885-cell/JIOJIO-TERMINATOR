@@ -44,7 +44,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-__all__ = ["Rapport", "dossier_hermes", "installer", "desinstaller", "REGISTRE"]
+__all__ = ["REGISTRE", "Rapport", "desinstaller", "dossier_hermes", "installer"]
 
 #: Ce que nous avons installe chez l'utilisateur : chemin cible -> empreinte du fichier pose.
 #: Il vit DANS le projet (a cote des autres etats de jio) pour qu'un `jio start` dans un autre
@@ -77,12 +77,14 @@ class Rapport:
     """Ce qui est arrive, classe par DECISION — jamais un total qui melange tout."""
 
     dossier: Path
-    ignores: bool = False                  # pas de dossier Hermes : rien tente
-    liens: list[str] = field(default_factory=list)        # installe par lien
-    copies: list[str] = field(default_factory=list)       # installe par copie
-    mises_a_jour: list[str] = field(default_factory=list)  # ancienne version de jio, remplacee
-    deja: list[str] = field(default_factory=list)         # deja en phase
-    preserves: list[str] = field(default_factory=list)    # a l'utilisateur : non touche
+    ignores: bool = False  # pas de dossier Hermes : rien tente
+    liens: list[str] = field(default_factory=list)  # installe par lien
+    copies: list[str] = field(default_factory=list)  # installe par copie
+    mises_a_jour: list[str] = field(
+        default_factory=list
+    )  # ancienne version de jio, remplacee
+    deja: list[str] = field(default_factory=list)  # deja en phase
+    preserves: list[str] = field(default_factory=list)  # a l'utilisateur : non touche
 
     @property
     def installes(self) -> int:
@@ -115,7 +117,9 @@ def _lire_registre(racine: Path) -> dict[str, str]:
         # Un registre illisible est traite comme absent : dans le doute, on ne s'autorise pas a
         # ecraser. C'est le sens de la regle.
         return {}
-    return {str(k): str(v) for k, v in charge.items()} if isinstance(charge, dict) else {}
+    return (
+        {str(k): str(v) for k, v in charge.items()} if isinstance(charge, dict) else {}
+    )
 
 
 def _ecrire_registre(racine: Path, registre: dict[str, str]) -> None:
@@ -128,7 +132,11 @@ def _ecrire_registre(racine: Path, registre: dict[str, str]) -> None:
 
 
 def installer(
-    racine: Path, *, dossier: Path | None = None, lier: bool = False, creer: bool = False
+    racine: Path,
+    *,
+    dossier: Path | None = None,
+    lier: bool = False,
+    creer: bool = False,
 ) -> Rapport:
     """Installe les competences du projet chez Hermes. Idempotent, jamais destructeur.
 
@@ -143,7 +151,11 @@ def installer(
     rapport = Rapport(dossier=cible)
 
     source = racine / ".hermes" / "skills"
-    fichiers = sorted(p for p in source.rglob("*.md") if p.is_file()) if source.is_dir() else []
+    fichiers = (
+        sorted(p for p in source.rglob("*.md") if p.is_file())
+        if source.is_dir()
+        else []
+    )
     if not fichiers:
         rapport.ignores = True
         return rapport
@@ -224,7 +236,11 @@ def desinstaller(racine: Path, *, dossier: Path | None = None) -> Rapport:
         chemin = Path(cle)
         if not chemin.is_file() and not chemin.is_symlink():
             continue
-        if chemin.is_symlink() or _empreinte(chemin.read_text(encoding="utf-8", errors="replace")) == empreinte:
+        if (
+            chemin.is_symlink()
+            or _empreinte(chemin.read_text(encoding="utf-8", errors="replace"))
+            == empreinte
+        ):
             chemin.unlink()
             rapport.copies.append(cle)  # retire
             # Les dossiers vides laisses derriere ne genent pas Hermes ; on les retire pour ne

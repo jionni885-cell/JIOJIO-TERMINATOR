@@ -1,29 +1,24 @@
-"""Consensus tolerant aux fautes byzantines.
+"""Agregation prudente des votes, sans pretendre a une garantie byzantine.
 
-Deux regles non negociables, l'une mathematique, l'autre empirique.
+`n >= 3f + 1` est une borne issue de protocoles de consensus byzantin sous des
+hypotheses precises de communication, d'identites et de fautes. Ici, les avis
+LLM ne sont ni des noeuds independants ni des messages authentifies par un
+protocole distribue : estimer `f` depuis le desaccord et appliquer cette borne
+est donc une HEURISTIQUE CONSERVATRICE, pas une garantie de Lamport. Elle est
+utile pour empecher un panel trop petit de donner une fausse impression de
+robustesse, mais ne prouve ni l'independance ni la verite d'un verdict.
 
-**1. Quorum `n >= 3f + 1` (Lamport).** Avec `f` agents fautifs ou menteurs,
-il faut au moins `3f + 1` participants pour garantir qu'une majorite honnete
-l'emporte. Le moteur estime `f` a partir du desaccord observe et **refuse de
-conclure** si le panel est trop petit pour la faute constatee.
-
-**2. Aucune pression sociale.** « Conformity Breaks Conformal Prediction »
-(2026) mesure que la conformite en systeme multi-agents fait chuter la
-couverture de **90 % a 74 %** et ouvre une attaque ciblee sur les elements
-de faible confiance. Donc :
-
-    les votes sont secrets, collectes en parallele, et jamais moyennes.
-
-Un desaccord n'est pas une erreur a lisser : c'est **le signal le plus
-informatif du systeme**. Un desaccord persistant declenche une escalade,
-jamais une moyenne silencieuse.
+Les votes restent secrets, collectes avant toute synthese, et ne sont jamais
+moyennes. Un desaccord persistant declenche une escalade ; un avis indisponible
+(ABSTAIN/ERROR) bloque la certification au lieu d'etre traite comme un vote
+minoritaire ordinaire.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 from ..core.errors import QuorumNotReached
 from ..core.types import Severity, Verdict, Vote
@@ -35,18 +30,17 @@ class ConsensusOutcome:
 
     decision: Verdict
     reached: bool
-    agreement: float                 # part du verdict majoritaire
+    agreement: float  # part du verdict majoritaire
     quorum_required: int
     panel_size: int
     estimated_faulty: int
     tally: Mapping[str, int]
     dissent: tuple[str, ...]
     confidence: float
-    #: Nombre de couples (modele, verdict) DISTINCTS ayant vote. C'est ce chiffre,
-    #: et non la taille du panel, qui plafonne la confiance : cinq agents sur un
-    #: seul modele ne valent pas cinq agents. Il etait calcule puis jete — donc
-    #: invisible pour l'utilisateur qui cherchait pourquoi une mission parfaite
-    #: restait « avec reserve ».
+    #: Nombre de sources de modele DISTINCTES ayant vote. C'est ce chiffre,
+    #: et non la taille du panel ni le nombre de verdicts différents, qui plafonne
+    #: la confiance : plusieurs personas du même modèle ne deviennent pas plusieurs
+    #: sources indépendantes en divergeant.
     effective_panel: int = 0
     reason: str = ""
 
@@ -59,7 +53,7 @@ class ConsensusOutcome:
 class ConsensusEngine:
     """Agrege des votes secrets en une decision defendable."""
 
-    #: Seuil de supermajorite. 2/3 est exactement la borne de Lamport pour f=1.
+    #: Seuil de supermajorite heuristique ; ce n'est pas une garantie byzantine.
     threshold: float = 2.0 / 3.0
     #: En dessous de ce panel, on refuse de conclure quelque chose de fort.
     min_panel: int = 3
@@ -92,11 +86,38 @@ class ConsensusEngine:
             f"{v.agent}:{v.decision.value}" for v in votes if v.decision.value != top[0]
         )
 
-        # Fautes correlees : meme modele + meme decision = une seule voix utile.
-        effective_panel = len({(v.model or v.provider, v.decision.value) for v in votes})
+        # La decorrelation vient des SOURCES, pas des verdicts : un même modèle qui
+        # donne trois PASS et un FAIL reste une seule source, pas deux voix independantes.
+        # L'identifiant de provider sert de repli si le modele n'est pas renseigne ;
+        # l'agent ne sert qu'en dernier recours pour les votes de test locaux.
+        identities = {
+            f"model:{v.model}"
+            if v.model
+            else f"provider:{v.provider}"
+            if v.provider
+            else f"agent:{v.agent}"
+            for v in votes
+        }
+        effective_panel = len(identities)
 
         reasons: list[str] = []
         reached = True
+
+        # An abstention/error is missing evidence, not a competing opinion. Treating it
+        # as an ordinary minority vote lets a majority PASS mask a reviewer that could
+        # not complete its check. Fail closed: the caller can retry or abstain, but this
+        # panel cannot certify the artifact.
+        unavailable = [
+            f"{v.agent}:{v.decision.value}"
+            for v in votes
+            if v.decision in (Verdict.ABSTAIN, Verdict.ERROR)
+        ]
+        if unavailable:
+            reached = False
+            reasons.append(
+                "verification indisponible (" + ", ".join(unavailable) + ") : "
+                "un avis absent ou en erreur ne compte pas comme un vote PASS"
+            )
 
         if panel < self.min_panel:
             reached = False
@@ -135,11 +156,14 @@ class ConsensusEngine:
             dissent=dissent,
             confidence=conf,
             effective_panel=effective_panel,
-            reason=" ; ".join(reasons) or "accord suffisant et quorum byzantin satisfait",
+            reason=" ; ".join(reasons)
+            or "accord suffisant et quorum byzantin satisfait",
         )
 
     @staticmethod
-    def _confidence(votes: Sequence[Vote], agreement: float, effective_panel: int) -> float:
+    def _confidence(
+        votes: Sequence[Vote], agreement: float, effective_panel: int
+    ) -> float:
         """Confiance moyenne ponderee par la taille effective du panel."""
         if not votes:
             return 0.0

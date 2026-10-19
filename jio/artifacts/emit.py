@@ -23,14 +23,22 @@ from pathlib import Path
 from .definitions import AGENTS, PRINCIPLES, SKILLS, AgentSpec
 from .doctrine import COMPACT
 
-__all__ = ["manifest", "write_manifest", "TARGETS"]
+__all__ = ["TARGETS", "manifest", "write_manifest"]
 
 TARGETS = (
-    "opencode", "hermes", "claude", "agents", "gemini", "cursor", "copilot", "mcp",
+    "opencode",
+    "hermes",
+    "claude",
+    "agents",
+    "gemini",
+    "cursor",
+    "copilot",
+    "mcp",
     # Le CABLAGE du serveur MCP dans les outils qui ne lisent pas `.mcp.json`. Sans ces
     # deux cibles, les outils JIO existaient et etaient injoignables depuis opencode et
     # Hermes : la difference entre « ecrit » et « branche ».
-    "opencode-mcp", "hermes-mcp",
+    "opencode-mcp",
+    "hermes-mcp",
 )
 
 
@@ -71,7 +79,9 @@ def _agent_markdown(agent: AgentSpec, *, frontmatter: bool = True) -> str:
     if not frontmatter:
         return agent.prompt
     perm = "\n".join(f"  {k}: {v}" for k, v in sorted(agent.permission.items()))
-    tools = "\n".join(f"  {k}: {str(v).lower()}" for k, v in sorted(agent.tools.items()))
+    tools = "\n".join(
+        f"  {k}: {str(v).lower()}" for k, v in sorted(agent.tools.items())
+    )
     parts = [
         "---",
         f"description: {json.dumps(agent.description, ensure_ascii=False)}",
@@ -121,7 +131,7 @@ def _target_opencode() -> dict[str, str]:
         "Genere par `jio artifacts --target opencode --write`. Ne pas editer a la "
         "main : editer `jio/artifacts/definitions.py`.\n\n"
         + "\n".join(f"- `{a.name}` — {a.description}" for a in AGENTS)
-        + "\n\nUsage : `opencode run \"<objectif>\" --agent jio --format json`\n"
+        + '\n\nUsage : `opencode run "<objectif>" --agent jio --format json`\n'
     )
     return files
 
@@ -129,7 +139,9 @@ def _target_opencode() -> dict[str, str]:
 def _target_hermes() -> dict[str, str]:
     files: dict[str, str] = {}
     for skill in SKILLS:
-        files[f".hermes/skills/{skill.category}/{skill.name}/SKILL.md"] = _hermes_skill(skill)
+        files[f".hermes/skills/{skill.category}/{skill.name}/SKILL.md"] = _hermes_skill(
+            skill
+        )
     files[".hermes/skills/README.md"] = (
         "# Competences JIO (standard agentskills.io)\n\n"
         "> Genere par `jio artifacts` — ne pas editer a la main : la source est "
@@ -139,9 +151,7 @@ def _target_hermes() -> dict[str, str]:
         "mkdir -p ~/.hermes/skills\n"
         "cp -r .hermes/skills/* ~/.hermes/skills/\n"
         "```\n\n"
-        + "\n".join(
-            f"- `{s.category}/{s.name}` — {s.description}" for s in SKILLS
-        )
+        + "\n".join(f"- `{s.category}/{s.name}` — {s.description}" for s in SKILLS)
         + "\n"
     )
     return files
@@ -155,12 +165,16 @@ def _context_file(title: str, extra: str = "", *, entete: bool = True) -> str:
     de laquelle un fichier d'instructions est survole plutot que lu. Une redite coute donc
     exactement ce que ce depot cherche a ne pas payer : du contexte qui ne sert pas.
     """
-    rappel = ("""## Les trois etats d'une livraison
+    rappel = (
+        """## Les trois etats d'une livraison
 
 `DELIVERED` / `DELIVERED_UNDER_RESERVATION` / `ABSTAINED`. Un quatrieme etat
 n'existe pas : « ca devrait marcher » est l'absence d'etat, pas un etat.
 
-""" if entete else "")
+"""
+        if entete
+        else ""
+    )
     return f"""\
 # {title}
 
@@ -189,7 +203,11 @@ Les roles du harness existent comme agents : `jio`, `jio-verifier`, `jio-redteam
 `jio-grounder`, `jio-comptroller`, `jio-archaeologist`, `jio-forge`. Le verificateur
 n'a **pas** le droit d'ecrire : qui peut modifier l'artefact qu'il juge le rend conforme.
 """
-    return {"CLAUDE.md": _context_file("CLAUDE.md — instructions projet", extra, entete=False)}
+    return {
+        "CLAUDE.md": _context_file(
+            "CLAUDE.md — instructions projet", extra, entete=False
+        )
+    }
 
 
 def _target_agents() -> dict[str, str]:
@@ -211,7 +229,9 @@ def _target_gemini() -> dict[str, str]:
 
 
 def _target_cursor() -> dict[str, str]:
-    body = _context_file("JIO — harness anti-erreur", entete=False).replace("# ", "## ", 1)
+    body = _context_file("JIO — harness anti-erreur", entete=False).replace(
+        "# ", "## ", 1
+    )
     return {
         ".cursor/rules/jio.mdc": (
             "---\n"
@@ -240,8 +260,12 @@ def _target_opencode_mcp(*, commande=None) -> dict[str, str]:
     """
     from .wiring import fragment_opencode
 
-    return {"opencode.json": json.dumps(fragment_opencode(commande), indent=2,
-                                        ensure_ascii=False) + "\n"}
+    return {
+        "opencode.json": json.dumps(
+            fragment_opencode(commande), indent=2, ensure_ascii=False
+        )
+        + "\n"
+    }
 
 
 def _target_hermes_mcp() -> dict[str, str]:
@@ -326,8 +350,9 @@ _EMITTERS = {
 }
 
 
-def manifest(targets: tuple[str, ...] | None = None, *,
-             commande: tuple[str, ...] | None = None) -> dict[str, str]:
+def manifest(
+    targets: tuple[str, ...] | None = None, *, commande: tuple[str, ...] | None = None
+) -> dict[str, str]:
     """Chemin relatif -> contenu, pour tous les artefacts demandes.
 
     `commande` ne concerne que le cablage MCP (aujourd'hui `opencode.json`) : c'est la

@@ -14,12 +14,11 @@ Trois choses sont verrouillees ici, dans l'ordre d'importance :
 from __future__ import annotations
 
 import json
-
 import pathlib
 
 import pytest
 
-from jio.bench.prose import PROSE_TASKS, PROSE_BY_ID, prose_bank
+from jio.bench.prose import PROSE_BY_ID, PROSE_TASKS, prose_bank
 from jio.verify.prose_prover import R_VERIFIABLE, ProseProver, spec_prose
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -32,7 +31,9 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 
 def test_le_document_correct_est_prouve() -> None:
     tache = PROSE_BY_ID["rapport_latence"]
-    resultat = ProseProver(racine=REPO).prove(tache.correct, spec_prose(tache.objective))
+    resultat = ProseProver(racine=REPO).prove(
+        tache.correct, spec_prose(tache.objective)
+    )
 
     assert resultat.passed
     assert resultat.ratio == 1.0
@@ -52,8 +53,9 @@ def test_un_calcul_faux_est_refute_avec_la_valeur_reelle() -> None:
 
 def test_un_bloc_annonce_python_et_casse_est_refute() -> None:
     tache = PROSE_BY_ID["rapport_latence"]
-    resultat = ProseProver(racine=REPO).prove(tache.distractors[1],
-                                              spec_prose(tache.objective))
+    resultat = ProseProver(racine=REPO).prove(
+        tache.distractors[1], spec_prose(tache.objective)
+    )
     assert not resultat.passed
     assert any("NE COMPILE PAS" in w.stderr for w in resultat.hard_failures)
 
@@ -61,8 +63,9 @@ def test_un_bloc_annonce_python_et_casse_est_refute() -> None:
 def test_un_chemin_introuvable_est_une_reserve_pas_un_rejet() -> None:
     """La retenue est une DECISION : un document decrit parfois un fichier a creer."""
     tache = PROSE_BY_ID["rapport_latence"]
-    resultat = ProseProver(racine=REPO).prove(tache.distractors[2],
-                                              spec_prose(tache.objective))
+    resultat = ProseProver(racine=REPO).prove(
+        tache.distractors[2], spec_prose(tache.objective)
+    )
     assert resultat.passed, "un chemin manquant ne doit pas condamner le document"
     assert resultat.reservations, "il doit etre SIGNALE"
     assert not resultat.hard_failures
@@ -71,7 +74,8 @@ def test_un_chemin_introuvable_est_une_reserve_pas_un_rejet() -> None:
 def test_un_document_sans_affirmation_verifiable_ne_passe_pas() -> None:
     """Rien a verifier n'est pas un quitus — la regle P-000 le dit a voix haute."""
     resultat = ProseProver(racine=None).prove(
-        "# Note\n\nUne intention, sans aucun fait verifiable.\n", spec_prose("note"))
+        "# Note\n\nUne intention, sans aucun fait verifiable.\n", spec_prose("note")
+    )
     assert not resultat.passed
     assert [w.rule_id for w in resultat.hard_failures] == [R_VERIFIABLE]
     assert "PAS un quitus" in resultat.hard_failures[0].stderr
@@ -95,8 +99,13 @@ def _moteur(skill: float, seed: int, max_rounds: int = 3):
 
     tache = PROSE_TASKS[0]
     return _simulated_engine(
-        None, skill=skill, seed=seed, max_rounds=max_rounds,
-        famille="prose", banque=prose_bank(tache), racine=REPO,
+        None,
+        skill=skill,
+        seed=seed,
+        max_rounds=max_rounds,
+        famille="prose",
+        banque=prose_bank(tache),
+        racine=REPO,
     ), tache
 
 
@@ -137,8 +146,10 @@ def test_un_modele_incapable_ne_livre_jamais_un_faux_prouve() -> None:
             "un document NON correct a ete livre sans aucun signalement"
         )
     assert rapport.status in {
-        MissionStatus.DELIVERED, MissionStatus.DELIVERED_WITH_RESERVATION,
-        MissionStatus.ABSTAINED, MissionStatus.FAILED,
+        MissionStatus.DELIVERED,
+        MissionStatus.DELIVERED_WITH_RESERVATION,
+        MissionStatus.ABSTAINED,
+        MissionStatus.FAILED,
     }
 
 
@@ -202,7 +213,9 @@ def test_le_banc_de_prose_ne_livre_aucun_faux() -> None:
     from jio.bench.prose import mesurer_prose
 
     mesure = mesurer_prose(skill=0.35, runs=3, max_rounds=2, racine=REPO)
-    assert mesure.erreurs_silencieuses == 0, "un document faux a ete livre sans rien dire"
+    assert mesure.erreurs_silencieuses == 0, (
+        "un document faux a ete livre sans rien dire"
+    )
     assert mesure.jio == 1.0, "le verificateur doit retrouver la selection de l'oracle"
 
 
@@ -215,8 +228,13 @@ def test_le_banc_de_prose_ne_silence_rien(skill: float) -> None:
     assert mesure.erreurs_silencieuses == 0
     assert mesure.essais == 2 * len(PROSE_TASKS)
     # Chaque essai finit dans UNE et une seule categorie : rien ne disparait.
-    assert (mesure.jio * mesure.essais) + mesure.erreurs_silencieuses \
-        + mesure.sous_reserve + mesure.abstentions == mesure.essais
+    assert (
+        (mesure.jio * mesure.essais)
+        + mesure.erreurs_silencieuses
+        + mesure.sous_reserve
+        + mesure.abstentions
+        == mesure.essais
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -231,15 +249,25 @@ def test_la_cle_de_preference_departage_par_les_reserves() -> None:
     from jio.verify.executable import ProverResult
 
     def resultat(reserves: int) -> ProverResult:
-        temoins = tuple(Witness(rule_id=f"R-{i:03d}", command="x", exit_code=0, ok=True)
-                        for i in range(3))
+        temoins = tuple(
+            Witness(rule_id=f"R-{i:03d}", command="x", exit_code=0, ok=True)
+            for i in range(3)
+        )
         reserv = tuple(
-            Witness(rule_id=f"A-{i:03d}", command="x", exit_code=1, ok=False,
-                    stderr="chemin cite INTROUVABLE")
+            Witness(
+                rule_id=f"A-{i:03d}",
+                command="x",
+                exit_code=1,
+                ok=False,
+                stderr="chemin cite INTROUVABLE",
+            )
             for i in range(reserves)
         )
-        return ProverResult(witnesses=temoins, failures=reserv,
-                            advisory_ids=frozenset(w.rule_id for w in reserv))
+        return ProverResult(
+            witnesses=temoins,
+            failures=reserv,
+            advisory_ids=frozenset(w.rule_id for w in reserv),
+        )
 
     propre = (Artifact(id="a", content="propre"), resultat(0))
     charge = (Artifact(id="b", content="charge"), resultat(2))
@@ -248,7 +276,9 @@ def test_la_cle_de_preference_departage_par_les_reserves() -> None:
     assert _cle_de_preference(propre)[0] == _cle_de_preference(charge)[0], "meme ratio"
 
 
-def test_un_candidat_propre_ne_perd_jamais_contre_un_candidat_qui_cite_un_chemin_faux() -> None:
+def test_un_candidat_propre_ne_perd_jamais_contre_un_candidat_qui_cite_un_chemin_faux() -> (
+    None
+):
     """La propriete qui compte, mesuree sur 30 missions reelles.
 
     Quand un candidat PROPRE est disponible dans le tour, la livraison ne doit jamais
@@ -271,8 +301,13 @@ def test_un_candidat_propre_ne_perd_jamais_contre_un_candidat_qui_cite_un_chemin
 
     for seed in range(30):
         moteur = _simulated_engine(
-            None, skill=0.5, seed=seed, max_rounds=1, famille="prose",
-            banque=banque, racine=REPO,
+            None,
+            skill=0.5,
+            seed=seed,
+            max_rounds=1,
+            famille="prose",
+            banque=banque,
+            racine=REPO,
         )
         rapport = moteur.run(
             Mission(objective=tache.objective, id=f"p{seed}", max_rounds=1),
@@ -298,6 +333,7 @@ def test_un_candidat_propre_ne_perd_jamais_contre_un_candidat_qui_cite_un_chemin
         "candidat propre etait disponible"
     )
 
+
 def test_le_resume_affiche_des_POURCENTAGES_et_non_des_fractions() -> None:
     """`self.jio * 100` : un taux de 0,5 doit s'ecrire « 50 % », pas « 0,5 % ».
 
@@ -309,8 +345,14 @@ def test_le_resume_affiche_des_POURCENTAGES_et_non_des_fractions() -> None:
     from jio.bench.prose import MesureProse
 
     resultat = MesureProse(
-        essais=4, aveugle=0.25, aveugle_best_of=0.75, jio=0.5, erreurs_silencieuses=0,
-        sous_reserve=1, abstentions=2, appels=3.5,
+        essais=4,
+        aveugle=0.25,
+        aveugle_best_of=0.75,
+        jio=0.5,
+        erreurs_silencieuses=0,
+        sous_reserve=1,
+        abstentions=2,
+        appels=3.5,
     )
     texte = resultat.resume("moteur complet")
     assert "50.0%" in texte
@@ -332,7 +374,9 @@ def test_le_banc_de_prose_ECRIT_le_rapport_demande(tmp_path, capsys) -> None:
     from jio.cli import _bench_prose
 
     cible = tmp_path / "prose.md"
-    args = argparse.Namespace(skill=0.35, runs=1, rounds=2, rapport=str(cible), taches=1)
+    args = argparse.Namespace(
+        skill=0.35, runs=1, rounds=2, rapport=str(cible), taches=1
+    )
     assert _bench_prose(args) == 0
     capsys.readouterr()
 

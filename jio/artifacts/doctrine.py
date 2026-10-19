@@ -236,23 +236,7 @@ the work cannot start. Treating an abstention as a failure makes you fix the wro
 """
 
 #: Bloc assemble : ce que recoit tout agent genere.
-FULL = "\n\n".join(
-    [
-        CONTRACT,
-        OPENING,
-        CORE_LAW,
-        EVIDENCE,
-        ANTI_HACK,
-        ABSTENTION,
-        CONTEXT_ECONOMY,
-        STRUCTURED_FAILURE,
-        DELEGATION,
-        STOP_RULES,
-        DIAGNOSIS,
-        COMMUNICATION,
-        EXIT_CODES,
-    ]
-)
+FULL = f"{CONTRACT}\n\n{OPENING}\n\n{CORE_LAW}\n\n{EVIDENCE}\n\n{ANTI_HACK}\n\n{ABSTENTION}\n\n{CONTEXT_ECONOMY}\n\n{STRUCTURED_FAILURE}\n\n{DELEGATION}\n\n{STOP_RULES}\n\n{DIAGNOSIS}\n\n{COMMUNICATION}\n\n{EXIT_CODES}"
 
 #: Version condensee pour les fichiers de contexte projet (AGENTS.md, etc.).
 #:
@@ -261,22 +245,22 @@ FULL = "\n\n".join(
 #: separe coutait quatre lignes de plus (titre, corps, separateurs) et faisait passer
 #: `CLAUDE.md` de 150 a 155 lignes — au-dela du budget, un fichier de contexte est survole.
 #: Une doctrine qui ne tient pas dans son budget ne s'applique pas.
-COMPACT = "\n\n".join([CONTRACT, OPENING_MIN, CORE_LAW, EVIDENCE, ANTI_HACK, ABSTENTION])
+COMPACT = f"{CONTRACT}\n\n{OPENING_MIN}\n\n{CORE_LAW}\n\n{EVIDENCE}\n\n{ANTI_HACK}\n\n{ABSTENTION}"
 
 __all__ = [
+    "ABSTENTION",
+    "ANTI_HACK",
+    "COMMUNICATION",
+    "COMPACT",
+    "CONTEXT_ECONOMY",
     "CONTRACT",
+    "CORE_LAW",
+    "DELEGATION",
+    "DIAGNOSIS",
+    "EVIDENCE",
+    "FULL",
     "OPENING",
     "OPENING_MIN",
-    "CORE_LAW",
-    "EVIDENCE",
-    "ANTI_HACK",
-    "ABSTENTION",
-    "CONTEXT_ECONOMY",
-    "STRUCTURED_FAILURE",
-    "DELEGATION",
     "STOP_RULES",
-    "DIAGNOSIS",
-    "COMMUNICATION",
-    "FULL",
-    "COMPACT",
+    "STRUCTURED_FAILURE",
 ]

@@ -184,3 +184,45 @@ JIOJIO-TERMINATOR **s'applique ses propres techniques** :
 - Les échecs réels rencontrés pendant le développement deviennent des **skills** et des **règles de garde**
 
 Si le système n'est pas capable de s'auditer lui-même, il n'est pas prêt à auditer autre chose.
+
+## Boucle d'amélioration contrôlée
+
+`jio evolve compare` compare maintenant deux rapports d'évaluation appariés sur holdout : même modèle, budget, dataset, tâches et graines. La baseline doit être rescorrée trois fois sans évolution avec graines distinctes; un candidat ne passe que si le gain dépasse le bruit observé sur la baseline gelée. Il bloque aussi les gains obtenus en augmentant les erreurs silencieuses, les violations de sécurité ou les abstentions; McNemar exact décide si le gain de réponses correctes est concluant. Les souvenirs d'échec sans remède confirmé restent en quarantaine et ne sont pas réinjectés dans les prompts. `PROMOTE_ELIGIBLE` autorise uniquement une revue/staging, jamais une activation automatique. La conception, les limites, le schéma JSON et les éléments non automatisés sont dans [`BOUCLE-AMELIORATION-CONTROLEE.md`](BOUCLE-AMELIORATION-CONTROLEE.md). Le comparateur ne crée pas encore le benchmark privé, les propositions de patch ni le déploiement canari : ces étapes restent explicitement à construire.
+
+## Doctrine de livraison — objectif zéro erreur acceptée
+
+La doctrine détaillée est dans [`DOCTRINE-INFAILLIBILITE.md`](DOCTRINE-INFAILLIBILITE.md) : l'objectif est zéro erreur livrée comme correcte sans réserve ; en cas d'incertitude détectée, la réponse doit être une abstention explicite. `jio run --zero-reserve` rend cette règle stricte pour les incertitudes connues : le panel doit être unanime ; en cas de désaccord, JIO continue jusqu'au budget `--rounds`, puis s'abstient plutôt que de forcer un verdict. Toute livraison avec réserve devient également une abstention journalisée. Ce mode réduit les livraisons, sans garantir l'absence d'erreurs inconnues.
+
+## Extension — Harness engineering : diagnostic et performance locale
+
+`jio perf --runs 10` compare à poids constants le lancement direct de Python et celui du runner JIO, sur un no-op et une petite sortie ; affiche médiane et p95, avec JSON disponible. Cette micro-mesure n'appelle aucun modèle et n'écrit pas dans le dépôt ; elle ne prédit pas le temps d'une mission complète.
+
+La commande `jio harness --root <depot>` audite des signaux observables avant de lancer un agent :
+présence et taille des fichiers d'instructions, présence de tests et de configuration projet,
+commandes de vérification reconnues statiquement (pytest, npm test, cargo test, go test, make test)
+et disponibilité de Git et pytest. Par défaut, elle n'exécute aucune commande du dépôt. Avec
+`--run-checks`, elle lance explicitement les commandes reconnues via argv fixe (sans shell), une à
+une, avec délai et sorties bornés ; tout échec rend le code de commande non nul. Ce mode exécute
+néanmoins du code arbitraire du dépôt, dans une copie temporaire qui exclut `.git`, les environnements
+virtuels et caches ; les liens symboliques sont refusés pour éviter qu'une copie ne pointe vers
+l'arbre d'origine. Cela protège des effets de bord accidentels sur les fichiers du dépôt, mais ne
+constitue PAS une frontière de sécurité : réseau et autres chemins de l'hôte restent accessibles.
+À réserver aux dépôts de confiance. `--timeout` règle le délai par commande (1–900 secondes). Le
+rapport JSON (`--json`) inclut le statut, la durée et les sorties tronquées de chaque vérification.
+Le score de préparation reste une checklist, pas une mesure de compétence ni une garantie.
+
+La reprise `jio auto` checkpoint maintenant son état **après chaque étape** par remplacement de
+fichier atomique. Un arrêt brutal conserve ainsi le plan complet, les étapes déjà prouvées et
+celles encore non tentées ; seule une preuve enregistrée pour la même révision est réutilisable.
+
+La Sandbox vide stdout/stderr en continu vers des fichiers temporaires, avec un plafond strict de
+2 Mo par flux ; un dépassement est un échec explicite (code 125), pas une preuve tronquée acceptée.
+Elle tue également le groupe entier des processus sous POSIX au timeout, afin qu'un enfant ne
+poursuive pas la preuve après le verdict. Cela réduit les risques d'épuisement mémoire/disque et de
+processus orphelins, mais n'isole toujours pas le filesystem ni le réseau : conteneur ou VM restent
+nécessaires pour du code hostile.
+
+Ce score ne mesure ni la compétence du modèle ni la qualité réelle des tests : il sert de checklist
+reproductible, pas de promesse de performance. Les étapes suivantes envisagées sont l'inspection
+du statut de travail et des commandes de vérification documentées, puis la collecte de traces de
+mission pour comparer des variantes de harness sur les mêmes tâches.

@@ -51,7 +51,7 @@ from array import array
 RACINE = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
-from jio.skills.router import stem  # noqa: E402
+from jio.skills.router import stem
 
 #: URL exacte du paquet (npm est joignable la ou huggingface.co ne l'est pas : mesure faite).
 SOURCE = "https://registry.npmjs.org/wink-embeddings-sg-100d/-/wink-embeddings-sg-100d-1.1.0.tgz"
@@ -97,7 +97,7 @@ def construire(paquet: pathlib.Path | None = None) -> dict:
         paquet = pathlib.Path("/tmp/wink-embeddings-sg-100d-1.1.0.tgz")
         if not paquet.exists():
             print(f"telechargement : {SOURCE}")
-            urllib.request.urlretrieve(SOURCE, paquet)  # noqa: S310 (URL constante ci-dessus)
+            urllib.request.urlretrieve(SOURCE, paquet)
 
     # La source est verrouillee par son empreinte : si le paquet change sous nos pieds, la
     # construction s'arrete au lieu de produire une table dont personne ne connait l'origine.

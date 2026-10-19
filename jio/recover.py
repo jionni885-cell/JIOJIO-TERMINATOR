@@ -42,7 +42,7 @@ from pathlib import Path
 # comparaison avant/apres qui doit etre fiable.
 from .core.monde import sceau as empreinte_arbre
 
-__all__ = ["Recuperation", "empreinte_arbre", "empreinte_accident", "recuperer"]
+__all__ = ["Recuperation", "empreinte_accident", "empreinte_arbre", "recuperer"]
 
 
 #: Seuils de l'empreinte de l'accident. Identiques a ceux de `jio doctor` : deux jeux de
@@ -86,7 +86,12 @@ class Recuperation:
 def _git(racine: Path, *argv: str) -> tuple[int, str]:
     try:
         proc = subprocess.run(
-            ["git", *argv], cwd=racine, capture_output=True, text=True, timeout=60,
+            ["git", *argv],
+            cwd=racine,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return 1, ""
@@ -144,7 +149,9 @@ def _preuves_perimees(racine: Path, sceau_actuel: str) -> tuple[int, int]:
     if not chemin.is_file():
         return 0, 0
     try:
-        journal = Journal.from_jsonl(chemin.read_text(encoding="utf-8", errors="replace"))
+        journal = Journal.from_jsonl(
+            chemin.read_text(encoding="utf-8", errors="replace")
+        )
     except Exception:  # pragma: no cover - fichier abime : on ne conclut rien
         return 0, 0
     total = 0
@@ -196,13 +203,15 @@ def recuperer(
                 "synchronisation est `scripts/sync.sh`."
             ),
         )
-    commits, non_suivis = signature
+    _commits, non_suivis = signature
 
     avant = empreinte_arbre(racine)
 
     if not branche:
         return Recuperation(
-            fait=False, avant=avant, apres=avant,
+            fait=False,
+            avant=avant,
+            apres=avant,
             motif="aucune branche courante : passez `--branch <nom>`.",
         )
 
@@ -220,7 +229,10 @@ def recuperer(
     url = url.strip()
     if code_url != 0 or not url:
         return Recuperation(
-            fait=False, avant=avant, apres=avant, branche=branche,
+            fait=False,
+            avant=avant,
+            apres=avant,
+            branche=branche,
             motif=(
                 f"aucun depot distant nomme `{remote}` : `.git/config` ne le connait plus "
                 "(frequent apres une reinitialisation). Rien n'a ete modifie. Donnez son "
@@ -238,7 +250,10 @@ def recuperer(
         operations[-1] = f"git fetch --prune {remote} {branche} (puis {remote} entier)"
         if code != 0:
             return Recuperation(
-                fait=False, avant=avant, apres=avant, branche=branche,
+                fait=False,
+                avant=avant,
+                apres=avant,
+                branche=branche,
                 motif=(
                     f"`{remote}` ({url}) est injoignable : le travail n'a pas ete touche. "
                     "Verifiez l'acces au depot distant (reseau, droits), puis relancez."
@@ -270,20 +285,30 @@ def recuperer(
         noms = _branches_distantes(racine, remote)
         if noms:
             indice = (
-                " Branches presentes sur le distant : " + ", ".join(noms[:12])
+                " Branches presentes sur le distant : "
+                + ", ".join(noms[:12])
                 + f". Relancez avec `--branch <nom>` si le votre n'est pas `{branche}`."
             )
         else:
             indice = " Le distant ne publie aucune branche."
         return Recuperation(
-            fait=False, avant=avant, apres=avant, branche=branche,
+            fait=False,
+            avant=avant,
+            apres=avant,
+            branche=branche,
             motif=f"aucune reference distante pour `{branche}` : rien a recuperer.{indice}",
         )
 
     if dry_run:
         return Recuperation(
-            fait=False, avant=avant, apres=avant, distant=distant, branche=branche,
-            fichiers_non_suivis=non_suivis, operations=operations + [
+            fait=False,
+            avant=avant,
+            apres=avant,
+            distant=distant,
+            branche=branche,
+            fichiers_non_suivis=non_suivis,
+            operations=operations
+            + [
                 "(simulation) git tag sauvegarde-avant-recup-<horodatage> HEAD",
                 f"(simulation) git reset --soft {distant[:8]}",
                 "(simulation) git add -A",
@@ -310,8 +335,13 @@ def recuperer(
     operations.append(f"git reset --soft {distant[:8]}")
     if code != 0:
         return Recuperation(
-            fait=False, avant=avant, apres=empreinte_arbre(racine), distant=distant,
-            branche=branche, etiquette=etiquette, operations=operations,
+            fait=False,
+            avant=avant,
+            apres=empreinte_arbre(racine),
+            distant=distant,
+            branche=branche,
+            etiquette=etiquette,
+            operations=operations,
             motif=f"`git reset --soft` a echoue : {sortie[:200]}",
         )
 
@@ -325,12 +355,18 @@ def recuperer(
     perimes, total = _preuves_perimees(racine, apres)
     return Recuperation(
         fait=True,
-        preuves_perimees=perimes, preuves_total=total,
+        preuves_perimees=perimes,
+        preuves_total=total,
         motif=(
             "historique restaure. Les fichiers du disque n'ont pas ete touches : "
             f"empreinte identique avant/apres ({avant[:12]})."
         ),
-        avant=avant, apres=apres, distant=distant, branche=branche,
-        etiquette=etiquette, fichiers_modifies=modifies, fichiers_non_suivis=restants,
+        avant=avant,
+        apres=apres,
+        distant=distant,
+        branche=branche,
+        etiquette=etiquette,
+        fichiers_modifies=modifies,
+        fichiers_non_suivis=restants,
         operations=operations,
     )

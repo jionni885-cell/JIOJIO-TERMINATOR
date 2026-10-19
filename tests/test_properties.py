@@ -48,8 +48,11 @@ def _prove(source: str):
     derived = derive(source)
     prover = ExecutableProver(sandbox=Sandbox(timeout=20))
     return prover.prove(
-        source, derived.spec, hidden_checks=derived.checks,
-        entrypoint=derived.entrypoint, preamble=derived.preamble,
+        source,
+        derived.spec,
+        hidden_checks=derived.checks,
+        entrypoint=derived.entrypoint,
+        preamble=derived.preamble,
     )
 
 
@@ -58,9 +61,11 @@ def _prove_proprietes(source: str):
     derived = derive(source)
     prover = ExecutableProver(sandbox=Sandbox(timeout=20))
     return prover.prove(
-        source, derived.spec,
+        source,
+        derived.spec,
         hidden_checks={k: v for k, v in derived.checks.items() if k.startswith("P-")},
-        entrypoint=derived.entrypoint, preamble=derived.preamble,
+        entrypoint=derived.entrypoint,
+        preamble=derived.preamble,
     )
 
 
@@ -79,7 +84,9 @@ def normalize(nums, extra=None):
     return nums
 '''
 
-SAIN_SANS_ANNOTATION = MUTATION_SANS_ANNOTATION.replace("    nums.sort()\n    return nums", "    return sorted(nums)")
+SAIN_SANS_ANNOTATION = MUTATION_SANS_ANNOTATION.replace(
+    "    nums.sort()\n    return nums", "    return sorted(nums)"
+)
 
 
 def test_mutation_detectee_sans_annotation():
@@ -136,14 +143,14 @@ def normalize(nums):
 
 def test_aller_retour_avec_perte_detecte():
     """`decode(encode(x)) != x` : defaut silencieux, invisible sans propriete."""
-    source = '''
+    source = """
 def url_encode(value: str) -> bytes:
     return value[:3].encode("utf-8")
 
 
 def url_decode(data: bytes) -> str:
     return data.decode("utf-8")
-'''
+"""
     res = _prove_proprietes(source)
     echecs = [w.rule_id for w in res.witnesses if not w.ok]
     assert echecs == ["P-003:url_encode"], echecs
@@ -153,16 +160,17 @@ def url_decode(data: bytes) -> str:
 # Non-detection : aucun faux positif tolere
 # --------------------------------------------------------------------------- #
 
+
 def test_api_en_place_non_accusee():
     """Muter son argument est la RAISON D'ETRE d'une API en place."""
-    source = '''
+    source = """
 def sort_in_place(nums) -> None:
     nums.sort()
 
 
 def fill(values, n):
     values.extend(range(n))
-'''
+"""
     assert _props(source) == []
 
 
@@ -172,14 +180,14 @@ def test_double_n_est_pas_idempotent_par_nature():
     Accuser cette fonction serait une fausse alerte sur du code correct — l'erreur
     exacte que ce test verrouille.
     """
-    source = '''
+    source = """
 def double(value: int) -> int:
     return value * 2
 
 
 def increment(value: int) -> int:
     return value + 1
-'''
+"""
     ids = [p.id for p in _props(source)]
     assert "P-002" not in ids
 
@@ -208,6 +216,7 @@ def test_fonction_sans_source_d_entree_ne_produit_rien():
 # Determinisme et bornes
 # --------------------------------------------------------------------------- #
 
+
 def test_generation_deterministe_et_bords_presents():
     """Meme graine -> memes entrees ; et les CAS LIMITES sont toujours la.
 
@@ -222,7 +231,9 @@ def test_generation_deterministe_et_bords_presents():
     assert [1] in a, "la liste a un seul element doit etre testee"
     # Bords de VALEUR : un entier negatif et une grande magnitude.
     assert any(isinstance(x, int) and x < 0 for v in a for x in v), "aucun bord negatif"
-    assert any(isinstance(x, int) and abs(x) >= 10**6 for v in a for x in v), "aucune grande valeur"
+    assert any(isinstance(x, int) and abs(x) >= 10**6 for v in a for x in v), (
+        "aucune grande valeur"
+    )
 
 
 def test_domaine_inconnu_ne_produit_pas_d_entree():
@@ -256,10 +267,23 @@ def test_proprietes_declarees_dans_les_limites_ou_les_notes():
 # Bout en bout : la commande reelle
 # --------------------------------------------------------------------------- #
 
+
 def _scan(project: pathlib.Path) -> str:
     proc = subprocess.run(
-        [sys.executable, "-m", "jio", "scan", str(project), "--exclude-tests", "--no-learn"],
-        cwd=REPO, capture_output=True, text=True, timeout=300,
+        [
+            sys.executable,
+            "-m",
+            "jio",
+            "scan",
+            str(project),
+            "--exclude-tests",
+            "--no-learn",
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
     )
     return proc.stdout + proc.stderr
 
@@ -269,8 +293,10 @@ def test_scan_condamne_le_projet_fautif_et_epargne_le_sain():
     with tempfile.TemporaryDirectory() as tmp:
         bugue = pathlib.Path(tmp) / "bugue"
         propre = pathlib.Path(tmp) / "propre"
-        for directory, corps in ((bugue, "    nums.sort()\n    return nums"),
-                                 (propre, "    return sorted(nums)")):
+        for directory, corps in (
+            (bugue, "    nums.sort()\n    return nums"),
+            (propre, "    return sorted(nums)"),
+        ):
             directory.mkdir()
             (directory / "normalizer.py").write_text(
                 "def normalize(nums, extra=None):\n"
@@ -382,6 +408,7 @@ def sorted_unique(nums: list[int]) -> list[int]:
 # Garde-fous de l'outillage lui-meme
 # --------------------------------------------------------------------------- #
 
+
 def test_programme_d_audit_est_compilable():
     """Le programme envoye au bac a sable doit COMPILER.
 
@@ -480,19 +507,24 @@ def test_l_apport_des_proprietes_est_mesure_sur_le_corpus():
     Si un jour les proprietes n'apportaient plus rien, ce test echouerait : le
     chiffre du README ne pourrait pas mentir.
     """
+
     def detectes(avec_proprietes: bool) -> int:
         total = 0
         for fichier in FAUTIFS:
             derived = derive(fichier.read_text(encoding="utf-8"))
             prover = ExecutableProver(sandbox=Sandbox(timeout=20))
             checks = {
-                k: v for k, v in derived.checks.items()
+                k: v
+                for k, v in derived.checks.items()
                 if avec_proprietes or not k.startswith("P-")
             }
             try:
                 res = prover.prove(
-                    fichier.read_text(encoding="utf-8"), derived.spec, hidden_checks=checks,
-                    entrypoint=derived.entrypoint, preamble=derived.preamble,
+                    fichier.read_text(encoding="utf-8"),
+                    derived.spec,
+                    hidden_checks=checks,
+                    entrypoint=derived.entrypoint,
+                    preamble=derived.preamble,
                 )
             except FailClosed:
                 # Aucune regle derivable : le mode fail-closed refuse de conclure.
@@ -542,6 +574,10 @@ def test_les_vrais_noms_de_tri_restent_juges():
     from jio.verify.properties import _SORT_CLAIMS, _annonce
 
     for nom in ("sort_values", "sorted", "sort_by_key", "order_lines", "sortAscending"):
-        assert _annonce(nom, _SORT_CLAIMS), f"`{nom}` promet un tri : la regle doit s'appliquer"
+        assert _annonce(nom, _SORT_CLAIMS), (
+            f"`{nom}` promet un tri : la regle doit s'appliquer"
+        )
     for nom in ("sortir", "sortie", "sorte", "resortir"):
-        assert not _annonce(nom, _SORT_CLAIMS), f"`{nom}` est du francais, pas une promesse"
+        assert not _annonce(nom, _SORT_CLAIMS), (
+            f"`{nom}` est du francais, pas une promesse"
+        )

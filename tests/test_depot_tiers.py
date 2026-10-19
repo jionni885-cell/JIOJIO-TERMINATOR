@@ -38,7 +38,9 @@ from jio.cli import main
 def _git(racine: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
-        cwd=racine, check=True, capture_output=True,
+        cwd=racine,
+        check=True,
+        capture_output=True,
     )
 
 
@@ -95,9 +97,14 @@ def test_start_integre_un_depot_ETRANGER_sans_rien_casser(
 
     # 1. les artefacts natifs, pour chaque famille d'outil
     for attendu in (
-        "AGENTS.md", "CLAUDE.md", "GEMINI.md",
-        ".cursor/rules/jio.mdc", ".github/copilot-instructions.md",
-        ".mcp.json", ".mcp.README.md", "opencode.json",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "GEMINI.md",
+        ".cursor/rules/jio.mdc",
+        ".github/copilot-instructions.md",
+        ".mcp.json",
+        ".mcp.README.md",
+        "opencode.json",
         ".opencode/agents/jio-verifier.md",
         ".opencode/agents/jio-redteam.md",
         ".hermes/skills/verification/executable-proof/SKILL.md",
@@ -141,7 +148,13 @@ def test_start_est_idempotent_sur_un_depot_etranger(
     capsys.readouterr()
     empreintes = {
         rel: (depot_tiers / rel).stat().st_mtime_ns
-        for rel in ("AGENTS.md", "CLAUDE.md", "opencode.json", ".mcp.json", ".jio/ACTIVE.md")
+        for rel in (
+            "AGENTS.md",
+            "CLAUDE.md",
+            "opencode.json",
+            ".mcp.json",
+            ".jio/ACTIVE.md",
+        )
     }
 
     assert main(["start", "--root", str(depot_tiers)]) == 0
@@ -190,12 +203,17 @@ def test_coherence_JSON_est_exploitable_par_une_machine(
     capsys.readouterr()
     assert main(["coherence", "--root", str(depot_tiers), "--json"]) == 0
     sortie = capsys.readouterr().out
-    donnees = json.loads(sortie[sortie.index("{"):])
+    donnees = json.loads(sortie[sortie.index("{") :])
     assert donnees["coherent"] is True
     # Ce qui ne s'applique pas au projet tiers est declare : un dossier `tests/` absent, pas de
     # paquet `jio/`, et aucun journal (le projet n'a jamais lance de mission). Le controle des
     # COMPETENCES, lui, s'applique : `jio start` vient d'en ecrire douze, et elles sont auditees.
-    assert set(donnees["hors_portee"]) == {"nombres", "environnement", "sources", "journal"}
+    assert set(donnees["hors_portee"]) == {
+        "nombres",
+        "environnement",
+        "sources",
+        "journal",
+    }
     ok = {c["controle"] for c in donnees["constats"] if c["ok"]}
     assert ok >= {"artefacts", "plan", "competences"}
 
@@ -258,10 +276,17 @@ def test_auto_laisse_un_etat_RELISIBLE_avec_la_revision_git(
     assert main(["start", "--root", str(depot_tiers)]) == 0
     capsys.readouterr()
 
-    code = main([
-        "auto", "corriger le calcul de src/calcul.py", "--root", str(depot_tiers),
-        "--budget", "1", "--json",
-    ])
+    code = main(
+        [
+            "auto",
+            "corriger le calcul de src/calcul.py",
+            "--root",
+            str(depot_tiers),
+            "--budget",
+            "1",
+            "--json",
+        ]
+    )
     sortie = capsys.readouterr().out
     assert code in (0, 1, 2), sortie
     etat = json.loads((depot_tiers / ".jio" / "plan.json").read_text(encoding="utf-8"))
@@ -279,6 +304,7 @@ def test_auto_laisse_un_etat_RELISIBLE_avec_la_revision_git(
 # --------------------------------------------------------------------------- #
 # La fiche que l'IA lit EN PREMIER ne doit pas l'envoyer dans le vide
 # --------------------------------------------------------------------------- #
+
 
 def _chemins_cites(texte: str) -> set[str]:
     """Les chemins cites par la fiche : entre accents graves, avec une extension connue."""
@@ -326,7 +352,9 @@ def test_la_fiche_d_un_projet_ETRANGER_ne_cite_que_des_chemins_qui_existent(
         """
         if jeton.startswith(".jio/"):
             return True
-        return any((base / jeton).exists() for base in (depot_tiers, paquet, installation))
+        return any(
+            (base / jeton).exists() for base in (depot_tiers, paquet, installation)
+        )
 
     orphelins = sorted(jeton for jeton in _chemins_cites(fiche) if not resout(jeton))
     assert orphelins == [], (
@@ -349,12 +377,22 @@ def test_la_fiche_compte_ses_propres_regles(depot_tiers: Path) -> None:
     assert main(["start", "--root", str(depot_tiers), "--sans-hermes"]) == 0
     fiche = (depot_tiers / ".jio" / "ACTIVE.md").read_text(encoding="utf-8")
 
-    entete = re.search(r"^## (Une|Deux|Trois|Quatre|Cinq|Six|Sept) regles", fiche, re.M)
+    entete = re.search(
+        r"^## (Une|Deux|Trois|Quatre|Cinq|Six|Sept) regles", fiche, re.MULTILINE
+    )
     assert entete, "le titre des regles a change de forme : le test doit suivre"
-    mots = {"Une": 1, "Deux": 2, "Trois": 3, "Quatre": 4, "Cinq": 5, "Six": 6, "Sept": 7}
-    section = fiche[entete.end():]
+    mots = {
+        "Une": 1,
+        "Deux": 2,
+        "Trois": 3,
+        "Quatre": 4,
+        "Cinq": 5,
+        "Six": 6,
+        "Sept": 7,
+    }
+    section = fiche[entete.end() :]
     section = section.split("\n## ", 1)[0]
-    items = re.findall(r"^\d+\. ", section, re.M)
+    items = re.findall(r"^\d+\. ", section, re.MULTILINE)
     assert len(items) == mots[entete.group(1)], (
         f"le titre annonce {entete.group(1)} ({mots[entete.group(1)]}) et la liste en porte "
         f"{len(items)}"

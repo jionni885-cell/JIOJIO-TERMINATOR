@@ -19,8 +19,8 @@ from __future__ import annotations
 import hashlib
 import random
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
 
 from ..core.types import canonical
 from .base import Completion, Message
@@ -137,7 +137,9 @@ class Persona:
     name: str
     skill: float = 0.35
     temperature: float = 0.0
-    bias: float = 0.0  # decalage systematique (erreurs correlees entre agents "identiques")
+    bias: float = (
+        0.0  # decalage systematique (erreurs correlees entre agents "identiques")
+    )
 
 
 @dataclass
@@ -276,7 +278,9 @@ class SimulatedProvider:
             text = correct
             meta = {"simulated": True, "sim_correct": True}
         else:
-            text = distractors[rng.randrange(len(distractors))] if distractors else correct
+            text = (
+                distractors[rng.randrange(len(distractors))] if distractors else correct
+            )
             meta = {"simulated": True, "sim_correct": False}
 
         meta["effective_skill"] = round(effective, 4)

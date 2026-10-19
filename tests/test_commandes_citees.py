@@ -20,7 +20,6 @@ import pytest
 from jio.verify.claims import Genre, verifier
 from jio.verify.commands import commandes_citees, parser_reel, verifier_commande
 
-
 # --------------------------------------------------------------------------- #
 # 1. L'extraction : ce qui est une invocation, et ce qui n'en est pas
 # --------------------------------------------------------------------------- #
@@ -52,7 +51,7 @@ def test_une_commande_sans_backticks_n_est_pas_une_affirmation() -> None:
 @pytest.mark.parametrize(
     "ligne",
     [
-        "jio run \"objectif\" --prose",
+        'jio run "objectif" --prose',
         "jio mcp --prove 2>&1 | grep outil",
         "jio scan . --strict && jio claims README.md",
         "jio artifacts --write > /dev/null",
@@ -77,11 +76,11 @@ def test_les_enchainements_de_coquille_ne_sont_pas_des_options_jio(ligne: str) -
 def test_la_sous_commande_du_parseur_est_reconnue() -> None:
     """Chaque sous-commande reellement declaree doit passer : aucun faux positif."""
     parser = parser_reel()
-    declarees = sorted(
+    declarees = min(
         action.choices
-        for action in parser._actions  # noqa: SLF001
+        for action in parser._actions
         if hasattr(action, "choices") and isinstance(action.choices, dict)
-    )[0]
+    )
     assert declarees, "aucune sous-commande lue dans le parseur"
     for nom in declarees:
         commande = commandes_citees(f"`jio {nom}`")[0]
@@ -93,6 +92,20 @@ def test_une_faute_de_frappe_est_refutee_avec_la_bonne_piste() -> None:
     refus = verifier_commande(commandes_citees("`jio scna .`")[0])
     assert refus is not None
     assert "`jio scan`" in refus
+
+
+def test_options_de_sous_commandes_imbriquees_sont_verifiees() -> None:
+    valide = commandes_citees(
+        "`jio evolve compare --baseline old.json --candidate new.json --alpha 0.05`"
+    )[0]
+    invalide = commandes_citees(
+        "`jio evolve compare --basline old.json --candidate new.json`"
+    )[0]
+
+    assert verifier_commande(valide) is None
+    refus = verifier_commande(invalide)
+    assert refus is not None
+    assert "--baseline" in refus
 
 
 def test_une_option_inventee_est_refutee() -> None:
@@ -158,7 +171,9 @@ L'option correcte est `jio scan --strict`.
     assert rapport.conforme
 
 
-def test_la_racine_du_document_ne_change_pas_le_verdict_des_commandes(tmp_path: Path) -> None:
+def test_la_racine_du_document_ne_change_pas_le_verdict_des_commandes(
+    tmp_path: Path,
+) -> None:
     """Une commande n'est pas un chemin : elle ne depend pas de l'endroit ou on regarde."""
     fichier = tmp_path / "note.md"
     fichier.write_text("`jio scan .`\n", encoding="utf-8")
@@ -211,7 +226,7 @@ def test_le_registre_des_sous_commandes_est_lu_dans_le_parseur_reel() -> None:
     ou, si l'appelant lisait un dictionnaire vide comme « rien a verifier », ferait passer
     un document faux. Les deux sont pires que l'absence de controle.
     """
-    from jio.verify.commands import parser_reel, _sous_parsers
+    from jio.verify.commands import _sous_parsers, parser_reel
 
     sous = _sous_parsers(parser_reel())
     assert sous, "aucune sous-commande lue : le controle des citations ne controle rien"

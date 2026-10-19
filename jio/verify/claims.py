@@ -56,7 +56,7 @@ class Genre(str, Enum):
 #: Severite : ce qui est CERTAIN est bloquant, ce qui est probable est signale.
 SEVERITE = {
     Genre.ARITHMETIQUE: "VIOLATION",
-    Genre.BLOC_CODE: "VIOLATION",     # le bloc est ANNONCE comme python
+    Genre.BLOC_CODE: "VIOLATION",  # le bloc est ANNONCE comme python
     Genre.CHEMIN: "SIGNAL",
     # Une commande citee qui n'existe pas est une VIOLATION : l'oracle est le parseur du
     # programme lui-meme, donc il n'y a pas de doute a menager. Mais l'utilisateur doit
@@ -99,7 +99,12 @@ class Affirmation:
 #: produit un motif qui ne matchait PAS le signe `×` d'un document reel — un calcul
 #: faux passait donc sans etre vu. La classe est construite ICI, a partir de la table.
 OPERATEURS = {
-    "+": "add", "-": "sub", "*": "mul", "×": "mul", "x": "mul", "/": "truediv",
+    "+": "add",
+    "-": "sub",
+    "*": "mul",
+    "×": "mul",
+    "x": "mul",
+    "/": "truediv",
 }
 _CLASSE_OPERATEURS = "".join(re.escape(symbole) for symbole in OPERATEURS)
 
@@ -212,9 +217,12 @@ def _expression_avant(ligne: str, fin: int) -> str | None:
     """L'expression arithmetique qui se termine juste avant `fin`, ou `None`."""
     return _expression_avant_detail(ligne, fin)[0]
 
+
 _BLOC = re.compile(r"```(?P<langue>[A-Za-z0-9_+-]*)\n(?P<code>.*?)```", re.DOTALL)
 #: Un chemin cite : au moins un dossier, une extension connue, entre backticks.
-_CHEMIN = re.compile(r"`(?P<chemin>[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,6})`")
+_CHEMIN = re.compile(
+    r"`(?P<chemin>[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,6})`"
+)
 #: Langues dont on sait prouver la validite syntaxique. Un bloc `bash` n'est PAS du
 #: Python : le compiler comme tel produisait une accusation FAUSSE sur tout document
 #: contenant un exemple en ligne de commande — c'est-a-dire presque tous. On ne juge
@@ -232,8 +240,24 @@ _CODE_EVIDENT = re.compile(
 )
 
 _EXTENSIONS = {
-    ".py", ".md", ".json", ".jsonl", ".toml", ".yaml", ".yml", ".txt", ".sh",
-    ".mdc", ".cfg", ".ini", ".js", ".ts", ".html", ".css", ".sql", ".csv",
+    ".py",
+    ".md",
+    ".json",
+    ".jsonl",
+    ".toml",
+    ".yaml",
+    ".yml",
+    ".txt",
+    ".sh",
+    ".mdc",
+    ".cfg",
+    ".ini",
+    ".js",
+    ".ts",
+    ".html",
+    ".css",
+    ".sql",
+    ".csv",
 }
 
 
@@ -387,10 +411,12 @@ def _extraction_detail(texte: str) -> tuple[tuple[Affirmation, ...], int, int]:
     for calcul in _CALCUL_DROITE.finditer(texte):
         debut_ligne = texte.rfind("\n", 0, calcul.start()) + 1
         fin_ligne = texte.find("\n", calcul.start())
-        ligne_texte = texte[debut_ligne:fin_ligne if fin_ligne != -1 else len(texte)]
+        ligne_texte = texte[debut_ligne : fin_ligne if fin_ligne != -1 else len(texte)]
         if debut_ligne not in fragments:
             fragments[debut_ligne] = _fragments_cites(ligne_texte)
-        gauche, cause = _expression_avant_detail(ligne_texte, calcul.start() - debut_ligne)
+        gauche, cause = _expression_avant_detail(
+            ligne_texte, calcul.start() - debut_ligne
+        )
         if gauche is None:
             # Seule une chaine COUPEE est une lacune : un calcul existe et n'a pas pu
             # etre juge. Une annonce sans expression (« le total vaut 42 ms », `seq=0`)
@@ -413,7 +439,9 @@ def _extraction_detail(texte: str) -> tuple[tuple[Affirmation, ...], int, int]:
                 # absolue faisait perdre le marquage « cite », et le calcul faux cite
                 # par un document qui en PARLE redevenait bloquant.
                 cite=_est_cite(
-                    fragments[debut_ligne], depart - debut_ligne, calcul.end() - debut_ligne
+                    fragments[debut_ligne],
+                    depart - debut_ligne,
+                    calcul.end() - debut_ligne,
                 ),
             )
         )
@@ -459,7 +487,8 @@ def _compter_reste(texte: str, deja: int) -> int:
     """Combien d'affirmations existent au-dela de la limite de volume."""
     candidats = len(_BLOC.findall(texte)) + len(_CALCUL_DROITE.findall(texte))
     candidats += sum(
-        1 for c in _CHEMIN.finditer(texte)
+        1
+        for c in _CHEMIN.finditer(texte)
         if Path(c.group("chemin")).suffix.lower() in _EXTENSIONS
     )
     return max(0, candidats - max(deja, MAX_AFFIRMATIONS))
@@ -514,7 +543,9 @@ class RapportProse:
         if self.ignorees:
             manques += f" · {self.ignorees} NON verifiee(s) (limite de volume)"
         if self.non_evaluees:
-            manques += f" · {self.non_evaluees} calcul(s) trop long(s) pour etre evalue(s)"
+            manques += (
+                f" · {self.non_evaluees} calcul(s) trop long(s) pour etre evalue(s)"
+            )
         return (
             f"{self.verifiees} affirmation(s) verifiee(s) · "
             f"{self.refutees} refutee(s) dont {len(self.bloquantes)} bloquante(s) · "
@@ -553,7 +584,7 @@ def _verifier_une(
         # stricte au 1e-9, comme avant. Le pourcentage multiplie la valeur par 100 : c'est
         # ce que « pour cent » veut dire, pas une indulgence.
         if pourcent:
-            attendu, obtenu = attendu, obtenu * 100
+            obtenu *= 100
             decimales = len(droite.replace(",", ".").partition(".")[2])
             tolerance = 0.5 * 10 ** (-decimales) + 1e-9
         else:
@@ -563,7 +594,9 @@ def _verifier_une(
             # Une CITATION : le document parle d'un calcul, il ne l'affirme pas. Un
             # texte qui explique les erreurs d'arithmetique en cite forcement.
             return Verification(
-                affirmation=affirmation, ok=ok, bloquant=False,
+                affirmation=affirmation,
+                ok=ok,
+                bloquant=False,
                 message=(
                     f"calcul CITE (entre backticks) : « {affirmation.extrait} » — "
                     f"{gauche.strip()} vaut {obtenu:g}{' %' if pourcent else ''}, "
@@ -599,7 +632,9 @@ def _verifier_une(
         refus = verifier_commande(citees[0])
         if refus is None:
             return Verification(
-                affirmation=affirmation, ok=True, bloquant=True,
+                affirmation=affirmation,
+                ok=True,
+                bloquant=True,
                 message=f"commande citee EXISTE : `jio {affirmation.detail} ...`",
             )
         # UNE CONSIGNE N'ILLUSTRE RIEN. Dans un document, un bloc de code peut montrer un
@@ -608,7 +643,9 @@ def _verifier_une(
         # la signaler sans la condamner laisserait passer exactement le defaut qu'on cherche.
         bloquant = not affirmation.cite or consigne
         return Verification(
-            affirmation=affirmation, ok=False, bloquant=bloquant,
+            affirmation=affirmation,
+            ok=False,
+            bloquant=bloquant,
             message=(
                 f"{refus}"
                 if bloquant
@@ -633,7 +670,9 @@ def _verifier_une(
                 ast.parse(affirmation.extrait or "pass")
             except SyntaxError as exc:
                 return Verification(
-                    affirmation=affirmation, ok=False, bloquant=False,
+                    affirmation=affirmation,
+                    ok=False,
+                    bloquant=False,
                     message=(
                         f"bloc NON MARQUE qui est manifestement du code et qui ne "
                         f"compile pas ({exc.msg}) : illustration ou erreur, on signale "
@@ -645,24 +684,34 @@ def _verifier_une(
             ast.parse(affirmation.extrait or "pass")
         except SyntaxError as exc:
             return Verification(
-                affirmation=affirmation, ok=False, bloquant=True,
+                affirmation=affirmation,
+                ok=False,
+                bloquant=True,
                 message=(
                     f"bloc presente comme `{affirmation.detail}` et qui NE COMPILE PAS : "
                     f"{exc.msg} (ligne {exc.lineno}). Un fait, pas une opinion."
                 ),
             )
         return Verification(
-            affirmation=affirmation, ok=True, bloquant=True,
+            affirmation=affirmation,
+            ok=True,
+            bloquant=True,
             message=f"bloc `{affirmation.detail}` compile",
         )
 
     # CHEMIN : signale, jamais accuse.
     cible = (racine / affirmation.detail) if racine else Path(affirmation.detail)
     if cible.exists():
-        return Verification(affirmation=affirmation, ok=True, bloquant=False,
-                            message=f"chemin cite present : {affirmation.detail}")
+        return Verification(
+            affirmation=affirmation,
+            ok=True,
+            bloquant=False,
+            message=f"chemin cite present : {affirmation.detail}",
+        )
     return Verification(
-        affirmation=affirmation, ok=False, bloquant=False,
+        affirmation=affirmation,
+        ok=False,
+        bloquant=False,
         message=(
             f"chemin cite INTROUVABLE sous {racine} : `{affirmation.detail}`. Un document "
             "peut decrire un fichier a creer ou citer une autre machine — on le signale, "
@@ -690,7 +739,9 @@ def verifier(
     for affirmation in affirmations:
         if affirmation.genre is Genre.CHEMIN and racine is None:
             continue
-        verification = _verifier_une(affirmation, racine or Path("."), consigne=consigne)
+        verification = _verifier_une(
+            affirmation, racine or Path("."), consigne=consigne
+        )
         if verification is None:
             continue
         sorties.append(verification)

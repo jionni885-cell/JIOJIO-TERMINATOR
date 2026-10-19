@@ -68,9 +68,9 @@ __all__ = [
     "Document",
     "catalogue_du_depot",
     "choisir",
-    "proches",
     "cout",
     "jetons",
+    "proches",
     "stem",
 ]
 
@@ -129,13 +129,199 @@ SEUIL_CONCEPTS = 2
 
 #: Mots outils francais et anglais : presents dans presque tous les objectifs, donc ils ne
 #: classent rien. « the », « de », « le » gagneraient sinon au detriment du sujet.
-MOTS_VIDES = frozenset(["au", "aux", "avec", "ce", "ces", "dans", "de", "des", "du", "elle", "en", "est", "et", "eux", "il", "ils", "je", "la", "le", "les", "leur", "lui", "ma", "mais", "me", "mes", "moi", "mon", "ne", "nos", "notre", "nous", "on", "ou", "par", "pas", "pour", "qu", "que", "quelle", "quelles", "quel", "quels", "qui", "sa", "sans", "se", "ses", "si", "soi", "son", "sont", "sous", "sur", "ta", "te", "tes", "toi", "ton", "tu", "un", "une", "vos", "votre", "vous", "c", "d", "j", "l", "a", "m", "n", "s", "t", "y", "ete", "etre", "avoir", "fait", "faire", "plus", "moins", "tres", "bien", "tout", "tous", "toute", "toutes", "meme", "aussi", "comme", "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "can", "could", "did", "do", "does", "for", "from", "had", "has", "have", "he", "her", "his", "how", "i", "if", "in", "into", "is", "it", "its", "just", "me", "more", "most", "my", "no", "not", "of", "on", "or", "our", "out", "over", "she", "should", "so", "some", "such", "than", "that", "the", "their", "them", "then", "there", "these", "they", "this", "those", "to", "too", "under", "up", "us", "was", "we", "were", "what", "when", "where", "which", "who", "why", "will", "with", "would", "you", "your"])
+MOTS_VIDES = frozenset(
+    [
+        "au",
+        "aux",
+        "avec",
+        "ce",
+        "ces",
+        "dans",
+        "de",
+        "des",
+        "du",
+        "elle",
+        "en",
+        "est",
+        "et",
+        "eux",
+        "il",
+        "ils",
+        "je",
+        "la",
+        "le",
+        "les",
+        "leur",
+        "lui",
+        "ma",
+        "mais",
+        "me",
+        "mes",
+        "moi",
+        "mon",
+        "ne",
+        "nos",
+        "notre",
+        "nous",
+        "on",
+        "ou",
+        "par",
+        "pas",
+        "pour",
+        "qu",
+        "que",
+        "quelle",
+        "quelles",
+        "quel",
+        "quels",
+        "qui",
+        "sa",
+        "sans",
+        "se",
+        "ses",
+        "si",
+        "soi",
+        "son",
+        "sont",
+        "sous",
+        "sur",
+        "ta",
+        "te",
+        "tes",
+        "toi",
+        "ton",
+        "tu",
+        "un",
+        "une",
+        "vos",
+        "votre",
+        "vous",
+        "c",
+        "d",
+        "j",
+        "l",
+        "a",
+        "m",
+        "n",
+        "s",
+        "t",
+        "y",
+        "ete",
+        "etre",
+        "avoir",
+        "fait",
+        "faire",
+        "plus",
+        "moins",
+        "tres",
+        "bien",
+        "tout",
+        "tous",
+        "toute",
+        "toutes",
+        "meme",
+        "aussi",
+        "comme",
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "been",
+        "but",
+        "by",
+        "can",
+        "could",
+        "did",
+        "do",
+        "does",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "he",
+        "her",
+        "his",
+        "how",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "just",
+        "me",
+        "more",
+        "most",
+        "my",
+        "no",
+        "not",
+        "of",
+        "on",
+        "or",
+        "our",
+        "out",
+        "over",
+        "she",
+        "should",
+        "so",
+        "some",
+        "such",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "to",
+        "too",
+        "under",
+        "up",
+        "us",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
+    ]
+)
 
 #: Suffixes retires pour rapprocher les formes flechies. Volontairement LIMITE : un radical trop
 #: agressif rapproche des mots sans rapport et rend le classement inexpliquable. Le retrait n'a
 #: lieu que si le reste fait au moins quatre caracteres — la borne que la porte de clarification
 #: a payee avant nous.
-SUFFIXES = ("ations", "ation", "ements", "ement", "ing", "es", "s", "e", "er", "ir", "re", "ant")
+SUFFIXES = (
+    "ations",
+    "ation",
+    "ements",
+    "ement",
+    "ing",
+    "es",
+    "s",
+    "e",
+    "er",
+    "ir",
+    "re",
+    "ant",
+)
 
 
 def _sans_accent(texte: str) -> str:
@@ -267,7 +453,9 @@ class Catalogue:
         total = cat._longueur.values()
         cat._moyenne = (sum(total) / len(cat._longueur)) if cat._longueur else 1.0
         total_corps = cat._longueur_corps.values()
-        cat._moyenne_corps = (sum(total_corps) / len(total_corps)) if cat._longueur_corps else 1.0
+        cat._moyenne_corps = (
+            (sum(total_corps) / len(total_corps)) if cat._longueur_corps else 1.0
+        )
         n = len(cat.documents)
         presence: Counter[str] = Counter()
         for termes in cat._termes.values():
@@ -276,7 +464,8 @@ class Catalogue:
         # present partout : un mot que toutes les competences contiennent ne classe rien, sans
         # pour autant devenir un score negatif qui perturberait la somme.
         cat._idf = {
-            terme: math.log(1 + (n - df + 0.5) / (df + 0.5)) for terme, df in presence.items()
+            terme: math.log(1 + (n - df + 0.5) / (df + 0.5))
+            for terme, df in presence.items()
         }
         presence_corps: Counter[str] = Counter()
         for termes in cat._termes_corps.values():
@@ -286,8 +475,10 @@ class Catalogue:
             terme: math.log(1 + (n_corps - df + 0.5) / (df + 0.5))
             for terme, df in presence_corps.items()
         }
-        cat._norme = {nom: math.sqrt(sum(v * v for v in t.values())) or 1.0
-                      for nom, t in cat._termes.items()}
+        cat._norme = {
+            nom: math.sqrt(sum(v * v for v in t.values())) or 1.0
+            for nom, t in cat._termes.items()
+        }
         # Le vocabulaire du domaine ne vient QUE du champ 1 : c'est la garde qui empeche une
         # prose de competence de transformer un hors-sujet en objectif du domaine.
         cat._vocabulaire = frozenset(presence)
@@ -322,7 +513,11 @@ class Catalogue:
         return self._bm25_champ(
             nom, requete, self._termes, self._longueur, self._moyenne, self._idf
         ) + POIDS_CORPS * self._bm25_champ(
-            nom, requete, self._termes_corps, self._longueur_corps, self._moyenne_corps,
+            nom,
+            requete,
+            self._termes_corps,
+            self._longueur_corps,
+            self._moyenne_corps,
             self._idf_corps,
         )
 
@@ -334,7 +529,9 @@ class Catalogue:
         produit = sum(a[t] * b[t] for t in commun)
         return produit / (self._norme[gauche] * self._norme[droite])
 
-    def raisons(self, nom: str, requete: Counter[str], combien: int = 3) -> tuple[str, ...]:
+    def raisons(
+        self, nom: str, requete: Counter[str], combien: int = 3
+    ) -> tuple[str, ...]:
         """Les termes qui ont le plus pese, avec leur contribution — le POURQUOI du choix.
 
         Les deux champs sont cites, parce que le score vient des deux : un terme du corps est
@@ -346,7 +543,12 @@ class Catalogue:
         tiers0, corps_champ = self._termes.get(nom, {}), self._termes_corps.get(nom, {})
         for terme, qtf in requete.items():
             apport = self._idf.get(terme, 0.0) * tiers0.get(terme, 0.0) * qtf
-            apport += POIDS_CORPS * self._idf_corps.get(terme, 0.0) * corps_champ.get(terme, 0.0) * qtf
+            apport += (
+                POIDS_CORPS
+                * self._idf_corps.get(terme, 0.0)
+                * corps_champ.get(terme, 0.0)
+                * qtf
+            )
             if apport:
                 # Le terme est cite UNE fois, avec l'apport des deux champs additionne : deux
                 # lignes pour le meme mot feraient lire deux raisons la ou il n'y en a qu'une.
@@ -354,7 +556,9 @@ class Catalogue:
                 marque = "" if tiers0.get(terme) else "corps:"
                 apports[f"{marque}{terme}"] = apport
         classement = sorted(apports.items(), key=lambda x: (-x[1], x[0]))
-        return tuple(f"{terme} ({valeur:.2f})" for terme, valeur in classement[:combien])
+        return tuple(
+            f"{terme} ({valeur:.2f})" for terme, valeur in classement[:combien]
+        )
 
     @property
     def idf(self) -> dict[str, float]:
@@ -373,7 +577,9 @@ class Catalogue:
         comme pour BM25F — un mot-cle choisi dans le seul tiers 0 passerait a cote des procedures
         dont la prose dit quand elles s'appliquent.
         """
-        return Counter(self._termes.get(nom, {})) + Counter(self._termes_corps.get(nom, {}))
+        return Counter(self._termes.get(nom, {})) + Counter(
+            self._termes_corps.get(nom, {})
+        )
 
     def classement(self, objectif: str) -> list[tuple[str, float]]:
         """Les competences CLASSEES par BM25F, sans porte et SANS diversification MMR.
@@ -389,7 +595,9 @@ class Catalogue:
         if not requete:
             return []
         scores = {doc.nom: self._bm25(doc.nom, requete) for doc in self.documents}
-        return [(nom, scores[nom]) for nom in sorted(scores, key=lambda n: (-scores[n], n))]
+        return [
+            (nom, scores[nom]) for nom in sorted(scores, key=lambda n: (-scores[n], n))
+        ]
 
     def mots_du_domaine(self, objectif: str) -> frozenset[str]:
         """Les mots de DOMAINE de l'objectif, ramenes a leur RADICAL.
@@ -418,7 +626,8 @@ class Catalogue:
         from .lexique import CONCEPT
 
         return frozenset(
-            stem(m) for m in jetons(objectif)
+            stem(m)
+            for m in jetons(objectif)
             if m in CONCEPT or m in self._vocabulaire or stem(m) in self._vocabulaire
         )
 
@@ -456,13 +665,22 @@ class Catalogue:
         # -- 3. le classement BM25, puis la diversification MMR.
         scores = {doc.nom: self._bm25(doc.nom, requete) for doc in self.documents}
         par_nom = {doc.nom: doc for doc in self.documents}
-        restants = [nom for nom in sorted(scores, key=lambda n: (-scores[n], n)) if scores[nom] > 0]
+        restants = [
+            nom
+            for nom in sorted(scores, key=lambda n: (-scores[n], n))
+            if scores[nom] > 0
+        ]
         meilleur = max(scores.values(), default=0.0)
         choisis: list[str] = []
         while restants and len(choisis) < max(1, maximum):
+
             def cle(nom: str) -> tuple[float, str]:
-                redondance = max((self._cosinus(nom, deja) for deja in choisis), default=0.0)
-                valeur = LAMBDA * scores[nom] - (1 - LAMBDA) * redondance * (meilleur or 1.0)
+                redondance = max(
+                    (self._cosinus(nom, deja) for deja in choisis), default=0.0
+                )
+                valeur = LAMBDA * scores[nom] - (1 - LAMBDA) * redondance * (
+                    meilleur or 1.0
+                )
                 return (-valeur, nom)
 
             retenu = min(restants, key=cle)
@@ -521,11 +739,18 @@ def catalogue_du_depot() -> Catalogue:
     if _CATALOGUE is None:
         from ..artifacts.definitions import SKILLS
 
-        _CATALOGUE = Catalogue.depuis([
-            Document(nom=s.name, categorie=s.category, description=s.description,
-                     tags=tuple(s.tags), corps=s.body)
-            for s in SKILLS
-        ])
+        _CATALOGUE = Catalogue.depuis(
+            [
+                Document(
+                    nom=s.name,
+                    categorie=s.category,
+                    description=s.description,
+                    tags=tuple(s.tags),
+                    corps=s.body,
+                )
+                for s in SKILLS
+            ]
+        )
     return _CATALOGUE
 
 
@@ -591,17 +816,27 @@ def proches(objectif: str, *, maximum: int = 3) -> list[Choix]:
     if len(retenus) >= maximum:
         return retenus
 
-    from .vecteurs import appariement, classement_semantique, mots_cles, raisons_semantiques
-    from .vecteurs import table_du_depot
+    from .vecteurs import (
+        appariement,
+        classement_semantique,
+        mots_cles,
+        raisons_semantiques,
+        table_du_depot,
+    )
 
     table = table_du_depot()
     if table is None:
         return retenus
 
-    cles = {doc.nom: mots_cles(catalogue, doc.nom, table) for doc in catalogue.documents}
+    cles = {
+        doc.nom: mots_cles(catalogue, doc.nom, table) for doc in catalogue.documents
+    }
     deja = {c.nom for c in retenus}
-    ordre = [nom for nom in classement_semantique(catalogue, objectif, table, cles)
-             if nom not in deja]
+    ordre = [
+        nom
+        for nom in classement_semantique(catalogue, objectif, table, cles)
+        if nom not in deja
+    ]
     par_nom = {doc.nom: doc for doc in catalogue.documents}
     proximites = appariement(catalogue, objectif, cles, table)
     for nom in ordre[: maximum - len(retenus)]:
@@ -615,8 +850,11 @@ def proches(objectif: str, *, maximum: int = 3) -> list[Choix]:
                 # ressemblance, elle, est mesuree — elle a son propre champ, pour qu'aucun
                 # affichage ne confonde les deux echelles.
                 score=0.0,
-                raisons=(f"aucun mot commun — {', '.join(voisins)}" if voisins
-                         else "aucun mot commun, aucune ressemblance mesuree",),
+                raisons=(
+                    f"aucun mot commun — {', '.join(voisins)}"
+                    if voisins
+                    else "aucun mot commun, aucune ressemblance mesuree",
+                ),
                 cout_jetons=doc.cout_jetons,
                 proximite=round(proximites.get(nom, 0.0), 4),
             )

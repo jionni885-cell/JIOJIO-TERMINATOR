@@ -2,7 +2,7 @@
 
 from .blame import BlameLedger, CreditReport, FirstErrorLocator, credit, shapley_values
 from .consensus import ConsensusEngine, ConsensusOutcome
-from .integrity import IntegrityMonitor, PROTECTED_PATHS
+from .integrity import PROTECTED_PATHS, IntegrityMonitor
 from .oscillation import OscillationGuard, ProgressPoint
 from .panel import (
     DEFAULT_PERSONAS,
@@ -15,22 +15,22 @@ from .panel import (
 )
 
 __all__ = [
+    "DEFAULT_PERSONAS",
+    "PROTECTED_PATHS",
+    "AuditPanel",
     "BlameLedger",
-    "CreditReport",
-    "FirstErrorLocator",
-    "credit",
-    "shapley_values",
     "ConsensusEngine",
     "ConsensusOutcome",
-    "IntegrityMonitor",
-    "PROTECTED_PATHS",
-    "OscillationGuard",
-    "ProgressPoint",
-    "AuditPanel",
+    "CreditReport",
     "Critic",
     "CriticReport",
-    "Persona",
-    "SimulatedCritic",
+    "FirstErrorLocator",
+    "IntegrityMonitor",
     "LLMCritic",
-    "DEFAULT_PERSONAS",
+    "OscillationGuard",
+    "Persona",
+    "ProgressPoint",
+    "SimulatedCritic",
+    "credit",
+    "shapley_values",
 ]

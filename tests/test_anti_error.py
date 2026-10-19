@@ -13,7 +13,6 @@ from jio.gate.conformal import Calibration, ConformalGate
 from jio.verify.entropy import semantic_entropy
 from jio.verify.metamorphic import MetamorphicTester, jaccard
 
-
 # --------------------------------------------------------------------------- #
 # Oscillation — le seuil de stabilite (arXiv 2606.27409)
 # --------------------------------------------------------------------------- #
@@ -290,7 +289,7 @@ def test_first_error_returns_none_when_all_ok():
 def test_shapley_credit_is_conserved():
     """Propriete fondamentale : sum(phi_i) == v(N)."""
     players = ["a", "b", "c"]
-    value = lambda S: float(len(S) ** 2)  # noqa: E731
+    value = lambda S: float(len(S) ** 2)
     vals = shapley_values(players, value)
     assert sum(vals.values()) == pytest.approx(value(frozenset(players)), abs=1e-6)
 
@@ -302,7 +301,7 @@ def test_shapley_symmetric_players_get_equal_credit():
 
 def test_credit_flags_harmful_agent():
     """Un agent a valeur negative n'est pas inutile : il est NUISIBLE."""
-    value = lambda S: 1.0 if "good" in S and "bad" not in S else 0.0  # noqa: E731
+    value = lambda S: 1.0 if "good" in S and "bad" not in S else 0.0
     report = credit(["good", "bad"], value)
     assert report.conserved
     assert "bad" in report.saboteurs

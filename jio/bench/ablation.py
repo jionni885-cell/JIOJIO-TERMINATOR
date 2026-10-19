@@ -30,8 +30,8 @@ Trois regles, ecrites ici parce qu'elles decident du rapport :
 from __future__ import annotations
 
 import math
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Callable, Iterable, Mapping, Sequence
 
 from ..audit.consensus import ConsensusOutcome
 from ..audit.panel import CriticReport, Persona
@@ -355,9 +355,11 @@ class Issue:
     """
 
     juste: bool
-    livree: bool          # livree SANS reserve
-    reservee: bool        # livree AVEC reserve : le systeme a signale quelque chose
-    silencieuse: bool     # livree sans reserve ET fausse — le seul chiffre qui doit valoir 0
+    livree: bool  # livree SANS reserve
+    reservee: bool  # livree AVEC reserve : le systeme a signale quelque chose
+    silencieuse: (
+        bool  # livree sans reserve ET fausse — le seul chiffre qui doit valoir 0
+    )
     abstention: bool
     appels: int
     duree_s: float = 0.0
@@ -535,41 +537,53 @@ def _verdict(comp: Comparaison) -> tuple[str, str]:
     if comp.silencieuses_sans > comp.silencieuses_avec:
         return (
             "PREUVE (existence)",
-            f"retirer cette brique fait livrer {comp.silencieuses_sans} erreur(s) sans "
-            f"reserve (contre {comp.silencieuses_avec}) : preuve d'existence.",
+            (
+                f"retirer cette brique fait livrer {comp.silencieuses_sans} erreur(s) sans "
+                f"reserve (contre {comp.silencieuses_avec}) : preuve d'existence."
+            ),
         )
     if comp.p_propre <= 0.05 and comp.c_propre > comp.b_propre:
         return (
             "COUT MESURE",
-            f"retirer cette brique rend les livraisons PLUS propres : "
-            f"{comp.c_propre} gagnee(s) contre {comp.b_propre} perdue(s) "
-            f"(McNemar exact p = {comp.p_propre:.4f}). A justifier, ou a interroger.",
+            (
+                f"retirer cette brique rend les livraisons PLUS propres : "
+                f"{comp.c_propre} gagnee(s) contre {comp.b_propre} perdue(s) "
+                f"(McNemar exact p = {comp.p_propre:.4f}). A justifier, ou a interroger."
+            ),
         )
     if comp.p_propre <= 0.05 and comp.b_propre > comp.c_propre:
         return (
             "PREUVE (livraison propre)",
-            f"{comp.b_propre} mission(s) ne sont plus livrees SANS reserve contre "
-            f"{comp.c_propre} (McNemar exact p = {comp.p_propre:.4f}) : la brique ne rend "
-            "pas le resultat plus juste, elle le rend livrable.",
+            (
+                f"{comp.b_propre} mission(s) ne sont plus livrees SANS reserve contre "
+                f"{comp.c_propre} (McNemar exact p = {comp.p_propre:.4f}) : la brique ne rend "
+                "pas le resultat plus juste, elle le rend livrable."
+            ),
         )
     if comp.p_exact <= 0.05 and comp.b > comp.c:
         return (
             "PREUVE (perte)",
-            f"{comp.b} mission(s) perdue(s) contre {comp.c} gagnee(s) "
-            f"a l'ablation (McNemar exact p = {comp.p_exact:.4f}).",
+            (
+                f"{comp.b} mission(s) perdue(s) contre {comp.c} gagnee(s) "
+                f"a l'ablation (McNemar exact p = {comp.p_exact:.4f})."
+            ),
         )
     if comp.b == 0 and comp.c == 0 and comp.b_propre == 0 and comp.c_propre == 0:
         return (
             "NON DISTINGUABLE",
-            f"aucune dissociation sur {comp.n} mission(s) appariee(s), ni sur la justesse "
-            f"ni sur la livraison propre ; effet mesure dans "
-            f"[{comp.ic_bas:+.0%} ; {comp.ic_haut:+.0%}].",
+            (
+                f"aucune dissociation sur {comp.n} mission(s) appariee(s), ni sur la justesse "
+                f"ni sur la livraison propre ; effet mesure dans "
+                f"[{comp.ic_bas:+.0%} ; {comp.ic_haut:+.0%}]."
+            ),
         )
     return (
         "NON CONCLUANT",
-        f"justesse : {comp.b} dissociation(s) d'un cote, {comp.c} de l'autre ; "
-        f"livraison propre : {comp.b_propre} contre {comp.c_propre} "
-        f"(p = {comp.p_propre:.3f}).",
+        (
+            f"justesse : {comp.b} dissociation(s) d'un cote, {comp.c} de l'autre ; "
+            f"livraison propre : {comp.b_propre} contre {comp.c_propre} "
+            f"(p = {comp.p_propre:.3f})."
+        ),
     )
 
 
@@ -675,7 +689,10 @@ class RapportAblation:
                     "b_propre": c.b_propre,
                     "c_propre": c.c_propre,
                     "p_propre": round(c.p_propre, 6),
-                    "ic95_points": [round(100 * c.ic_bas, 1), round(100 * c.ic_haut, 1)],
+                    "ic95_points": [
+                        round(100 * c.ic_bas, 1),
+                        round(100 * c.ic_haut, 1),
+                    ],
                     "missions_activite_differente": c.missions_activite_differente,
                     "observations_avec": c.observations_avec,
                     "observations_sans": c.observations_sans,
@@ -730,13 +747,16 @@ def _activite_de_sens(activite: Mapping[str, int]) -> tuple[tuple[str, int], ...
     return tuple(sorted((c, v) for c, v in activite.items() if _a_du_sens(c)))
 
 
-def _ecarts(avec: Mapping[str, int], sans: Mapping[str, int]) -> tuple[tuple[str, int, int], ...]:
+def _ecarts(
+    avec: Mapping[str, int], sans: Mapping[str, int]
+) -> tuple[tuple[str, int, int], ...]:
     """Les cles dont le compte change, triees par ecart decroissant puis par nom.
 
     Le tri est ce qui rend la note lisible ET stable : un dictionnaire parcouru dans un
     ordre arbitraire ferait varier le texte d'un rapport a l'autre sans qu'une mesure
     change, et un rapport qui bouge tout seul n'est pas une preuve.
     """
+
     def rang(c: str) -> tuple[int, int, str]:
         return (0 if _a_du_sens(c) else 1, -(avec.get(c, 0) - sans.get(c, 0)), c)
 
@@ -795,8 +815,12 @@ def _phrase_activite(comp: Comparaison) -> str:
             "la brique ait quelque chose a faire, ou un autre mode."
         )
     apercu = ", ".join(
-        f"{cle} {avec}->{sans}" for cle, avec, sans in comp.ecarts_activite if _a_du_sens(cle)
-    ) or ", ".join(f"{cle} {avec}->{sans}" for cle, avec, sans in comp.ecarts_activite[:3])
+        f"{cle} {avec}->{sans}"
+        for cle, avec, sans in comp.ecarts_activite
+        if _a_du_sens(cle)
+    ) or ", ".join(
+        f"{cle} {avec}->{sans}" for cle, avec, sans in comp.ecarts_activite[:3]
+    )
     tete = (
         f"la brique AGIT sur {comp.missions_activite_differente}/{comp.n} mission(s) "
         f"({apercu})."
@@ -805,19 +829,22 @@ def _phrase_activite(comp: Comparaison) -> str:
     contre = comp.c + comp.c_propre
     if pour == 0 and contre == 0:
         return (
-            tete + " Aucune dissociation ici : sur ces missions elle est REDONDANTE — les "
+            tete
+            + " Aucune dissociation ici : sur ces missions elle est REDONDANTE — les "
             "autres briques tenaient deja la ligne — et non absente : retirer du code sur "
             "cette base serait une conclusion tiree d'un banc qui ne l'a pas mise en "
             "difficulte."
         )
     if pour >= contre:
         return (
-            tete + f" Les ecarts observes vont dans SON sens ({pour} contre {contre}) : elle "
+            tete
+            + f" Les ecarts observes vont dans SON sens ({pour} contre {contre}) : elle "
             "travaille, et ce qui manque est un echantillon plus grand ou des missions plus "
             "dures — pas une brique a retirer."
         )
     return (
-        tete + f" Les ecarts vont CONTRE elle ({contre} contre {pour}) : a interroger, car "
+        tete
+        + f" Les ecarts vont CONTRE elle ({contre} contre {pour}) : a interroger, car "
         "une brique qui degrade la ou elle agit est un cout, pas une assurance."
     )
 
@@ -898,7 +925,8 @@ def mesurer(
         missions_activite = sum(
             1
             for a, s in zip(complet.issues, bras.issues)
-            if _activite_de_sens(dict(a.activite)) != _activite_de_sens(dict(s.activite))
+            if _activite_de_sens(dict(a.activite))
+            != _activite_de_sens(dict(s.activite))
         )
         comparaison = Comparaison(
             nom=nom,
@@ -989,7 +1017,9 @@ def formater(rapport: RapportAblation) -> str:
     lignes.append(
         "    Lecture : une erreur SILENCIEUSE est une mission livree sans reserve et fausse."
     )
-    lignes.append("    C'est le seul chiffre qui doit valoir zero ; le reste se lit ensuite.")
+    lignes.append(
+        "    C'est le seul chiffre qui doit valoir zero ; le reste se lit ensuite."
+    )
     lignes.append("")
     largeurs = (13, 15, 8, 8, 11, 6, 7, 10)
     lignes.append(

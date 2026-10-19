@@ -48,12 +48,14 @@ class ModuleInfo:
     """Ce qu'un fichier du projet declare et importe."""
 
     path: Path
-    dotted: str                       # nom module plausible ("pkg.mod" vu depuis la racine)
-    package: str                      # paquet contenant le fichier
-    defines: set[str]                 # noms de premier niveau declares
+    dotted: str  # nom module plausible ("pkg.mod" vu depuis la racine)
+    package: str  # paquet contenant le fichier
+    defines: set[str]  # noms de premier niveau declares
     imports: list[tuple[str, tuple[str, ...], int]]  # (module, noms, ligne)
     relative: list[tuple[int, str, tuple[str, ...]]]  # (niveau, module, noms)
-    attributes: list[tuple[str, int]] = field(default_factory=list)  # ("pkg.a.helper", ligne)
+    attributes: list[tuple[str, int]] = field(
+        default_factory=list
+    )  # ("pkg.a.helper", ligne)
     parses: bool = True
     error: str = ""
     #: Le module contient un `from X import *`. Ses noms exportables ne sont donc PAS
@@ -115,8 +117,10 @@ def _toplevel_names(tree: ast.Module) -> set[str]:
                     parcours(handler.body)
                 parcours(node.orelse)
                 parcours(node.finalbody)
-            elif isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With,
-                                   ast.AsyncWith)):
+            elif isinstance(
+                node,
+                (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith),
+            ):
                 parcours(node.body)
                 # `node.orelse` est vide pour With ; l'attribut existe pour les autres.
                 parcours(getattr(node, "orelse", []))
@@ -142,8 +146,16 @@ def analyse(path: Path, root: Path) -> ModuleInfo:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
     except SyntaxError as exc:
-        return ModuleInfo(path, dotted, package, set(), [], [], parses=False,
-                          error=f"{exc.msg} (ligne {exc.lineno})")
+        return ModuleInfo(
+            path,
+            dotted,
+            package,
+            set(),
+            [],
+            [],
+            parses=False,
+            error=f"{exc.msg} (ligne {exc.lineno})",
+        )
 
     imports: list[tuple[str, tuple[str, ...], int]] = []
     relative: list[tuple[int, str, tuple[str, ...]]] = []
@@ -173,9 +185,11 @@ def analyse(path: Path, root: Path) -> ModuleInfo:
     shadows: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            args = node.args if not isinstance(node, ast.Lambda) else node.args
-            for arg in list(getattr(args, "posonlyargs", [])) + list(args.args) + list(
-                args.kwonlyargs
+            args = node.args
+            for arg in (
+                list(getattr(args, "posonlyargs", []))
+                + list(args.args)
+                + list(args.kwonlyargs)
             ):
                 shadows.add(arg.arg)
             if args.vararg:
@@ -203,8 +217,15 @@ def analyse(path: Path, root: Path) -> ModuleInfo:
         for node in ast.walk(tree)
     )
     return ModuleInfo(
-        path, dotted, package, _toplevel_names(tree), imports, relative, attributes,
-        etoile=etoile, dynamique=_fabrique_ses_noms(tree),
+        path,
+        dotted,
+        package,
+        _toplevel_names(tree),
+        imports,
+        relative,
+        attributes,
+        etoile=etoile,
+        dynamique=_fabrique_ses_noms(tree),
     )
 
 
@@ -344,7 +365,7 @@ def _resolve(
             info.path: info
             for info in table.values()
             if len(info.dotted.split(".")) >= len(suffix)
-            and info.dotted.split(".")[-len(suffix):] == suffix
+            and info.dotted.split(".")[-len(suffix) :] == suffix
         }
         if len(matches) == 1:
             return next(iter(matches.values()))
@@ -388,6 +409,7 @@ def check_project(
             f"remplacement dans sys.modules) : les noms importes depuis ce module ne sont "
             f"pas verifiables ici ({target.path.name}). Ce n'est pas un defaut du fichier."
         )
+
     # Prefixes qu'un fichier peut abandonner dans un import absolu : les noms des paquets
     # ancetres, lus sur le disque (voir `_espaces_d_import`). C'est le SEUL ensemble
     # accepte (voir `_resolve`).
@@ -418,7 +440,10 @@ def check_project(
             if target is None and info.package:
                 # un projet peut s'importer depuis sa propre racine
                 target = _resolve(
-                    f"{info.package}.{module}", table, absolu=True, espaces=noms_du_fichier
+                    f"{info.package}.{module}",
+                    table,
+                    absolu=True,
+                    espaces=noms_du_fichier,
                 )
             if target is None or not target.parses:
                 continue  # import externe ou non resolu : on ne dit rien
@@ -437,15 +462,19 @@ def check_project(
                 # `from pkg import a` ou `a` est le SOUS-MODULE pkg/a.py : forme
                 # parfaitement valide en Python, et courante dans le code reel.
                 # L'ignorer produisait une fausse alerte sur chaque projet.
-                if _resolve(
-                    f"{module}.{name}", table, absolu=True, espaces=noms_du_fichier
-                ) is not None:
+                if (
+                    _resolve(
+                        f"{module}.{name}", table, absolu=True, espaces=noms_du_fichier
+                    )
+                    is not None
+                ):
                     continue
                 if _resolve(f"{target.dotted}.{name}", table) is not None:
                     continue
                 problems.append(
                     ImportProblem(
-                        info.path, line,
+                        info.path,
+                        line,
                         f"`{name}` est importe de `{module}` mais n'y existe pas "
                         f"({target.path.name} ne declare pas ce nom, et aucun "
                         f"sous-module ne porte ce nom)",
@@ -479,7 +508,8 @@ def check_project(
                     continue
                 problems.append(
                     ImportProblem(
-                        info.path, 0,
+                        info.path,
+                        0,
                         f"`{name}` est importe de `{module}` (relatif) mais n'y existe pas",
                     )
                 )

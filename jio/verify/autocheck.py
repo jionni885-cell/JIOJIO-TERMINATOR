@@ -164,7 +164,9 @@ def _est_une_fixture(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 
 def _class_defs(tree: ast.Module) -> dict[str, ast.ClassDef]:
     return {
-        n.name: n for n in tree.body if isinstance(n, ast.ClassDef) and not n.name.startswith("_")
+        n.name: n
+        for n in tree.body
+        if isinstance(n, ast.ClassDef) and not n.name.startswith("_")
     }
 
 
@@ -205,12 +207,12 @@ def _has_generated_init(node: ast.ClassDef) -> bool:
     if _is_dataclass(node):
         return True
     for item in node.body:
-        if isinstance(item, ast.Assign) and isinstance(item.value, ast.Call):
-            if ast.unparse(item.value.func).split(".")[-1] in _FIELD_CALLS:
-                return True
-        elif isinstance(item, ast.AnnAssign) and isinstance(item.value, ast.Call):
-            if ast.unparse(item.value.func).split(".")[-1] in _FIELD_CALLS:
-                return True
+        if (
+            isinstance(item, (ast.Assign, ast.AnnAssign))
+            and isinstance(item.value, ast.Call)
+            and ast.unparse(item.value.func).split(".")[-1] in _FIELD_CALLS
+        ):
+            return True
     return False
 
 
@@ -263,13 +265,11 @@ def _lie_la_sortie_standard(
     # regression attrapee par la mesure sur pyparsing, apres avoir ete introduite par cette
     # fonction meme. Le controle doit accepter ce que les sites d'appel lui donnent.
     if isinstance(node, ast.ClassDef):
-        if any(
+        return any(
             _lie_la_sortie_standard(item)
             for item in node.body
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-        ):
-            return True
-        return False
+        )
 
     defauts = list(node.args.defaults) + [
         d for d in node.args.kw_defaults if d is not None
@@ -397,8 +397,10 @@ def _instantiable_without_args(
     if any(
         isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
         and any(
-            isinstance(d, ast.Name) and d.id == "abstractmethod"
-            or isinstance(d, ast.Attribute) and d.attr == "abstractmethod"
+            isinstance(d, ast.Name)
+            and d.id == "abstractmethod"
+            or isinstance(d, ast.Attribute)
+            and d.attr == "abstractmethod"
             for d in item.decorator_list
         )
         for item in node.body
@@ -490,7 +492,10 @@ def _instantiable_without_args(
     required_positional = len(positional) - len(args.defaults)
     if required_positional > 1:  # `self`/`cls` est le seul argument tolere sans defaut
         required = [a.arg for a in positional[len(args.defaults) + 1 :]]
-        return False, f"arguments obligatoires de {nom_constructeur} : {', '.join(required)}"
+        return (
+            False,
+            f"arguments obligatoires de {nom_constructeur} : {', '.join(required)}",
+        )
     # `ast.arg` n'a PAS d'attribut `default` : les valeurs par defaut vivent dans
     # `arguments.kw_defaults`, alignees sur `kwonlyargs`. Lire `a.default` levait
     # `AttributeError: 'arg' object has no attribute 'default'` — plantage reel du
@@ -513,7 +518,13 @@ _MAX_AUDITED_FUNCTIONS = 8
 #: celles qui portent des exemples, donc les plus informatives).
 _MAX_PROPERTY_FUNCTIONS = 4
 
-_SKIPPED_DECORATORS = {"property", "staticmethod", "classmethod", "abstractmethod", "cached_property"}
+_SKIPPED_DECORATORS = {
+    "property",
+    "staticmethod",
+    "classmethod",
+    "abstractmethod",
+    "cached_property",
+}
 
 #: Sources de non-determinisme reconnues. Une horloge ou un generateur
 #: aleatoire N'EST PAS un defaut : c'est une dependance a l'environnement qui
@@ -540,8 +551,15 @@ _NONDETERMINISTIC_CALLS: dict[str, str] = {
 
 
 _ENV_MODULES = {
-    "time", "datetime", "random", "uuid", "secrets",
-    "socket", "threading", "subprocess", "multiprocessing",
+    "time",
+    "datetime",
+    "random",
+    "uuid",
+    "secrets",
+    "socket",
+    "threading",
+    "subprocess",
+    "multiprocessing",
 }
 
 
@@ -607,7 +625,9 @@ def _resolve_call(node: ast.Call, aliases: dict[str, str]) -> str:
     return f"{real}.{rest}" if rest else real
 
 
-def _nondeterminism_sources(node: ast.AST, aliases: dict[str, str] | None = None) -> tuple[str, ...]:
+def _nondeterminism_sources(
+    node: ast.AST, aliases: dict[str, str] | None = None
+) -> tuple[str, ...]:
     """Sources de non-determinisme detectees dans le corps de ``node``.
 
     Si le corps fixe lui-meme la graine (`random.seed(<litteral>)`), le hasard
@@ -706,8 +726,7 @@ def _samples_for_annotation(node: ast.expr | None) -> list[object] | None:
 
 def _samples_for_annotation_text(text: str) -> list[object] | None:
     flat = text.replace(" ", "")
-    if flat.endswith("|None"):
-        flat = flat[: -len("|None")]
+    flat = flat.removesuffix("|None")
     if flat in _SAMPLES:
         return list(_SAMPLES[flat])
     head = flat.split("[", 1)[0]
@@ -776,10 +795,10 @@ def _static_plan(
 # Temoins executes apres la source du candidat
 # --------------------------------------------------------------------------- #
 
-_CHECK_CALLABLE = '''
+_CHECK_CALLABLE = """
 _jio_fn = globals().get({name!r})
 assert callable(_jio_fn), "entree {name!r} absente ou non appelable"
-'''
+"""
 
 #: Reproductibilite. Le plan de sondage est fige a la derivation : aucune entree
 #: inventee ici. Chaque entree est repetee plusieurs fois, car une seule
@@ -879,7 +898,7 @@ def _jio_same(_x, _y):
     return _jio_meme(_x[1:], _y[1:])
 '''
 
-_CHECK_DETERMINISM = '''
+_CHECK_DETERMINISM = """
 import itertools as _jio_it
 _jio_fn = globals().get({name!r})
 assert callable(_jio_fn), "entree {name!r} absente ou non appelable"
@@ -910,18 +929,18 @@ for _combo in _jio_it.islice(_jio_it.product(*_jio_plans), 8):
             print("[JIO-NOTE] meme comportement : le message ne differait que par une duree ou "
                   "une adresse memoire, retires avant comparaison")
 assert _jio_checked, "aucune sonde executable pour {name}"
-'''
+"""
 
-_CHECK_CLASS_INSTANTIATE = '''
+_CHECK_CLASS_INSTANTIATE = """
 _jio_cls = globals().get({name!r})
 assert isinstance(_jio_cls, type), "classe {name!r} absente ou non instanciable"
 _jio_obj = _jio_cls()
 assert _jio_obj is not None, "construction de {name!r} impossible"
-'''
+"""
 
 #: Coherence d'une methode. Instance NEUVE a chaque appel : on ne teste pas la
 #: memoire de l'objet, on teste la reproductibilite de la methode.
-_CHECK_METHOD_STABLE = '''
+_CHECK_METHOD_STABLE = """
 import itertools as _jio_it
 _jio_cls = globals().get({name!r})
 assert isinstance(_jio_cls, type), "classe {name!r} absente"
@@ -953,9 +972,9 @@ for _combo in _jio_it.islice(_jio_it.product(*_jio_plans), 4):
             print("[JIO-NOTE] meme comportement : le message ne differait que par une duree ou "
                   "une adresse memoire, retires avant comparaison")
 assert _jio_checked, "aucune sonde executable pour {name}.{method}"
-'''
+"""
 
-_CHECK_DOCTESTS = '''
+_CHECK_DOCTESTS = """
 _jio_stdout_defaut = {stdout_defaut}
 import doctest as _jio_doc
 _jio_fn = globals().get({name!r})
@@ -1131,7 +1150,7 @@ if _jio_runner.failures:
     raise AssertionError(
         "%d exemple(s) de docstring en echec : %s" % (_jio_runner.failures, _jio_tail)
     )
-'''
+"""
 
 
 def _determinism_check(name: str, plan: list[list[object]]) -> str:
@@ -1156,7 +1175,11 @@ def _method_stability_check(name: str, method: str, plan: list[list[object]]) ->
 
 def _plan_source(plan: list[list[object]]) -> str:
     """Rend un plan de sondage sous forme de source Python litterale."""
-    return "[" + ", ".join("[" + ", ".join(repr(v) for v in values) + "]" for values in plan) + "]"
+    return (
+        "["
+        + ", ".join("[" + ", ".join(repr(v) for v in values) + "]" for values in plan)
+        + "]"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1227,10 +1250,12 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
                     mission="audit d'un artefact Python",
                     rules=(),
                     under_specified=(
-                        "ce fichier ne declare que des fixture(s) "
-                        f"({', '.join(fixtures)}) : une fixture n'est pas appelable "
-                        "directement par construction, donc il n'y a rien d'executable a "
-                        "verifier ici. Ce n'est pas un defaut du fichier.",
+                        (
+                            "ce fichier ne declare que des fixture(s) "
+                            f"({', '.join(fixtures)}) : une fixture n'est pas appelable "
+                            "directement par construction, donc il n'y a rien d'executable a "
+                            "verifier ici. Ce n'est pas un defaut du fichier."
+                        ),
                     ),
                 ),
                 notes=(f"{len(fixtures)} fixture(s) exclue(s) de l'audit",),
@@ -1241,8 +1266,10 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
                 mission="audit d'un artefact Python",
                 rules=(),
                 under_specified=(
-                    "aucune fonction ni classe publique de premier niveau : "
-                    "rien d'executable a verifier",
+                    (
+                        "aucune fonction ni classe publique de premier niveau : "
+                        "rien d'executable a verifier"
+                    ),
                 ),
             ),
             notes=("l'artefact ne declare rien de verifiable",),
@@ -1356,7 +1383,7 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
     # ------------------------------------------------------------------ #
     documented = [n for n in names if n != chosen and _has_doctest(defs[n])]
     audited = [chosen]
-    for name in documented[:_MAX_AUDITED_FUNCTIONS - 1]:
+    for name in documented[: _MAX_AUDITED_FUNCTIONS - 1]:
         audited.append(name)
         code_call = f"A-001:{name}"
         rules.append(
@@ -1369,7 +1396,7 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
         checks[code_call] = _CHECK_CALLABLE.format(name=name)
 
         node_n = defs[name]
-        plan_n, blocked_n = _static_plan(node_n)
+        plan_n, _blocked_n = _static_plan(node_n)
         nondet_n = _nondeterminism_sources(node_n, aliases)
         if plan_n is not None and not nondet_n:
             code_det = f"A-002:{name}"
@@ -1409,7 +1436,10 @@ def derive(source: str, entrypoint: str = "", path: object = None) -> DerivedSpe
     # au lieu de laisser croire que l'artefact est entierement reproductible.
     hidden_hazards: list[str] = []
     for fname, fnode in defs.items():
-        if not isinstance(fnode, (ast.FunctionDef, ast.AsyncFunctionDef)) or fname in audited:
+        if (
+            not isinstance(fnode, (ast.FunctionDef, ast.AsyncFunctionDef))
+            or fname in audited
+        ):
             continue
         sources = _nondeterminism_sources(fnode, aliases)
         if sources:
@@ -1576,11 +1606,15 @@ def _class_spec(
                 continue
             sources = _nondeterminism_sources(method)
             if sources:
-                skipped.append(f"{method.name} (non-deterministe : {', '.join(sources)})")
+                skipped.append(
+                    f"{method.name} (non-deterministe : {', '.join(sources)})"
+                )
                 continue
             plan, blocked = _static_plan(method)
             if plan is None:
-                skipped.append(f"{method.name} (parametres non derivables : {', '.join(blocked)})")
+                skipped.append(
+                    f"{method.name} (parametres non derivables : {', '.join(blocked)})"
+                )
                 continue
             rid = f"C-{len(rules) + 1:03d}"
             rules.append(

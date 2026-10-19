@@ -51,7 +51,7 @@ def _juste(source: str) -> bool:
     """
     espace: dict = {}
     try:
-        exec(source, espace)  # noqa: S102 - corpus de test, source de confiance
+        exec(source, espace)
     except Exception:
         return False
     try:

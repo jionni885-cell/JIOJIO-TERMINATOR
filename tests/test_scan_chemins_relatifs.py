@@ -89,8 +89,12 @@ def test_le_fichier_audite_voit_son_vrai_chemin(tmp_path: Path) -> None:
     source = chemin.read_text(encoding="utf-8")
     derived = derive(source, path=chemin)
     res = prover.prove(
-        source, derived.spec, hidden_checks=derived.checks,
-        entrypoint=derived.entrypoint, preamble=derived.preamble, chemin=chemin,
+        source,
+        derived.spec,
+        hidden_checks=derived.checks,
+        entrypoint=derived.entrypoint,
+        preamble=derived.preamble,
+        chemin=chemin,
     )
     assert not res.hard_failures, [(w.rule_id, w.stderr) for w in res.hard_failures]
 
@@ -112,10 +116,15 @@ def test_sans_le_chemin_le_defaut_existe_toujours() -> None:
         source = chemin.read_text(encoding="utf-8")
         derived = derive(source, path=chemin)
         res = prover.prove(
-            source, derived.spec, hidden_checks=derived.checks,
-            entrypoint=derived.entrypoint, preamble=derived.preamble,
+            source,
+            derived.spec,
+            hidden_checks=derived.checks,
+            entrypoint=derived.entrypoint,
+            preamble=derived.preamble,
         )
-    messages = (res.hard_failures[0].stderr if res.hard_failures else "") + (res.reservations or "")
+    messages = (res.hard_failures[0].stderr if res.hard_failures else "") + (
+        res.reservations or ""
+    )
     assert res.hard_failures or "FileNotFoundError" in messages, (
         "sans `__file__` reel, un fichier qui lit ses donnees doit echouer : "
         "sinon ce test ne mesure rien"
@@ -132,8 +141,12 @@ def test_le_dossier_de_l_artefact_est_importable(tmp_path: Path) -> None:
     source = chemin.read_text(encoding="utf-8")
     derived = derive(source, path=chemin)
     res = prover.prove(
-        source, derived.spec, hidden_checks=derived.checks,
-        entrypoint=derived.entrypoint, preamble=derived.preamble, chemin=chemin,
+        source,
+        derived.spec,
+        hidden_checks=derived.checks,
+        entrypoint=derived.entrypoint,
+        preamble=derived.preamble,
+        chemin=chemin,
     )
     assert not res.hard_failures, [(w.rule_id, w.stderr) for w in res.hard_failures]
 
@@ -163,8 +176,12 @@ def test_aucune_ecriture_ne_tombe_dans_le_projet(tmp_path: Path) -> None:
     source = chemin.read_text(encoding="utf-8")
     derived = derive(source, path=chemin)
     prover.prove(
-        source, derived.spec, hidden_checks=derived.checks,
-        entrypoint=derived.entrypoint, preamble=derived.preamble, chemin=chemin,
+        source,
+        derived.spec,
+        hidden_checks=derived.checks,
+        entrypoint=derived.entrypoint,
+        preamble=derived.preamble,
+        chemin=chemin,
     )
     restes = sorted(p.name for p in tmp_path.rglob("*"))
     assert restes == ["test_ecrivain.py", "tests"], (
@@ -186,8 +203,14 @@ def test_le_scan_reel_ne_declare_plus_le_fichier_non_testable() -> None:
         _projet(racine)
         proc = subprocess.run(
             [__import__("sys").executable, "-m", "jio", "scan", "tests/test_panier.py"],
-            cwd=racine, capture_output=True, text=True, timeout=120,
+            cwd=racine,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
         )
     sortie = proc.stdout + proc.stderr
-    assert "0 non testable" in sortie, f"le fichier a ete classe non testable : {sortie}"
+    assert "0 non testable" in sortie, (
+        f"le fichier a ete classe non testable : {sortie}"
+    )
     assert "FileNotFoundError" not in sortie, sortie

@@ -19,8 +19,8 @@ et declarer honnetement ce qu'il n'a PAS su convertir.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from ..core.types import Rule, RuleKind, Spec
 from ..providers.base import Message, Provider
@@ -68,7 +68,7 @@ class SpecCompiler:
                 temperature=self.temperature,
                 seed=seed,
             )
-        except Exception:  # noqa: BLE001 — repli sur les heuristiques
+        except Exception:
             return []
         return self._parse_rules(comp.text)
 
@@ -111,18 +111,66 @@ class SpecCompiler:
     # -- voie 2 : heuristiques deterministes -------------------------------- #
 
     _PATTERNS: tuple[tuple[str, RuleKind, str], ...] = (
-        (r"\b(somme|addition|ajoute|total)\b", RuleKind.PROPERTY, "Somme correcte pour toute entree valide"),
-        (r"\b(moyenne|average)\b", RuleKind.PROPERTY, "Moyenne exacte ; liste vide geree explicitement"),
-        (r"\b(tri|triee|ordonn|sort)\b", RuleKind.PROPERTY, "Sortie ordonnee ; stabilite conservee"),
-        (r"\b(unique|dedoublonn|distinct)\b", RuleKind.PROPERTY, "Aucun doublon en sortie"),
-        (r"\b(premier|prime)\b", RuleKind.BOUNDARY, "Bonus : 0 et 1 ne sont pas premiers"),
-        (r"\b(division|divise)\b", RuleKind.BOUNDARY, "Division par zero rejetee explicitement"),
-        (r"\b(chaine|chaîne|string|texte)\b", RuleKind.BOUNDARY, "Chaine vide et caracteres speciaux geres"),
-        (r"\b(fichier|file|chemin|path)\b", RuleKind.SECURITY, "Aucun acces hors du repertoire autorise"),
-        (r"\b(entree|input|argument)\b", RuleKind.BOUNDARY, "Entree invalide rejetee, jamais silencieusement acceptee"),
-        (r"\b(negatif|negative|infini|overflow)\b", RuleKind.BOUNDARY, "Valeurs extremes gerees sans exception non controlee"),
-        (r"\b(nombre|number|entier|integer)\b", RuleKind.CONTRACT, "Type et domaine de la sortie respectes"),
-        (r"\b(erreur|error|exception)\b", RuleKind.CONTRACT, "Erreur remontee avec un message exploitable"),
+        (
+            r"\b(somme|addition|ajoute|total)\b",
+            RuleKind.PROPERTY,
+            "Somme correcte pour toute entree valide",
+        ),
+        (
+            r"\b(moyenne|average)\b",
+            RuleKind.PROPERTY,
+            "Moyenne exacte ; liste vide geree explicitement",
+        ),
+        (
+            r"\b(tri|triee|ordonn|sort)\b",
+            RuleKind.PROPERTY,
+            "Sortie ordonnee ; stabilite conservee",
+        ),
+        (
+            r"\b(unique|dedoublonn|distinct)\b",
+            RuleKind.PROPERTY,
+            "Aucun doublon en sortie",
+        ),
+        (
+            r"\b(premier|prime)\b",
+            RuleKind.BOUNDARY,
+            "Bonus : 0 et 1 ne sont pas premiers",
+        ),
+        (
+            r"\b(division|divise)\b",
+            RuleKind.BOUNDARY,
+            "Division par zero rejetee explicitement",
+        ),
+        (
+            r"\b(chaine|chaîne|string|texte)\b",
+            RuleKind.BOUNDARY,
+            "Chaine vide et caracteres speciaux geres",
+        ),
+        (
+            r"\b(fichier|file|chemin|path)\b",
+            RuleKind.SECURITY,
+            "Aucun acces hors du repertoire autorise",
+        ),
+        (
+            r"\b(entree|input|argument)\b",
+            RuleKind.BOUNDARY,
+            "Entree invalide rejetee, jamais silencieusement acceptee",
+        ),
+        (
+            r"\b(negatif|negative|infini|overflow)\b",
+            RuleKind.BOUNDARY,
+            "Valeurs extremes gerees sans exception non controlee",
+        ),
+        (
+            r"\b(nombre|number|entier|integer)\b",
+            RuleKind.CONTRACT,
+            "Type et domaine de la sortie respectes",
+        ),
+        (
+            r"\b(erreur|error|exception)\b",
+            RuleKind.CONTRACT,
+            "Erreur remontee avec un message exploitable",
+        ),
     )
 
     def _from_heuristics(self, objective: str) -> list[Rule]:
@@ -165,13 +213,21 @@ class SpecCompiler:
         """
         gaps: list[str] = []
         if len(rules) < 3:
-            gaps.append("specification trop pauvre : l'objectif est probablement ambigu")
+            gaps.append(
+                "specification trop pauvre : l'objectif est probablement ambigu"
+            )
         if not any(r.kind is RuleKind.BOUNDARY for r in rules):
-            gaps.append("aucune regle de cas limite : le comportement aux bornes est inconnu")
+            gaps.append(
+                "aucune regle de cas limite : le comportement aux bornes est inconnu"
+            )
         if not any(r.kind is RuleKind.SECURITY for r in rules):
-            gaps.append("aucune regle de securite : les entrees hostiles ne sont pas couvertes")
+            gaps.append(
+                "aucune regle de securite : les entrees hostiles ne sont pas couvertes"
+            )
         if len(objective.split()) < 6:
-            gaps.append("objectif tres court : des exigences implicites peuvent manquer")
+            gaps.append(
+                "objectif tres court : des exigences implicites peuvent manquer"
+            )
         return tuple(gaps)
 
 

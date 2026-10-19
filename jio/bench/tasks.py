@@ -15,8 +15,8 @@ frontiere : c'est ce qui rend le banc honnete, et c'est aussi le principe des
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 from ..core.types import Rule, RuleKind, Spec
 
@@ -30,7 +30,7 @@ class Task:
     entrypoint: str
     correct: str
     distractors: tuple[str, ...]
-    checks: Mapping[str, str]      # rule_id -> source de test
+    checks: Mapping[str, str]  # rule_id -> source de test
     rules: tuple[Rule, ...]
     difficulty: str = "moyen"
 
@@ -137,7 +137,11 @@ T_MEDIAN = Task(
     ),
     rules=(
         _rule("R-001", "Mediane correcte pour un nombre impair d'elements"),
-        _rule("R-002", "Mediane correcte pour un nombre pair d'elements", RuleKind.PROPERTY),
+        _rule(
+            "R-002",
+            "Mediane correcte pour un nombre pair d'elements",
+            RuleKind.PROPERTY,
+        ),
         _rule("R-003", "Liste vide leve ValueError", RuleKind.BOUNDARY),
         _rule("R-004", "La liste d'entree n'est pas supposee triee", RuleKind.PROPERTY),
     ),
@@ -223,10 +227,16 @@ T_IS_PRIME = Task(
     rules=(
         _rule("R-001", "2 et 3 sont premiers"),
         _rule("R-002", "0 et 1 ne sont pas premiers", RuleKind.BOUNDARY),
-        _rule("R-003", "9 et 4 (carres parfaits) ne sont pas premiers", RuleKind.BOUNDARY),
+        _rule(
+            "R-003", "9 et 4 (carres parfaits) ne sont pas premiers", RuleKind.BOUNDARY
+        ),
         _rule("R-004", "97 et 89 sont premiers"),
         _rule("R-005", "Les nombres negatifs ne sont pas premiers", RuleKind.BOUNDARY),
-        _rule("R-006", "25 et 49 (carres parfaits de nombres premiers) non plus", RuleKind.BOUNDARY),
+        _rule(
+            "R-006",
+            "25 et 49 (carres parfaits de nombres premiers) non plus",
+            RuleKind.BOUNDARY,
+        ),
     ),
     checks={
         "R-001": "assert is_prime(2) and is_prime(3), 'faux: 2 et 3 sont premiers'",
@@ -379,7 +389,9 @@ T_SAFE_DIVIDE = Task(
         _rule("R-001", "6 / 3 vaut 2.0"),
         _rule("R-002", "Le resultat est un flottant", RuleKind.CONTRACT),
         _rule("R-003", "La division par zero leve ValueError", RuleKind.BOUNDARY),
-        _rule("R-004", "Les valeurs negatives sont gerees correctement", RuleKind.BOUNDARY),
+        _rule(
+            "R-004", "Les valeurs negatives sont gerees correctement", RuleKind.BOUNDARY
+        ),
     ),
     checks={
         "R-001": "assert safe_divide(6, 3) == 2.0, f'6/3 -> {safe_divide(6,3)}'",
@@ -485,7 +497,9 @@ T_MEAN_PARTIAL = Task(
 TACHES_PARTIELLES: tuple[Task, ...] = (T_MEAN_PARTIAL,)
 
 
-def build_bank(tasks: Sequence[Task] | None = None) -> dict[str, tuple[str, Sequence[str]]]:
+def build_bank(
+    tasks: Sequence[Task] | None = None,
+) -> dict[str, tuple[str, Sequence[str]]]:
     """Construit le banc `cle_de_tache -> (correct, distracteurs)` pour la simulation."""
     out: dict[str, tuple[str, Sequence[str]]] = {}
     for t in tasks or TASKS:
@@ -494,4 +508,4 @@ def build_bank(tasks: Sequence[Task] | None = None) -> dict[str, tuple[str, Sequ
     return out
 
 
-__all__ = ["Task", "TASKS", "TASKS_BY_ID", "TACHES_PARTIELLES", "build_bank"]
+__all__ = ["TACHES_PARTIELLES", "TASKS", "TASKS_BY_ID", "Task", "build_bank"]

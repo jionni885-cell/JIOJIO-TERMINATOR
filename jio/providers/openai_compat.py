@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from ..core.errors import ProviderError
 from . import base as _base
@@ -59,11 +59,11 @@ class OpenAiCompatProvider:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        req = urllib.request.Request(  # noqa: S310 — URL fournie par l'utilisateur
+        req = urllib.request.Request(
             self._endpoint(), data=payload, headers=headers, method="POST"
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 # Lecture BORNEE : un serveur (ou un proxy) hostile peut streamer sans fin.
                 # On refuse au lieu de tout charger — une reponse tronquee ne serait pas du
                 # JSON valide, et la lire quand meme reviendrait a accepter n'importe quoi.
@@ -82,18 +82,26 @@ class OpenAiCompatProvider:
         except urllib.error.HTTPError as exc:  # pragma: no cover
             detail = exc.read().decode("utf-8", "replace")[:400]
             raise ProviderError(f"HTTP {exc.code} sur {self.name}: {detail}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:  # pragma: no cover
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            OSError,
+        ) as exc:  # pragma: no cover
             raise ProviderError(f"reseau indisponible pour {self.name}: {exc}") from exc
         except json.JSONDecodeError as exc:  # pragma: no cover
             raise ProviderError(f"reponse non-JSON de {self.name}") from exc
 
         if not isinstance(raw, dict):
-            raise ProviderError(f"reponse inattendue de {self.name}: {type(raw).__name__}")
+            raise ProviderError(
+                f"reponse inattendue de {self.name}: {type(raw).__name__}"
+            )
         choices = raw.get("choices") or []
         if not choices:
             raise ProviderError(f"reponse vide de {self.name}: {str(raw)[:300]}")
         premier = choices[0] if isinstance(choices[0], dict) else {}
-        message = premier.get("message") if isinstance(premier.get("message"), dict) else {}
+        message = (
+            premier.get("message") if isinstance(premier.get("message"), dict) else {}
+        )
         text = extraire_texte(message.get("content"))
         text, tronque = borner(text)
         if not text.strip():

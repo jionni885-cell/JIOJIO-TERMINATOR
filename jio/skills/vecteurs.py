@@ -52,14 +52,16 @@ __all__ = [
     "POIDS_SEMANTIQUE",
     "TableVecteurs",
     "appariement",
-    "raisons_semantiques",
     "charger",
     "classement_semantique",
     "fusionner",
+    "raisons_semantiques",
     "table_du_depot",
 ]
 
-CHEMIN_TABLE = pathlib.Path(__file__).resolve().parent / "vecteurs" / "glove-sg-100d-jio.bin.gz"
+CHEMIN_TABLE = (
+    pathlib.Path(__file__).resolve().parent / "vecteurs" / "glove-sg-100d-jio.bin.gz"
+)
 MAGIC = b"JIOVEC1\n"
 #: Echelle de quantification : l'ecriture multiplie un vecteur NORMALISE par 127 (puis arrondit),
 #: la relecture divise le produit scalaire par 127^2. Sans cela, un cosinus vaudrait 16 000 —
@@ -97,7 +99,9 @@ class TableVecteurs:
 
     def cosinus(self, gauche: array, droite: array) -> float:
         """Cosinus de deux vecteurs quantifies : produit scalaire, ramene a l'echelle reelle."""
-        return sum(a * b for a, b in zip(gauche, droite)) / (ECHELLE_INT8 * ECHELLE_INT8)
+        return sum(a * b for a, b in zip(gauche, droite)) / (
+            ECHELLE_INT8 * ECHELLE_INT8
+        )
 
     def vecteur(self, mot: str) -> array | None:
         return self.mots.get(stem(mot))
@@ -164,7 +168,9 @@ def _idf(catalogue: Catalogue) -> dict[str, float]:
     return catalogue.idf
 
 
-def mots_cles(catalogue: Catalogue, nom: str, table: TableVecteurs, maximum: int = MAX_MOTS_CLES):
+def mots_cles(
+    catalogue: Catalogue, nom: str, table: TableVecteurs, maximum: int = MAX_MOTS_CLES
+):
     """Les mots les plus DISCRIMINANTS d'une competence, et leurs vecteurs.
 
     Le tri melange deux choses : `idf` (un mot rare discrimine) et une petite prime de
@@ -178,7 +184,11 @@ def mots_cles(catalogue: Catalogue, nom: str, table: TableVecteurs, maximum: int
         compte,
         key=lambda mot: -(idf.get(mot, defaut) * (1 + APPARIEMENT * (compte[mot] - 1))),
     )
-    return [(mot, table.mots[stem(mot)]) for mot in classe[:maximum] if stem(mot) in table.mots]
+    return [
+        (mot, table.mots[stem(mot)])
+        for mot in classe[:maximum]
+        if stem(mot) in table.mots
+    ]
 
 
 def appariement(
@@ -196,7 +206,11 @@ def appariement(
     defaut = max(idf.values()) if idf else 1.0
     from .router import jetons
 
-    mots = [(mot, table.mots[stem(mot)]) for mot in jetons(objectif) if stem(mot) in table.mots]
+    mots = [
+        (mot, table.mots[stem(mot)])
+        for mot in jetons(objectif)
+        if stem(mot) in table.mots
+    ]
     if not mots:
         return {}
     scores: dict[str, float] = {}
@@ -211,17 +225,27 @@ def appariement(
     return scores
 
 
-def classement_semantique(catalogue: Catalogue, objectif: str, table: TableVecteurs,
-                          cles: dict[str, list[tuple[str, array]]] | None = None):
+def classement_semantique(
+    catalogue: Catalogue,
+    objectif: str,
+    table: TableVecteurs,
+    cles: dict[str, list[tuple[str, array]]] | None = None,
+):
     """Le classement des competences par appariement semantique, du plus proche au plus loin."""
     if cles is None:
-        cles = {doc.nom: mots_cles(catalogue, doc.nom, table) for doc in catalogue.documents}
+        cles = {
+            doc.nom: mots_cles(catalogue, doc.nom, table) for doc in catalogue.documents
+        }
     scores = appariement(catalogue, objectif, cles, table)
     return sorted(scores, key=lambda nom: (-scores[nom], nom))
 
 
-def fusionner(liste_bm25: list[str], liste_semantique: list[str], k: int = FUSION_K,
-              poids_semantique: float = POIDS_SEMANTIQUE) -> list[str]:
+def fusionner(
+    liste_bm25: list[str],
+    liste_semantique: list[str],
+    k: int = FUSION_K,
+    poids_semantique: float = POIDS_SEMANTIQUE,
+) -> list[str]:
     """Fusion RRF de deux classements : `1/(k + rang)` dans chacun, on additionne.
 
     Choisie plutot qu'une somme ponderee parce qu'elle ne compare PAS les deux echelles (le score
@@ -236,8 +260,13 @@ def fusionner(liste_bm25: list[str], liste_semantique: list[str], k: int = FUSIO
     return sorted(rangs, key=lambda nom: (-rangs[nom], nom))
 
 
-def raisons_semantiques(nom: str, objectif: str, table: TableVecteurs,
-                        voisins: list[tuple[str, array]], combien: int = 2) -> tuple[str, ...]:
+def raisons_semantiques(
+    nom: str,
+    objectif: str,
+    table: TableVecteurs,
+    voisins: list[tuple[str, array]],
+    combien: int = 2,
+) -> tuple[str, ...]:
     """Pourquoi ce nom est la, en clair : les mots qui ont porte la ressemblance.
 
     Sans cela, un choix par similarite serait INEXPLIQUABLE — et ce depot refuse un classement
@@ -252,9 +281,14 @@ def raisons_semantiques(nom: str, objectif: str, table: TableVecteurs,
         vecteur = table.mots.get(stem(mot))
         if vecteur is None:
             continue
-        score, cle = max(((table.cosinus(vecteur, v), cle) for cle, v in voisins),
-                         default=(0.0, ""))
-        if score > 0.30:      # en dessous, la « ressemblance » est du bruit : on ne l'invoque pas
+        score, cle = max(
+            ((table.cosinus(vecteur, v), cle) for cle, v in voisins), default=(0.0, "")
+        )
+        if (
+            score > 0.30
+        ):  # en dessous, la « ressemblance » est du bruit : on ne l'invoque pas
             apports.append((score, mot, cle))
     apports.sort(reverse=True)
-    return tuple(f"voisin {mot}~{cle} ({score:.2f})" for score, mot, cle in apports[:combien])
+    return tuple(
+        f"voisin {mot}~{cle} ({score:.2f})" for score, mot, cle in apports[:combien]
+    )

@@ -20,8 +20,8 @@ que la reponse reste invariante sous la transformation.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from ..core.types import Severity
 
@@ -77,7 +77,9 @@ def _unit_swap(text: str) -> str:
         value = m.group(1)
         return f"{float(value) * 100:.0f} %" if value.isdigit() else m.group(0)
 
-    return re.sub(r"\b(\d+)\s*pour\s*cent\b", lambda m: repl(m), text, flags=re.I)
+    return re.sub(
+        r"\b(\d+)\s*pour\s*cent\b", lambda m: repl(m), text, flags=re.IGNORECASE
+    )
 
 
 def _synonym(text: str) -> str:
@@ -92,7 +94,7 @@ def _synonym(text: str) -> str:
     }
     out = text
     for a, b in table.items():
-        out = re.sub(rf"\b{a}\b", b, out, flags=re.I)
+        out = re.sub(rf"\b{a}\b", b, out, flags=re.IGNORECASE)
     return out
 
 
@@ -143,7 +145,9 @@ class MetamorphicTester:
     max_mutations: int = 6
     similarity: float = 0.82  # seuil d'invariance (Jaccard sur mots)
 
-    def test(self, question: str, answer_fn: Callable[[str], str]) -> tuple[MetamorphicFinding, ...]:
+    def test(
+        self, question: str, answer_fn: Callable[[str], str]
+    ) -> tuple[MetamorphicFinding, ...]:
         base = (answer_fn(question) or "").strip()
         if not base:
             return ()
@@ -155,7 +159,7 @@ class MetamorphicTester:
                 continue
             try:
                 mutated_a = (answer_fn(mutated_q) or "").strip()
-            except Exception:  # noqa: BLE001 — une mutation qui echoue n'invalide pas le reste
+            except Exception:
                 continue
 
             sim = jaccard(base, mutated_a)
@@ -217,7 +221,18 @@ def _is_boolean_answer(text: str) -> bool:
     low = (text or "").lower().strip()
     if not low or len(low) > 200:
         return False
-    markers = ("oui", "non", "vrai", "faux", "yes", "no", "true", "false", "correct", "incorrect")
+    markers = (
+        "oui",
+        "non",
+        "vrai",
+        "faux",
+        "yes",
+        "no",
+        "true",
+        "false",
+        "correct",
+        "incorrect",
+    )
     return any(re.search(rf"\b{m}\b", low) for m in markers)
 
 
@@ -231,4 +246,10 @@ def _looks_negated(a: str, b: str) -> bool:
     return (pos_a and neg_b) or (neg_a and pos_b)
 
 
-__all__ = ["Mutation", "MUTATIONS", "MetamorphicFinding", "MetamorphicTester", "jaccard"]
+__all__ = [
+    "MUTATIONS",
+    "MetamorphicFinding",
+    "MetamorphicTester",
+    "Mutation",
+    "jaccard",
+]

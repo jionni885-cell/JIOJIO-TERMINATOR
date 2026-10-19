@@ -27,7 +27,9 @@ from jio.pr import GitAbsent, base, commits, construire, ecrire
 
 
 def _git(racine: Path, *arguments: str) -> None:
-    subprocess.run(["git", *arguments], cwd=racine, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", *arguments], cwd=racine, check=True, capture_output=True, text=True
+    )
 
 
 def _depot(tmp_path: Path, messages: tuple[str, ...]) -> Path:
@@ -51,10 +53,13 @@ def test_le_rapport_contient_CHAQUE_commit_dans_l_ordre(tmp_path: Path) -> None:
     Un filtre editorial ferait de ce rapport une plaidoirie. Ce qui se verifie, c'est que le
     document EST la branche : les sujets dans l'ordre des commits, et les corps integraux.
     """
-    depot = _depot(tmp_path, (
-        "premier: le defaut trouve\n\nLa mesure qui l'a montre, en clair.",
-        "second: le correctif\n\nCe qui le verrouille desormais.",
-    ))
+    depot = _depot(
+        tmp_path,
+        (
+            "premier: le defaut trouve\n\nLa mesure qui l'a montre, en clair.",
+            "second: le correctif\n\nCe qui le verrouille desormais.",
+        ),
+    )
     corps = construire(depot)
 
     assert corps.index("## 1. premier: le defaut trouve") < corps.index(
@@ -96,7 +101,7 @@ def test_un_message_avec_accents_guillemets_et_retours_est_reproduit_INTEGRALEME
     """
     message = (
         "sujet: « accents », guillemets et tirets — ainsi que : des deux-points\n\n"
-        "Un corps avec \"des guillemets droits\", des apostrophes l'air de rien,\n"
+        'Un corps avec "des guillemets droits", des apostrophes l\'air de rien,\n'
         "et un tableau :\n\n"
         "| a | b |\n| 1 | 2 |\n"
     )
@@ -109,7 +114,9 @@ def test_un_message_avec_accents_guillemets_et_retours_est_reproduit_INTEGRALEME
     assert "tirets — ainsi" in corps
 
 
-def test_la_mesure_impossible_est_DITE_et_non_remplacee_par_un_zero(tmp_path: Path) -> None:
+def test_la_mesure_impossible_est_DITE_et_non_remplacee_par_un_zero(
+    tmp_path: Path,
+) -> None:
     """Un compteur faux est pire qu'un compteur absent — et un zero muet est un chiffre faux.
 
     Ce depot de test n'a aucun fichier de test : `mesurer` refuse de rendre un nombre. Le
@@ -122,7 +129,9 @@ def test_la_mesure_impossible_est_DITE_et_non_remplacee_par_un_zero(tmp_path: Pa
 
     assert "Compteurs non mesures" in corps
     assert "0 tests verts" not in corps
-    assert "## 1. un: chose" in corps, "les commits restent rapportes malgre la mesure impossible"
+    assert "## 1. un: chose" in corps, (
+        "les commits restent rapportes malgre la mesure impossible"
+    )
 
 
 def test_ecrire_ne_detruit_JAMAIS_la_version_precedente(tmp_path: Path) -> None:
@@ -185,7 +194,9 @@ def test_une_limite_depassee_tronque_en_LE_DISANT_et_garde_le_dernier_travail(
     tronque = construire(depot, limite=8_000)
 
     assert len(tronque) <= 8_000, f"la limite n'est pas respectee : {len(tronque)}"
-    assert len(entier) > 8_000, "le rapport de test doit depasser la limite, sinon rien n'est mesure"
+    assert len(entier) > 8_000, (
+        "le rapport de test doit depasser la limite, sinon rien n'est mesure"
+    )
     assert "Rapport tronque, et il le dit." in tronque
     # La liste complete survit : les 30 commits sont nommes, meme ceux dont le detail est omis.
     for rang in range(1, 31):
@@ -193,13 +204,15 @@ def test_une_limite_depassee_tronque_en_LE_DISANT_et_garde_le_dernier_travail(
     # Le DETAIL va aux plus recents : le dernier est la, le premier n'y est plus.
     import re
 
-    detail = re.findall(r"^## (\d+)\. commit ", tronque, re.M)
+    detail = re.findall(r"^## (\d+)\. commit ", tronque, re.MULTILINE)
     assert detail, "aucun detail affiche : le test ne mesurerait rien"
     assert detail[-1] == "30", "le commit le PLUS RECENT doit etre detaille"
     assert "## 1. commit 1: sujet" not in tronque
     # Et le compte des sections omises est annonce, pas laisse au lecteur.
     omises = 30 - len(detail)
-    assert omises > 0, "ce cas doit omettre des sections, sinon il ne mesure pas la troncature"
+    assert omises > 0, (
+        "ce cas doit omettre des sections, sinon il ne mesure pas la troncature"
+    )
     assert f"Les {omises} sections omises" in tronque
     # Le rapport complet se regenere : aucune copie a maintenir.
     assert "se regenere par `jio pr`" in tronque
@@ -217,14 +230,25 @@ def test_un_rapport_complet_PEUT_etre_ecrit_a_cote(tmp_path: Path) -> None:
     """`--complet` : le corps tronque renvoie alors a un fichier, et le fichier existe."""
     from jio.cli import main
 
-    depot = _depot(tmp_path, tuple(f"c{rang}: sujet\n\n" + ("x" * 200) for rang in range(1, 20)))
+    depot = _depot(
+        tmp_path, tuple(f"c{rang}: sujet\n\n" + ("x" * 200) for rang in range(1, 20))
+    )
     corps = tmp_path / "corps.md"
     entier = tmp_path / "entier.md"
 
-    code = main([
-        "pr", "--root", str(depot), "--sortie", str(corps), "--limite", "1200",
-        "--complet", str(entier),
-    ])
+    code = main(
+        [
+            "pr",
+            "--root",
+            str(depot),
+            "--sortie",
+            str(corps),
+            "--limite",
+            "1200",
+            "--complet",
+            str(entier),
+        ]
+    )
 
     texte = corps.read_text(encoding="utf-8")
     assert code == 0

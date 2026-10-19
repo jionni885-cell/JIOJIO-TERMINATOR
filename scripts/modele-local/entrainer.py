@@ -30,7 +30,7 @@ import pathlib
 import time
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.nn import functional as F
 
 
@@ -82,7 +82,9 @@ class Bloc(nn.Module):
         self.attention = BlocAttention(n_emb, n_tetes, bloc, dropout)
         self.norme2 = nn.LayerNorm(n_emb)
         self.avant = nn.Sequential(
-            nn.Linear(n_emb, 4 * n_emb), nn.GELU(), nn.Linear(4 * n_emb, n_emb),
+            nn.Linear(n_emb, 4 * n_emb),
+            nn.GELU(),
+            nn.Linear(4 * n_emb, n_emb),
             nn.Dropout(dropout),
         )
 
@@ -95,8 +97,13 @@ class ModeleDeCode(nn.Module):
     """Un modele de langage caractere par caractere, entraine sur du code Python."""
 
     def __init__(
-        self, taille_vocab: int, n_emb: int, n_tetes: int, n_couches: int,
-        bloc: int, dropout: float,
+        self,
+        taille_vocab: int,
+        n_emb: int,
+        n_tetes: int,
+        n_couches: int,
+        bloc: int,
+        dropout: float,
     ) -> None:
         super().__init__()
         self.bloc = bloc
@@ -118,7 +125,7 @@ class ModeleDeCode(nn.Module):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx: torch.Tensor, cibles: torch.Tensor | None = None):
-        B, T = idx.shape
+        _B, T = idx.shape
         x = self.embedding(idx) + self.position(torch.arange(T, device=idx.device))
         x = self.norme_finale(self.blocs(x))
         if cibles is None:
@@ -132,14 +139,18 @@ class ModeleDeCode(nn.Module):
 
     @torch.no_grad()
     def generer(
-        self, idx: torch.Tensor, max_nouveaux: int, temperature: float = 1.0,
-        top_k: int | None = None, graine: int | None = None,
+        self,
+        idx: torch.Tensor,
+        max_nouveaux: int,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+        graine: int | None = None,
     ) -> torch.Tensor:
         """Genere la suite, un caractere a la fois — temperature et top_k compris."""
         if graine is not None:
             torch.manual_seed(graine)
         for _ in range(max_nouveaux):
-            idx_cond = idx[:, -self.bloc:]
+            idx_cond = idx[:, -self.bloc :]
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :] / max(temperature, 1e-6)
             if top_k is not None:
@@ -218,7 +229,9 @@ def _corpus(racine: pathlib.Path, plafond: int, *, avec_banc: bool = False) -> s
 
 
 def main() -> int:
-    parseur = argparse.ArgumentParser(description="Entraine un petit modele de code, localement.")
+    parseur = argparse.ArgumentParser(
+        description="Entraine un petit modele de code, localement."
+    )
     parseur.add_argument("--sortie", default="modele/modele.pt")
     parseur.add_argument("--corpus-octets", type=int, default=600_000)
     parseur.add_argument("--iterations", type=int, default=2500)
@@ -231,11 +244,12 @@ def main() -> int:
     parseur.add_argument("--lr", type=float, default=3e-3)
     parseur.add_argument("--graine", type=int, default=1337)
     parseur.add_argument(
-        "--avec-banc", action="store_true",
+        "--avec-banc",
+        action="store_true",
         help="met les taches du banc (solutions et distracteurs) en tete de corpus. Le modele "
-             "peut alors RECITER ce qu'il a vu : la mesure qui suit raconte la SELECTION par "
-             "le harness, pas la competence du modele. Ce biais est declare partout ou le "
-             "chiffre apparait.",
+        "peut alors RECITER ce qu'il a vu : la mesure qui suit raconte la SELECTION par "
+        "le harness, pas la competence du modele. Ce biais est declare partout ou le "
+        "chiffre apparait.",
     )
     parseur.add_argument("--eval-toutes", type=int, default=250)
     args = parseur.parse_args()
@@ -296,8 +310,11 @@ def main() -> int:
             "poids": modele.state_dict(),
             "alphabet": alphabet,
             "config": {
-                "bloc": args.bloc, "n_emb": args.n_emb, "n_tetes": args.n_tetes,
-                "n_couches": args.n_couches, "dropout": 0.0,
+                "bloc": args.bloc,
+                "n_emb": args.n_emb,
+                "n_tetes": args.n_tetes,
+                "n_couches": args.n_couches,
+                "dropout": 0.0,
             },
             "corpus_octets": len(texte),
             "parametres": modele.nombre_de_parametres(),
@@ -306,8 +323,14 @@ def main() -> int:
         },
         destination,
     )
-    print(f"  modele ecrit  : {destination}  ({destination.stat().st_size / 1e6:.1f} Mo)")
-    print(json.dumps({"modele": str(destination), "parametres": modele.nombre_de_parametres()}))
+    print(
+        f"  modele ecrit  : {destination}  ({destination.stat().st_size / 1e6:.1f} Mo)"
+    )
+    print(
+        json.dumps(
+            {"modele": str(destination), "parametres": modele.nombre_de_parametres()}
+        )
+    )
     return 0
 
 

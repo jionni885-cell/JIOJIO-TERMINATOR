@@ -33,7 +33,9 @@ def _git(racine: Path, *argv: str, avec_identite: bool = True) -> str:
     if avec_identite:
         commande += ["-c", "user.email=a@b", "-c", "user.name=test"]
     commande += list(argv)
-    proc = subprocess.run(commande, cwd=racine, capture_output=True, text=True, timeout=60)
+    proc = subprocess.run(
+        commande, cwd=racine, capture_output=True, text=True, timeout=60, check=False
+    )
     assert proc.returncode == 0, f"{commande} -> {proc.stderr}"
     return proc.stdout.strip()
 
@@ -45,8 +47,9 @@ def _remplir(racine: Path, combien: int = 25) -> None:
         (racine / "jio" / f"module_{i}.py").write_text(f"x = {i}\n", encoding="utf-8")
     for i in range(8):
         (racine / "docs" / f"doc_{i}.md").write_text(f"# doc {i}\n", encoding="utf-8")
-    (racine / "jio" / "sante.py").write_text('def sante():\n    return "intact"\n',
-                                             encoding="utf-8")
+    (racine / "jio" / "sante.py").write_text(
+        'def sante():\n    return "intact"\n', encoding="utf-8"
+    )
 
 
 @pytest.fixture()
@@ -77,7 +80,12 @@ def incident(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     _git(travail, "remote", "add", "origin", str(distant))
     # Le refspec d'origine ne recuperait que `main` : c'est ce qui a rendu l'accident
     # invisible (`git push` sans reference de suivi).
-    _git(travail, "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main")
+    _git(
+        travail,
+        "config",
+        "remote.origin.fetch",
+        "+refs/heads/main:refs/remotes/origin/main",
+    )
     _git(travail, "commit", "-q", "--allow-empty", "-m", "Initial commit")
 
     return travail, distant
@@ -155,7 +163,9 @@ def test_la_recuperation_restaure_l_historique_sans_toucher_aux_fichiers(
     assert empreinte_arbre(travail) == avant
     # L'historique est celui du DISTANT, plus le commit initial.
     assert _git(travail, "log", "--oneline") != attendu
-    assert _git(travail, "rev-parse", "HEAD") == _git(travail, "rev-parse", "origin/main")
+    assert _git(travail, "rev-parse", "HEAD") == _git(
+        travail, "rev-parse", "origin/main"
+    )
     # Et l'etiquette rend l'ancien etat joignable : rien ne disparait.
     assert resultat.etiquette
     assert _git(travail, "tag", "--list", resultat.etiquette) == resultat.etiquette
@@ -174,7 +184,9 @@ def test_le_travail_local_non_pousse_survit_a_la_recuperation(
     neuf = travail / "travail_local.py"
     neuf.write_text('def local():\n    return "pas encore pousse"\n', encoding="utf-8")
     modifie = travail / "jio" / "sante.py"
-    modifie.write_text('def sante():\n    return "MODIFIE LOCALEMENT"\n', encoding="utf-8")
+    modifie.write_text(
+        'def sante():\n    return "MODIFIE LOCALEMENT"\n', encoding="utf-8"
+    )
     avant = empreinte_arbre(travail)
 
     resultat = recuperer(travail, branche="main")
@@ -257,7 +269,10 @@ def test_la_simulation_est_une_inspection_REUSSIE(
     assert "simulation" in sortie
 
     # Une simulation qui NE PEUT PAS etablir de plan, elle, echoue bien.
-    assert main(["recover", "--dry-run", "--root", str(travail), "--branch", "fantome"]) == 1
+    assert (
+        main(["recover", "--dry-run", "--root", str(travail), "--branch", "fantome"])
+        == 1
+    )
 
 
 def test_une_branche_inconnue_donne_les_noms_disponibles(
@@ -276,7 +291,9 @@ def test_une_branche_inconnue_donne_les_noms_disponibles(
     assert "main" in resultat.motif
 
 
-def test_les_preuves_d_un_autre_monde_sont_signalees(incident: tuple[Path, Path]) -> None:
+def test_les_preuves_d_un_autre_monde_sont_signalees(
+    incident: tuple[Path, Path],
+) -> None:
     """Restaurer l'historique ne restaure pas les preuves : il faut le dire.
 
     Un journal enchaine prouve qu'il n'a pas ete altere ; il ne prouve pas que le monde n'a
@@ -328,6 +345,7 @@ def test_une_recuperation_qui_ne_change_rien_aux_fichiers_ne_perime_rien(
     assert resultat.preuves_total == 1
     assert resultat.preuves_perimees == 0
 
+
 def _depot_nu(tmp_path: Path, commits: int, non_suivis: int) -> Path:
     """Un depot neuf avec EXACTEMENT `commits` commits et `non_suivis` fichiers non suivis."""
     racine = tmp_path / f"nu-{commits}-{non_suivis}"
@@ -345,8 +363,12 @@ def _depot_nu(tmp_path: Path, commits: int, non_suivis: int) -> Path:
 @pytest.mark.parametrize(
     ("commits", "non_suivis", "reconnu"),
     [
-        (1, 20, True),   # le seuil exact des fichiers non suivis compte comme un accident
-        (3, 20, True),   # et le seuil exact des commits aussi
+        (
+            1,
+            20,
+            True,
+        ),  # le seuil exact des fichiers non suivis compte comme un accident
+        (3, 20, True),  # et le seuil exact des commits aussi
         (1, 19, False),  # un fichier en moins : depot normal, on ne touche a RIEN
         (4, 20, False),  # un commit de plus : depot normal, on ne touche a RIEN
     ],

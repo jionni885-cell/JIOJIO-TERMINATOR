@@ -6,7 +6,7 @@ Sept etapes, dans cet ordre exact :
     2. GENERATION      N candidats heterogenes, en parallele
     3. PREUVE          execution reelle — fail-closed, pas de temoin pas de vie
     4. AUDIT           critiques a personas divergentes, en revue AVEUGLE
-    5. CONSENSUS       quorum byzantin n >= 3f+1, jamais de moyenne silencieuse
+    5. CONSENSUS       quorum heuristique prudent, jamais de moyenne silencieuse
     6. GARDE           acceptation calibree + detection d'oscillation
     7. INTEGRITE       rejeu deterministe — l'agent a-t-il triche ?
 
@@ -17,14 +17,15 @@ rejouables apres coup.
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
 
 from ..audit.blame import BlameLedger, FirstErrorLocator
 from ..audit.consensus import ConsensusEngine, ConsensusOutcome
 from ..audit.integrity import IntegrityMonitor
 from ..audit.oscillation import OscillationGuard, ProgressPoint
 from ..audit.panel import AuditPanel, CriticReport
+from ..audit.task_reflection import ReflectionPlan, reflect_on_task
 from ..core.errors import (
     BudgetExhausted,
     FailClosed,
@@ -52,7 +53,6 @@ from ..spec.compiler import SpecCompiler
 from ..spec.library import empreinte_regle
 from ..spec.witness import Temoignage, traduire
 from ..verify.executable import ExecutableProver, ProverResult
-
 
 # --------------------------------------------------------------------------- #
 # Configuration
@@ -182,7 +182,9 @@ def _motif_consensus(outcome: object | None) -> str:
     differente. Un motif faux envoie chercher au mauvais endroit.
     """
     if outcome is None:
-        return "preuve complete mais consensus non atteint : aucun panel n'a pu conclure"
+        return (
+            "preuve complete mais consensus non atteint : aucun panel n'a pu conclure"
+        )
     if not getattr(outcome, "reached", False):
         return f"preuve complete mais consensus non atteint : {outcome.reason}"
     decision = getattr(getattr(outcome, "decision", None), "value", "?")
@@ -229,6 +231,11 @@ class Engine:
     #: routeur de competences : quand le travail porte un enonce de tache (`work.objective`),
     #: router sur le seul enonce technique revient a ignorer la question posee.
     _mandat: str = field(default="", init=False, repr=False)
+    #: Panel d'origine : chaque mission reçoit un panel reconstruit selon sa réflexion.
+    _base_panel: AuditPanel | None = field(default=None, init=False, repr=False)
+    _task_reflection: ReflectionPlan | None = field(
+        default=None, init=False, repr=False
+    )
     #: Memoire du controle d'auto-coherence (interne, voir `__post_init__`).
     _self_check_cache: dict = field(default_factory=dict, init=False, repr=False)
 
@@ -240,6 +247,8 @@ class Engine:
             object.__setattr__(self.config, "self_check", False)
             object.__setattr__(self.config, "mutation_gate", False)
             object.__setattr__(self.config, "temoins", False)
+        # Le panel est reconstruit par mission, sans perdre les fournisseurs originaux.
+        self._base_panel = self.panel
         # Tous les temoins sont journalises : une preuve non tracee n'existe pas.
         self.prover.journal = self.journal
         # Memoire du controle d'auto-coherence, par contenu d'artefact : le
@@ -285,7 +294,9 @@ class Engine:
         """
         try:
             mondes = self.journal.mondes()
-        except Exception:  # pragma: no cover - le journal ne doit jamais faire echouer une mission
+        except (
+            Exception
+        ):  # pragma: no cover - le journal ne doit jamais faire echouer une mission
             return None
         # Un seul monde, ou aucun sceau (journal d'une version anterieure) : rien a dire.
         if len(mondes) <= 1:
@@ -306,7 +317,6 @@ class Engine:
             ),
         )
 
-
     def run(self, mission: Mission, work: WorkItem | None = None) -> MissionReport:
         started = time.monotonic()
         work = work or WorkItem(objective=mission.objective)
@@ -315,15 +325,41 @@ class Engine:
         # fonction sum_even... »), alors que le mandat dit tout. Router sur le seul enonce
         # technique ferait s'abstenir le routeur a chaque fois qu'une tache est fournie.
         object.__setattr__(self, "_mandat", mission.objective or "")
-        self.journal.append("mission", {"id": mission.id, "objective": mission.objective,
-                                        "alpha": mission.alpha, "risk": mission.risk.value})
-
-        # --- 1. SPECIFICATION -------------------------------------------- #
-        spec = work.spec or self._compile(mission, work)
         self.journal.append(
-            "stage", {"name": Stage.SPEC.value, "produced": True, "verified": True,
-                      "rules": [r.id for r in spec.rules],
-                      "under_specified": list(spec.under_specified)}
+            "mission",
+            {
+                "id": mission.id,
+                "objective": mission.objective,
+                "alpha": mission.alpha,
+                "risk": mission.risk.value,
+            },
+        )
+
+        # --- 1. SPECIFICATION ET RÉFLEXION OBLIGATOIRE -------------------- #
+        spec = work.spec or self._compile(mission, work)
+        reflection = reflect_on_task(
+            mission.objective,
+            (
+                *(rule.statement for rule in spec.rules),
+                work.objective,
+                work.entrypoint,
+                self.config.famille,
+            ),
+        )
+        self._task_reflection = reflection
+        if self._base_panel is None:
+            raise RuntimeError("panel de base absent : réflexion de mission impossible")
+        self.panel = self._base_panel.for_task_roles(reflection.roles)
+        self.journal.append("task_reflection", reflection.trace_summary())
+        self.journal.append(
+            "stage",
+            {
+                "name": Stage.SPEC.value,
+                "produced": True,
+                "verified": True,
+                "rules": [r.id for r in spec.rules],
+                "under_specified": list(spec.under_specified),
+            },
         )
 
         # --- 0. ROUTAGE : combien de verification depenser ? ----------------- #
@@ -401,8 +437,11 @@ class Engine:
             for art in candidates:
                 try:
                     res = self.prover.prove(
-                        art.content, spec, hidden_checks=checks,
-                        entrypoint=work.entrypoint, stage=Stage.PROVE,
+                        art.content,
+                        spec,
+                        hidden_checks=checks,
+                        entrypoint=work.entrypoint,
+                        stage=Stage.PROVE,
                     )
                 except FailClosed as exc:
                     # Fail-closed : aucune preuve disponible. Ce n'est pas un echec
@@ -410,12 +449,15 @@ class Engine:
                     # bonne sortie est l'abstention, jamais un plantage ni un
                     # « ca a l'air bon ».
                     self.journal.append(
-                        "fail-closed", {"round": rnd, "reason": str(exc),
-                                        "stage": Stage.PROVE.value}
+                        "fail-closed",
+                        {"round": rnd, "reason": str(exc), "stage": Stage.PROVE.value},
                     )
                     warnings.append(
-                        Finding(agent="prover", severity=Severity.HIGH,
-                                message=f"preuve impossible : {exc}")
+                        Finding(
+                            agent="prover",
+                            severity=Severity.HIGH,
+                            message=f"preuve impossible : {exc}",
+                        )
                     )
                     proved = []
                     break
@@ -429,13 +471,24 @@ class Engine:
                     f"({len(spec.rules)} regle(s) declaree(s), 0 temoin). "
                     "Fournissez des oracles (banc d'essai) ou des exemples `>>>`."
                 )
-                self.journal.append("abstention", {"round": rnd, "reason": abstained_for})
+                self.journal.append(
+                    "abstention", {"round": rnd, "reason": abstained_for}
+                )
                 residual = self._finalize(
-                    mission=mission, spec=spec, best=best, reports=reports,
-                    outcome=outcome, integrity=self.monitor.audit(self.journal),
-                    warnings=tuple(warnings), rounds=rounds, usage=usage,
-                    started=started, guard=guard, ledger=ledger,
-                    force_reason=abstained_for, infeasible=infeasible,
+                    mission=mission,
+                    spec=spec,
+                    best=best,
+                    reports=reports,
+                    outcome=outcome,
+                    integrity=self.monitor.audit(self.journal),
+                    warnings=tuple(warnings),
+                    rounds=rounds,
+                    usage=usage,
+                    started=started,
+                    guard=guard,
+                    ledger=ledger,
+                    force_reason=abstained_for,
+                    infeasible=infeasible,
                 )
                 return residual
 
@@ -444,7 +497,8 @@ class Engine:
             # seul, faire rejeter un candidat — il declasse, et il s'AVOUE.
             if temoignage.tests:
                 self._signaler_temoins_non_discriminants(
-                    proved, temoignage, warnings, rnd, work.objective or spec.mission)
+                    proved, temoignage, warnings, rnd, work.objective or spec.mission
+                )
 
             # Tri par (preuves, MOINS de reserves). Mesure : sur une mission de
             # document ou un candidat cite un chemin inexistant et l'autre non, les
@@ -522,25 +576,41 @@ class Engine:
                 # candidat ni le verdict. On livre avec la reserve expliquee, au lieu
                 # de bruler des appels pour arriver exactement au meme point.
                 self.journal.append(
-                    "stop", {"reason": "configuration infaisable, preuve deja complete",
-                             "detail": infeasible}
+                    "stop",
+                    {
+                        "reason": "configuration infaisable, preuve deja complete",
+                        "detail": infeasible,
+                    },
                 )
                 if feedback is None:
-                    feedback = self._feedback(top_res, spec, repeated=False, artifact=top_art)
+                    feedback = self._feedback(
+                        top_res, spec, repeated=False, artifact=top_art
+                    )
                 break
 
             stop, why = guard.should_stop()
-            if stop and guard.is_plateau() and not (
-                guard.is_flip_flop() or guard.is_cycling() or guard.is_regressing()
+            if (
+                stop
+                and guard.is_plateau()
+                and not (
+                    guard.is_flip_flop() or guard.is_cycling() or guard.is_regressing()
+                )
+                and top_res.ratio < 1.0
+                and rnd + 1 < (mission.max_rounds or self.config.max_rounds)
             ):
-                if top_res.ratio < 1.0 and rnd + 1 < (mission.max_rounds or self.config.max_rounds):
-                    self.journal.append(
-                        "oscillation",
-                        {"stop": False, "reason": why, "action": "continue-echantillonnage",
-                         "summary": guard.summary()},
-                    )
-                    feedback = self._feedback(top_res, spec, repeated=False, artifact=top_art)
-                    continue
+                self.journal.append(
+                    "oscillation",
+                    {
+                        "stop": False,
+                        "reason": why,
+                        "action": "continue-echantillonnage",
+                        "summary": guard.summary(),
+                    },
+                )
+                feedback = self._feedback(
+                    top_res, spec, repeated=False, artifact=top_art
+                )
+                continue
             # Mesure au banc (competence 0.15) : s'arreter au premier plateau faisait
             # PERDRE 13.3 points face a un tirage aveugle de meme budget. La raison est
             # mathematique : quand un verificateur existe, chaque tirage supplementaire
@@ -549,26 +619,35 @@ class Engine:
             # chose. Tant qu'il reste du budget et des regles non satisfaites, on tire.
             # L'arret anticipe est reserve aux vraies pathologies : alternance, cycle,
             # regression (la correction NUIT), et a l'epuisement du budget.
-            budget_ok = (
-                time.monotonic() - started
-                < (mission.deadline_s or self.config.time_budget_s)
+            budget_ok = time.monotonic() - started < (
+                mission.deadline_s or self.config.time_budget_s
             )
             if stop and guard.is_plateau() and top_res.ratio < 1.0 and budget_ok:
                 self.journal.append(
                     "oscillation",
-                    {"stop": False, "reason": why, "action": "continue-plateau-productif",
-                     "summary": guard.summary()},
+                    {
+                        "stop": False,
+                        "reason": why,
+                        "action": "continue-plateau-productif",
+                        "summary": guard.summary(),
+                    },
                 )
-                feedback = self._feedback(top_res, spec, repeated=False, artifact=top_art)
-                guard = OscillationGuard()  # la fenetre repart : le plateau est consomme
+                feedback = self._feedback(
+                    top_res, spec, repeated=False, artifact=top_art
+                )
+                guard = (
+                    OscillationGuard()
+                )  # la fenetre repart : le plateau est consomme
                 continue
 
             if stop:
                 self.journal.append(
-                    "oscillation", {"stop": True, "reason": why, "summary": guard.summary()}
+                    "oscillation",
+                    {"stop": True, "reason": why, "summary": guard.summary()},
                 )
-                warnings.append(Finding(agent="oscillation", severity=Severity.MEDIUM,
-                                        message=why))
+                warnings.append(
+                    Finding(agent="oscillation", severity=Severity.MEDIUM, message=why)
+                )
                 break
 
             feedback = self._feedback(
@@ -577,23 +656,31 @@ class Engine:
 
         # --- 4/5. AUDIT SI PAS ENCORE FAIT --------------------------------- #
         if best is not None and not reports:
-            reports, outcome = self._audit_and_decide(best[0], spec, work, rounds - 1, usage)
+            reports, outcome = self._audit_and_decide(
+                best[0], spec, work, rounds - 1, usage
+            )
 
         # --- 6 bis. LE MONDE A-T-IL CHANGE SOUS NOS PIEDS ? ---------------- #
         avertissement_monde = self._avertir_sur_le_monde()
         if avertissement_monde is not None:
-            self.journal.append("monde", {
-                "avertissement": avertissement_monde.message,
-                "etats": len(self.journal.mondes()),
-            })
+            self.journal.append(
+                "monde",
+                {
+                    "avertissement": avertissement_monde.message,
+                    "etats": len(self.journal.mondes()),
+                },
+            )
             warnings.append(avertissement_monde)
 
         # --- 7. INTEGRITE -------------------------------------------------- #
         integrity = self.monitor.audit(self.journal)
         self.journal.append(
             "integrity",
-            {"clean": integrity.clean, "steps": integrity.steps,
-             "exploits": [e.kind.value for e in integrity.exploits]},
+            {
+                "clean": integrity.clean,
+                "steps": integrity.steps,
+                "exploits": [e.kind.value for e in integrity.exploits],
+            },
         )
 
         # --- 8. PORTE DE MUTATION ------------------------------------------ #
@@ -629,8 +716,11 @@ class Engine:
         if gardes:
             self.journal.append(
                 "temoin-conserve",
-                {"mission_id": report.mission_id, "entrees": gardes,
-                 "objectif": (work.objective or spec.mission)[:200]},
+                {
+                    "mission_id": report.mission_id,
+                    "entrees": gardes,
+                    "objectif": (work.objective or spec.mission)[:200],
+                },
             )
         self._learn(mission, report)
         return report
@@ -682,7 +772,8 @@ class Engine:
             return None
         return Finding(
             agent="temoins",
-            severity=Severity.MEDIUM if (temoignage.incoherents or temoignage.reparations)
+            severity=Severity.MEDIUM
+            if (temoignage.incoherents or temoignage.reparations)
             else Severity.LOW,
             message=" ; ".join(faits) + ".",
         )
@@ -714,7 +805,9 @@ class Engine:
             )
         details = []
         for rid, raison in list(temoignage.aveux.items())[:3]:
-            details.append(f"{rid} declaree non verifiable par le modele ({raison[:120]})")
+            details.append(
+                f"{rid} declaree non verifiable par le modele ({raison[:120]})"
+            )
         for rid, motif in list(temoignage.refuses.items())[:3]:
             details.append(f"{rid} refusee par les garde-fous ({motif[:120]})")
         return Finding(
@@ -771,8 +864,10 @@ class Engine:
             echecs = tuple(w for w in temoins if not w.ok)
             total = len(temoins) or 1
             partielles.append((art.digest, (total - len(echecs)) / total))
-        ordre_sans_eux = [digest for digest, _r in sorted(
-            partielles, key=lambda x: x[1], reverse=True)]
+        ordre_sans_eux = [
+            digest
+            for digest, _r in sorted(partielles, key=lambda x: x[1], reverse=True)
+        ]
 
         for rid in sorted(discriminants):
             # Le constat est MEMORISE, pas encore ecrit : il sera emis a la fin, quand on
@@ -787,11 +882,12 @@ class Engine:
             for rid in sorted(discriminants):
                 try:
                     self.bibliotheque.retirer(
-                        objectif=objectif_biblio, regle=rid,
+                        objectif=objectif_biblio,
+                        regle=rid,
                         raison="repris dans la bibliotheque, mais echoue sur tous les "
-                               "candidats : il accuse tout le monde, il ne discrimine plus",
+                        "candidats : il accuse tout le monde, il ne discrimine plus",
                     )
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
         self._regles_non_prouvees.update(discriminants)
         self.journal.append(
@@ -837,7 +933,8 @@ class Engine:
         if len(ex_aequo) > 1:
             moins_de_reserves = min(len(pair[1].reservations) for pair in ex_aequo)
             ex_aequo = [
-                pair for pair in ex_aequo
+                pair
+                for pair in ex_aequo
                 if len(pair[1].reservations) == moins_de_reserves
             ]
         if len(ex_aequo) < 2:
@@ -845,13 +942,15 @@ class Engine:
 
         from ..verify.divergence import comparer
 
-        etiquette = {pair[0].digest: f"candidat-{i + 1}" for i, pair in enumerate(ex_aequo)}
+        etiquette = {
+            pair[0].digest: f"candidat-{i + 1}" for i, pair in enumerate(ex_aequo)
+        }
         try:
             divergences, majoritaire = comparer(
                 [(etiquette[pair[0].digest], pair[0].content) for pair in ex_aequo],
                 work.entrypoint,
             )
-        except Exception as exc:      # observation, jamais une cause d'echec
+        except Exception as exc:  # observation, jamais une cause d'echec
             self.journal.append("divergence", {"round": rnd, "error": str(exc)[:200]})
             return proved[0]
 
@@ -866,7 +965,14 @@ class Engine:
                 "cas": len(divergences),
                 "detail": [d.render()[:200] for d in divergences[:3]],
                 "majoritaire": etiquette.get(
-                    next((p[0].digest for p in ex_aequo if etiquette[p[0].digest] == majoritaire), ""),
+                    next(
+                        (
+                            p[0].digest
+                            for p in ex_aequo
+                            if etiquette[p[0].digest] == majoritaire
+                        ),
+                        "",
+                    ),
                     "",
                 ),
             },
@@ -879,8 +985,11 @@ class Engine:
                     f"{len(divergences)} desaccord(s) entre {len(ex_aequo)} candidats a "
                     "egalite de preuves : la specification ne tranche pas. Le livrable "
                     "est celui du "
-                    + (f"candidat majoritaire ({majoritaire})" if majoritaire else
-                       "premier candidat (aucune majorite)")
+                    + (
+                        f"candidat majoritaire ({majoritaire})"
+                        if majoritaire
+                        else "premier candidat (aucune majorite)"
+                    )
                 ),
                 evidence=" ; ".join(d.render() for d in divergences[:3])[:400],
                 counterexample=divergences[0].entree,
@@ -936,8 +1045,11 @@ class Engine:
             doc = ""
 
         checks = {
-            k: v for k, v in derived.checks.items()
-            if k == f"A-001:{work.entrypoint}" or k == "A-001" or k == "A-003"
+            k: v
+            for k, v in derived.checks.items()
+            if k == f"A-001:{work.entrypoint}"
+            or k == "A-001"
+            or k == "A-003"
             or k.startswith("A-003:")
         }
         if not checks:
@@ -946,8 +1058,11 @@ class Engine:
 
         try:
             res = self.prover.prove(
-                src, derived.spec, hidden_checks=checks,
-                entrypoint=derived.entrypoint, preamble=derived.preamble,
+                src,
+                derived.spec,
+                hidden_checks=checks,
+                entrypoint=derived.entrypoint,
+                preamble=derived.preamble,
                 stage=Stage.PROVE,
             )
         except Exception:
@@ -975,7 +1090,9 @@ class Engine:
         memo[cle] = (False, motif)
         return memo[cle]
 
-    def _mutation_gate(self, artifact: Artifact, spec: Spec, work: WorkItem) -> object | None:
+    def _mutation_gate(
+        self, artifact: Artifact, spec: Spec, work: WorkItem
+    ) -> object | None:
         """Mute l'artefact et verifie que la specification tue chaque mutant.
 
         Cout borne (MUTATION_BUDGET) : on cherche la faiblesse de specification,
@@ -992,8 +1109,11 @@ class Engine:
         for mutant in mutants:
             try:
                 res = self.prover.prove(
-                    mutant.source, spec, hidden_checks=self._checks_en_vigueur(work),
-                    entrypoint=work.entrypoint, stage=Stage.PROVE,
+                    mutant.source,
+                    spec,
+                    hidden_checks=self._checks_en_vigueur(work),
+                    entrypoint=work.entrypoint,
+                    stage=Stage.PROVE,
                 )
             except FailClosed:
                 # Aucune preuve disponible pour ce mutant : il ne peut pas
@@ -1113,7 +1233,9 @@ class Engine:
                 guard=f"regle {first.rule_id} du banc d'essai",
                 mission_id=mission.id,
             )
-        except Exception:  # une memoire defaillante ne doit jamais faire echouer la mission
+        except (
+            Exception
+        ):  # une memoire defaillante ne doit jamais faire echouer la mission
             pass
 
     def _resoudre_la_memoire(self, mission: Mission, report: MissionReport) -> None:
@@ -1128,7 +1250,9 @@ class Engine:
         try:
             if self.memory is None or not getattr(self.memory, "en_attente", 0):
                 return
-            satisfaites = ",".join(w.rule_id for w in report.witnesses if w.ok) or "aucune"
+            satisfaites = (
+                ",".join(w.rule_id for w in report.witnesses if w.ok) or "aucune"
+            )
             extrait = " ".join((report.subject or "").split())[:120]
             remede = (
                 f"regle(s) satisfaite(s) depuis la mission {mission.id} : {satisfaites}"
@@ -1137,12 +1261,16 @@ class Engine:
             self.memory.resoudre(
                 objective=mission.objective, correct_fix=remede, mission_id=mission.id
             )
-        except Exception:  # une memoire defaillante ne doit jamais faire echouer la mission
+        except (
+            Exception
+        ):  # une memoire defaillante ne doit jamais faire echouer la mission
             pass
 
     # -- etapes internes ---------------------------------------------------- #
 
-    def _temoins_de_la_spec(self, spec: Spec, work: WorkItem, usage: dict[str, int]) -> Temoignage:
+    def _temoins_de_la_spec(
+        self, spec: Spec, work: WorkItem, usage: dict[str, int]
+    ) -> Temoignage:
         """Traduit les regles en temoins executables — UNE fois par mission.
 
         Rien n'est fait quand la mission FOURNIT deja ses oracles (le banc les
@@ -1157,15 +1285,21 @@ class Engine:
         objectif = work.objective or spec.mission
 
         # -- 1. la bibliotheque d'abord : une traduction deja VALIDEE ne se repaie pas.
-        provider = self.spec_compiler.provider or (self.generators[0] if self.generators else None)
+        provider = self.spec_compiler.provider or (
+            self.generators[0] if self.generators else None
+        )
         memorises = self._rappeler_les_temoins(spec, objectif)
         # Les AVEUX se reprennent aussi. Un modele qui a declare une regle non testable ne
         # changera pas d'avis parce qu'on lui repose la question : repayer cet appel a chaque
         # mission identique coute sans rien apprendre. La regle reste NON PROUVEE.
         aveux_memorises = self._rappeler_les_aveux(spec, objectif, provider)
-        manquantes = [r for r in spec.rules
-                      if r.kind is not RuleKind.ADVISORY and r.id not in memorises
-                      and r.id not in aveux_memorises]
+        manquantes = [
+            r
+            for r in spec.rules
+            if r.kind is not RuleKind.ADVISORY
+            and r.id not in memorises
+            and r.id not in aveux_memorises
+        ]
         if (memorises or aveux_memorises) and not manquantes:
             # Reprise COMPLETE : aucun appel au modele, la memoire suffit.
             self._temoins_memorises = True
@@ -1176,9 +1310,13 @@ class Engine:
             # serait exactement l'affirmation que ce depot refuse.
             eprouves = self._rappeler_les_eprouves(spec, objectif)
             self._temoignage = Temoignage(
-                tests=memorises, aveux=aveux_memorises, modele="bibliotheque",
+                tests=memorises,
+                aveux=aveux_memorises,
+                modele="bibliotheque",
                 valides=frozenset(rid for rid in memorises if eprouves.get(rid, False)),
-                non_eprouves=frozenset(rid for rid in memorises if not eprouves.get(rid, False)),
+                non_eprouves=frozenset(
+                    rid for rid in memorises if not eprouves.get(rid, False)
+                ),
             )
             self.journal.append(
                 "temoins",
@@ -1191,9 +1329,12 @@ class Engine:
                     # n'a rien paye. Sans ces deux listes, `jio trace` montrait un temoin
                     # repris sans dire s'il avait ete mis a l'epreuve — la memoire pouvait
                     # donc blanchir un temoin simplement accepte, sans que rien ne le montre.
-                    "valides": sorted(rid for rid in memorises if eprouves.get(rid, False)),
-                    "non_eprouves": sorted(rid for rid in memorises
-                                           if not eprouves.get(rid, False)),
+                    "valides": sorted(
+                        rid for rid in memorises if eprouves.get(rid, False)
+                    ),
+                    "non_eprouves": sorted(
+                        rid for rid in memorises if not eprouves.get(rid, False)
+                    ),
                     "source": "bibliotheque",
                     "appels": 0,
                 },
@@ -1206,22 +1347,36 @@ class Engine:
             # avait UN — une regle modifiee (ou nouvelle) n'etait alors jamais
             # traduite, et la mission ne la prouvait plus du tout. Mesure : zero
             # appel de traduction sur une specification dont un enonce avait change.
-            partielle = Spec(mission=spec.mission, rules=tuple(manquantes),
-                             under_specified=spec.under_specified,
-                             acceptance=spec.acceptance)
+            partielle = Spec(
+                mission=spec.mission,
+                rules=tuple(manquantes),
+                under_specified=spec.under_specified,
+                acceptance=spec.acceptance,
+            )
             manquantes = [r for r in manquantes if r.id not in aveux_memorises]
-            partielle = Spec(mission=spec.mission, rules=tuple(manquantes),
-                             under_specified=spec.under_specified,
-                             acceptance=spec.acceptance)
-            frais = traduire(partielle, provider, entrypoint=work.entrypoint,
-                             objectif=objectif, controle=self.config.witness_control,
-                             sandbox=_bac_a_sable(self.prover))
+            partielle = Spec(
+                mission=spec.mission,
+                rules=tuple(manquantes),
+                under_specified=spec.under_specified,
+                acceptance=spec.acceptance,
+            )
+            frais = traduire(
+                partielle,
+                provider,
+                entrypoint=work.entrypoint,
+                objectif=objectif,
+                controle=self.config.witness_control,
+                sandbox=_bac_a_sable(self.prover),
+            )
             if frais.tests:
                 self._temoins_memorises = False
             temoignage = Temoignage(
                 tests={**memorises, **frais.tests},
-                aveux={**aveux_memorises, **frais.aveux}, refuses=dict(frais.refuses),
-                motif=frais.motif, appels=frais.appels, modele=frais.modele,
+                aveux={**aveux_memorises, **frais.aveux},
+                refuses=dict(frais.refuses),
+                motif=frais.motif,
+                appels=frais.appels,
+                modele=frais.modele,
                 # Une traduction REPRISE de la bibliotheque a ete mise a l'epreuve le jour
                 # ou elle y est entree : elle reste `valide`. Seules les fraiches peuvent
                 # arriver `non eprouvees`.
@@ -1231,7 +1386,10 @@ class Engine:
             )
         else:
             temoignage = traduire(
-                spec, provider, entrypoint=work.entrypoint, objectif=objectif,
+                spec,
+                provider,
+                entrypoint=work.entrypoint,
+                objectif=objectif,
                 controle=self.config.witness_control,
                 sandbox=_bac_a_sable(self.prover),
             )
@@ -1290,7 +1448,7 @@ class Engine:
         }
         try:
             rappeles = self.bibliotheque.rappeler(objectif, empreintes)
-        except Exception:  # noqa: BLE001 — une memoire defaillante ne bloque pas une mission
+        except Exception:
             return {}
         return {k: v for k, v in rappeles.items() if k in empreintes}
 
@@ -1305,11 +1463,14 @@ class Engine:
         }
         try:
             return self.bibliotheque.rappeler_eprouves(objectif, empreintes)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return {}
 
     def _rappeler_les_aveux(
-        self, spec: Spec, objectif: str, provider: object | None,
+        self,
+        spec: Spec,
+        objectif: str,
+        provider: object | None,
     ) -> dict[str, str]:
         """Les regles que ce modele avait deja declarees NON TESTABLES, pour cette mission.
 
@@ -1327,12 +1488,16 @@ class Engine:
         modele = str(getattr(provider, "model", "") or "")
         try:
             rappeles = self.bibliotheque.rappeler_aveux(objectif, empreintes, modele)
-        except Exception:  # noqa: BLE001 — une memoire defaillante ne bloque pas une mission
+        except Exception:
             return {}
         return {k: v for k, v in rappeles.items() if k in empreintes}
 
     def _memoriser_les_aveux(
-        self, spec: Spec, objectif: str, temoignage: Temoignage, provider: object | None,
+        self,
+        spec: Spec,
+        objectif: str,
+        temoignage: Temoignage,
+        provider: object | None,
     ) -> int:
         """Ecrit les aveux frais. Ils ne Prouvent rien : ils evitent une question deja posee."""
         if self.bibliotheque is None or not temoignage.aveux:
@@ -1343,16 +1508,20 @@ class Engine:
             if r.kind is not RuleKind.ADVISORY
         }
         try:
-            return int(self.bibliotheque.retenir_aveux(
-                objectif=objectif,
-                empreintes=empreintes,
-                aveux=dict(temoignage.aveux),
-                modele=str(getattr(provider, "model", "") or ""),
-            ))
-        except Exception:  # noqa: BLE001
+            return int(
+                self.bibliotheque.retenir_aveux(
+                    objectif=objectif,
+                    empreintes=empreintes,
+                    aveux=dict(temoignage.aveux),
+                    modele=str(getattr(provider, "model", "") or ""),
+                )
+            )
+        except Exception:
             return 0
 
-    def _conserver_les_temoins(self, spec: Spec, work: WorkItem, report: MissionReport) -> int:
+    def _conserver_les_temoins(
+        self, spec: Spec, work: WorkItem, report: MissionReport
+    ) -> int:
         """Alimente la bibliotheque — uniquement sur une livraison PROUVEE.
 
         La condition est le coeur du module : une abstention ou une reserve ne
@@ -1373,11 +1542,15 @@ class Engine:
         # la meme regle qu'a l'entree du raisonnement : un temoin dont on n'a pas montre qu'il
         # peut echouer ne prouve rien, donc il n'a rien a faire dans une memoire de preuves.
         if report.status not in (
-            MissionStatus.DELIVERED, MissionStatus.DELIVERED_WITH_RESERVATION
+            MissionStatus.DELIVERED,
+            MissionStatus.DELIVERED_WITH_RESERVATION,
         ):
             return 0
-        a_retenir = {rid: t for rid, t in self._temoignage.tests.items()
-                     if rid in self._temoignage.valides}
+        a_retenir = {
+            rid: t
+            for rid, t in self._temoignage.tests.items()
+            if rid in self._temoignage.valides
+        }
         if not a_retenir:
             return 0
         objectif = work.objective or spec.mission
@@ -1387,16 +1560,18 @@ class Engine:
             if r.kind is not RuleKind.ADVISORY
         }
         try:
-            return int(self.bibliotheque.retenir(
-                objectif=objectif,
-                empreintes=empreintes,
-                correspondance=a_retenir,
-                mission_id=report.mission_id,
-                # Ce que la memoire a le droit de promettre plus tard : uniquement ce qui a
-                # ete mis a l'epreuve ici — et c'est deja le filtre d'entree.
-                eprouves={rid: True for rid in a_retenir},
-            ))
-        except Exception:  # noqa: BLE001
+            return int(
+                self.bibliotheque.retenir(
+                    objectif=objectif,
+                    empreintes=empreintes,
+                    correspondance=a_retenir,
+                    mission_id=report.mission_id,
+                    # Ce que la memoire a le droit de promettre plus tard : uniquement ce qui a
+                    # ete mis a l'epreuve ici — et c'est deja le filtre d'entree.
+                    eprouves={rid: True for rid in a_retenir},
+                )
+            )
+        except Exception:
             return 0
 
     def _checks_en_vigueur(self, work: WorkItem) -> Mapping[str, str]:
@@ -1432,7 +1607,11 @@ class Engine:
         usage: dict[str, int],
     ) -> list[Artifact]:
         """Produit N candidats avec diversite forcee."""
-        n = self._arm.candidates if self._arm is not None else self.config.candidates_per_round
+        n = (
+            self._arm.candidates
+            if self._arm is not None
+            else self.config.candidates_per_round
+        )
         temps = self.config.temperatures
         prompt = self._prompt(work, spec, feedback)
         out: list[Artifact] = []
@@ -1442,15 +1621,22 @@ class Engine:
             temperature = temps[(rnd + i) % len(temps)]
             try:
                 comp: Completion = provider.complete(
-                    [Message("system", self._system(work), trust=_SYSTEM_TRUST),
-                     Message("user", prompt)],
+                    [
+                        Message("system", self._system(work), trust=_SYSTEM_TRUST),
+                        Message("user", prompt),
+                    ],
                     temperature=temperature,
                     max_tokens=self.config.max_tokens,
                     seed=1000 * self.config.seed + 100 * rnd + i,
                 )
-            except Exception as exc:  # noqa: BLE001 — un fournisseur en panne ne bloque pas le panel
-                self.journal.append("provider_error", {"provider": getattr(provider, "name", "?"),
-                                                       "error": str(exc)[:300]})
+            except Exception as exc:
+                self.journal.append(
+                    "provider_error",
+                    {
+                        "provider": getattr(provider, "name", "?"),
+                        "error": str(exc)[:300],
+                    },
+                )
                 continue
 
             usage["prompt_tokens"] += comp.prompt_tokens
@@ -1460,7 +1646,11 @@ class Engine:
             # En famille "prose", le candidat EST le document : l'extraire comme un
             # bloc de code jetterait le texte (et un document n'a pas d'entree).
             prose = self.config.famille == "prose"
-            code = comp.text.strip() if prose else _extract_code(comp.text, work.entrypoint)
+            code = (
+                comp.text.strip()
+                if prose
+                else _extract_code(comp.text, work.entrypoint)
+            )
             if not code.strip():
                 continue
 
@@ -1473,7 +1663,10 @@ class Engine:
                     model=comp.model,
                     provider=comp.provider,
                     attempt=rnd + 1,
-                    metadata={"temperature": temperature, "correct_hint": comp.metadata.get("sim_correct")},
+                    metadata={
+                        "temperature": temperature,
+                        "correct_hint": comp.metadata.get("sim_correct"),
+                    },
                 )
             )
             self.journal.append(
@@ -1502,8 +1695,11 @@ class Engine:
 
         def verifier(src: str) -> tuple[bool, str]:
             res = self.prover.prove(
-                src, spec, hidden_checks=self._checks_en_vigueur(work),
-                entrypoint=work.entrypoint, stage=Stage.PROVE,
+                src,
+                spec,
+                hidden_checks=self._checks_en_vigueur(work),
+                entrypoint=work.entrypoint,
+                stage=Stage.PROVE,
             )
             if res.failures:
                 return False, res.failures[0].stderr[:300] or res.failures[0].summary()
@@ -1589,7 +1785,9 @@ class Engine:
         if force_reason:
             # Abstention decidee en amont (fail-closed) : on ne construit pas de
             # faux temoignage, on rend un rapport honnete et vide de preuve.
-            self.journal.append("verdict", {"status": "abstained", "reason": force_reason})
+            self.journal.append(
+                "verdict", {"status": "abstained", "reason": force_reason}
+            )
             return MissionReport(
                 mission_id=mission.id,
                 objective=mission.objective,
@@ -1643,17 +1841,24 @@ class Engine:
             gate_reason = (
                 f"{head} | decompte : preuves {ratio:.3f} x accord "
                 f"{outcome.agreement:.3f} x decorrelation ({outcome.effective_panel} "
-                f"couple(s) modele-verdict distinct(s) sur {outcome.panel_size} voix) x "
+                f"source(s) de modele distincte(s) sur {outcome.panel_size} voix) x "
                 f"confiance {outcome.confidence:.3f} = {confidence:.3f}"
             )
         self.journal.append(
-            "gate", {"accepted": accepted, "confidence": confidence, "reason": gate_reason,
-                     "tau": self.gate.tau(), "calibrated": self.gate.calibrated}
+            "gate",
+            {
+                "accepted": accepted,
+                "confidence": confidence,
+                "reason": gate_reason,
+                "tau": self.gate.tau(),
+                "calibrated": self.gate.calibrated,
+            },
         )
 
         all_passed = bool(best) and best[1].passed
-        consensus_ok = bool(outcome and outcome.reached
-                            and outcome.decision is Verdict.PASS)
+        consensus_ok = bool(
+            outcome and outcome.reached and outcome.decision is Verdict.PASS
+        )
         integrity_ok = integrity.clean
 
         status = MissionStatus.ABSTAINED
@@ -1752,17 +1957,19 @@ class Engine:
         # dire « 3/3 » et « NON PROUVEE » de la meme regle.
         for rid in sorted(self._regles_non_prouvees):
             tour = self._premier_tour_non_prouve.get(rid, 0)
-            findings.append(Finding(
-                agent="temoins",
-                severity=Severity.MEDIUM,
-                message=(
-                    f"regle {rid} NON PROUVEE : son temoin echoue sur TOUS les candidats "
-                    f"(constate au tour {tour + 1}, et toujours vrai pour l'artefact livre). "
-                    "Deux causes possibles — le temoin est faux, ou tous les candidats "
-                    "sont faux — et rien ici ne permet de trancher. La regle reste "
-                    "declaree NON PROUVEE, jamais supposee satisfaite."
-                ),
-            ))
+            findings.append(
+                Finding(
+                    agent="temoins",
+                    severity=Severity.MEDIUM,
+                    message=(
+                        f"regle {rid} NON PROUVEE : son temoin echoue sur TOUS les candidats "
+                        f"(constate au tour {tour + 1}, et toujours vrai pour l'artefact livre). "
+                        "Deux causes possibles — le temoin est faux, ou tous les candidats "
+                        "sont faux — et rien ici ne permet de trancher. La regle reste "
+                        "declaree NON PROUVEE, jamais supposee satisfaite."
+                    ),
+                )
+            )
 
         # LES REGLES SANS TEMOIN DU TOUT — parce que l'INSTRUMENT a ete refuse.
         #
@@ -1802,20 +2009,26 @@ class Engine:
             if rid in self._temoignage.incoherents:
                 quoi = f"l'instrument a ete REFUSE ({self._temoignage.incoherents[rid][:180]})"
             elif rid in self._temoignage.refuses:
-                quoi = ("le temoin a ete rejete par la porte statique "
-                        f"({self._temoignage.refuses[rid][:180]})")
+                quoi = (
+                    "le temoin a ete rejete par la porte statique "
+                    f"({self._temoignage.refuses[rid][:180]})"
+                )
             else:
-                quoi = ("le modele a declare la regle NON TESTABLE "
-                        f"({self._temoignage.aveux.get(rid, '')[:180]})")
-            findings.append(Finding(
-                agent="temoins",
-                severity=Severity.MEDIUM,
-                message=(
-                    f"regle {rid} NON COUVERTE : {quoi}. La regle n'a donc AUCUN temoin "
-                    "executable — elle n'est ni satisfaite ni violee par l'artefact livre, "
-                    "elle est hors de ce que cette mission a verifie."
-                ),
-            ))
+                quoi = (
+                    "le modele a declare la regle NON TESTABLE "
+                    f"({self._temoignage.aveux.get(rid, '')[:180]})"
+                )
+            findings.append(
+                Finding(
+                    agent="temoins",
+                    severity=Severity.MEDIUM,
+                    message=(
+                        f"regle {rid} NON COUVERTE : {quoi}. La regle n'a donc AUCUN temoin "
+                        "executable — elle n'est ni satisfaite ni violee par l'artefact livre, "
+                        "elle est hors de ce que cette mission a verifie."
+                    ),
+                )
+            )
 
         # POST-CONDITION, quelle que soit la branche empruntee plus haut : une regle
         # dont le temoin echoue sur TOUS les candidats n'est PAS prouvee. La livrer
@@ -1827,18 +2040,21 @@ class Engine:
         if sans_temoin:
             a_declarer |= sans_temoin
         if a_declarer and status in (
-            MissionStatus.DELIVERED, MissionStatus.DELIVERED_WITH_RESERVATION
+            MissionStatus.DELIVERED,
+            MissionStatus.DELIVERED_WITH_RESERVATION,
         ):
             morceaux = []
             if self._regles_non_prouvees:
                 morceaux.append(
-                    "regle(s) NON PROUVEE(s) : " + ", ".join(sorted(self._regles_non_prouvees))
+                    "regle(s) NON PROUVEE(s) : "
+                    + ", ".join(sorted(self._regles_non_prouvees))
                     + " — leur temoin traduit echoue sur TOUS les candidats : il ne les "
                     "departage pas, donc il ne peut ni accuser ni innocenter."
                 )
             if sans_temoin:
                 morceaux.append(
-                    "regle(s) NON COUVERTE(s) : " + ", ".join(sorted(sans_temoin))
+                    "regle(s) NON COUVERTE(s) : "
+                    + ", ".join(sorted(sans_temoin))
                     + " — aucun temoin executable pour elles (instrument refuse, temoin rejete, "
                     "ou regle declaree non testable par le modele) : la livraison ne dit RIEN "
                     "de ces regles."
@@ -1876,9 +2092,14 @@ class Engine:
 
         self.journal.append(
             "verdict",
-            {"status": status.value, "ratio": round(ratio, 4),
-             "passed": sum(1 for w in witnesses if w.ok), "total": len(witnesses),
-             "abstention": abstention, "guard": guard.summary()},
+            {
+                "status": status.value,
+                "ratio": round(ratio, 4),
+                "passed": sum(1 for w in witnesses if w.ok),
+                "total": len(witnesses),
+                "abstention": abstention,
+                "guard": guard.summary(),
+            },
         )
 
         return MissionReport(
@@ -1921,8 +2142,11 @@ class Engine:
         """
         if current is None:
             return candidate
-        return candidate if _cle_de_preference(candidate) >= _cle_de_preference(current) \
+        return (
+            candidate
+            if _cle_de_preference(candidate) >= _cle_de_preference(current)
             else current
+        )
 
     def _check_budget(self, started: float, mission: Mission) -> None:
         limit = mission.deadline_s or self.config.time_budget_s
@@ -1963,7 +2187,11 @@ class Engine:
                 )
             return FailureFeedback(stage=Stage.PROVE, message="aucun echec")
         w = res.failures[0]
-        assertion = _extract_assertion(w.stderr) or w.stderr.strip().splitlines()[-1:][0] if w.stderr.strip() else ""
+        assertion = (
+            _extract_assertion(w.stderr) or w.stderr.strip().splitlines()[-1:][0]
+            if w.stderr.strip()
+            else ""
+        )
         return FailureFeedback(
             stage=Stage.PROVE,
             rule_id=w.rule_id,
@@ -1990,7 +2218,9 @@ class Engine:
                 "language must at least compile in that language.\n"
                 "Cite file paths only if they exist in the project you were given."
             )
-        lang = {"python": "Python", "javascript": "JavaScript"}.get(work.language, work.language)
+        lang = {"python": "Python", "javascript": "JavaScript"}.get(
+            work.language, work.language
+        )
         return (
             f"You are a precise {lang} engineer. Return ONLY the complete implementation "
             f"inside a single fenced code block. No prose, no explanation, no tests.\n"
@@ -1999,7 +2229,9 @@ class Engine:
             "Never return a silent wrong value where an error is required — raise instead."
         )
 
-    def _prompt(self, work: WorkItem, spec: Spec, feedback: FailureFeedback | None) -> str:
+    def _prompt(
+        self, work: WorkItem, spec: Spec, feedback: FailureFeedback | None
+    ) -> str:
         rules = "\n".join(f"- [{r.id}] {r.statement}" for r in spec.rules)
         parts = [
             f"OBJECTIVE:\n{work.objective}",
@@ -2016,12 +2248,15 @@ class Engine:
                 parts.append("\n" + injection.texte)
                 # Le cout est journalise comme les temoins : une injection non tracee serait
                 # une decision de contexte que personne ne peut relire.
-                self.journal.append("competences-injectees", {
-                    "objectif": work.objective[:200],
-                    "noms": list(injection.noms),
-                    "cout_jetons": injection.cout_jetons,
-                    "ecartees": list(injection.ecartees),
-                })
+                self.journal.append(
+                    "competences-injectees",
+                    {
+                        "objectif": work.objective[:200],
+                        "noms": list(injection.noms),
+                        "cout_jetons": injection.cout_jetons,
+                        "ecartees": list(injection.ecartees),
+                    },
+                )
         if self.memory is not None:
             # Memoire des echecs : les erreurs deja payees entrent dans le prompt
             # comme PRIORS (le bloc le dit), jamais comme preuves.
@@ -2029,8 +2264,10 @@ class Engine:
             if recalled:
                 parts.append("\n" + recalled)
         if spec.under_specified:
-            parts.append("\nNOT SPECIFIED (be conservative and explicit):\n"
-                         + "\n".join(f"- {u}" for u in spec.under_specified))
+            parts.append(
+                "\nNOT SPECIFIED (be conservative and explicit):\n"
+                + "\n".join(f"- {u}" for u in spec.under_specified)
+            )
         if feedback is not None:
             parts.append(
                 "\nPREVIOUS ATTEMPT FAILED. Structured feedback:\n"
@@ -2063,7 +2300,9 @@ def _extract_code(text: str, entrypoint: str) -> str:
 
     if not text:
         return ""
-    blocks = re.findall(r"```(?:python|py|javascript|js)?\s*\n(.*?)```", text, re.S)
+    blocks = re.findall(
+        r"```(?:python|py|javascript|js)?\s*\n(.*?)```", text, re.DOTALL
+    )
     if blocks:
         # Preferer le bloc qui definit l'entree attendue.
         for b in blocks:

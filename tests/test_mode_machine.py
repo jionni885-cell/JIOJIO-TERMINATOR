@@ -35,7 +35,11 @@ REPO = Path(__file__).resolve().parents[1]
 def _lancer(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "jio", *args],
-        cwd=str(cwd or REPO), capture_output=True, text=True, timeout=900,
+        cwd=str(cwd or REPO),
+        capture_output=True,
+        text=True,
+        timeout=900,
+        check=False,
     )
 
 
@@ -90,7 +94,9 @@ def test_l_humain_est_servi_sur_la_sortie_d_erreur() -> None:
     celui qui lance la commande a la main doit continuer a voir ou il en est.
     """
     proc = _lancer("coherence", "--json")
-    assert "██" in proc.stderr, "le logo doit rester visible pour l'humain, sur la sortie d'erreur"
+    assert "██" in proc.stderr, (
+        "le logo doit rester visible pour l'humain, sur la sortie d'erreur"
+    )
     assert "█" not in proc.stdout
 
 
@@ -107,10 +113,17 @@ def test_run_json_reste_un_chemin_de_fichier() -> None:
 
     with tempfile.TemporaryDirectory() as dossier:
         chemin = Path(dossier) / "rapport.json"
-        code = main([
-            "run", "somme des pairs", "--simulate", "--task", "sum_even",
-            "--json", str(chemin),
-        ])
+        code = main(
+            [
+                "run",
+                "somme des pairs",
+                "--simulate",
+                "--task",
+                "sum_even",
+                "--json",
+                str(chemin),
+            ]
+        )
         assert code == 0
         assert chemin.is_file(), "le rapport JSON demande par chemin doit etre ecrit"
         assert json.loads(chemin.read_text(encoding="utf-8"))

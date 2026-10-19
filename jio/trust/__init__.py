@@ -4,4 +4,4 @@ from __future__ import annotations
 
 from .router import DEFAULT_ARMS, Arm, TrustRouter, task_class
 
-__all__ = ["Arm", "TrustRouter", "DEFAULT_ARMS", "task_class"]
+__all__ = ["DEFAULT_ARMS", "Arm", "TrustRouter", "task_class"]

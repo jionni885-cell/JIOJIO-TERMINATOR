@@ -19,14 +19,17 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import BinaryIO
 
 from ..core.errors import FailClosed
 from ..core.journal import Journal
@@ -34,6 +37,9 @@ from ..core.types import Rule, RuleKind, Spec, Stage, Witness
 
 DEFAULT_TIMEOUT = 30
 MAX_OUTPUT = 20_000  # au-dela : le resultat part sur disque, seule une reference reste
+MAX_CAPTURE_BYTES = (
+    2_000_000  # borne dure par flux, meme si le processus inonde stdout/stderr
+)
 
 
 @dataclass
@@ -43,6 +49,7 @@ class SandboxResult:
     stderr: str
     duration_s: float
     timed_out: bool = False
+    output_limited: bool = False
 
     @property
     def ok(self) -> bool:
@@ -83,7 +90,7 @@ class Sandbox:
         if len(text) <= MAX_OUTPUT or self.offload_dir is None:
             return text[:MAX_OUTPUT]
         self.offload_dir.mkdir(parents=True, exist_ok=True)
-        path = self.offload_dir / f"{tag}-{int(time.time()*1000)}.log"
+        path = self.offload_dir / f"{tag}-{int(time.time() * 1000)}.log"
         path.write_text(text, encoding="utf-8", errors="replace")
         head = text[:2000]
         return f"{head}\n…[{len(text) - 2000} caracteres offloades vers {path}]"
@@ -113,11 +120,17 @@ class Sandbox:
         devenait non reproductible. Une preuve qu'on ne peut pas rejouer n'est
         pas une preuve.
         """
-        tmp = Path(tempfile.mkdtemp(prefix="jio-", dir=str(self.workdir) if self.workdir else None))
+        tmp = Path(
+            tempfile.mkdtemp(
+                prefix="jio-", dir=str(self.workdir) if self.workdir else None
+            )
+        )
         script = tmp / "main.py"
         script.write_text(source, encoding="utf-8")
         try:
-            res = self.run_command([sys.executable, "-u", str(script)], cwd=tmp, tag=tag)
+            res = self.run_command(
+                [sys.executable, "-u", str(script)], cwd=tmp, tag=tag
+            )
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         marker = str(tmp)
@@ -127,37 +140,144 @@ class Sandbox:
             stderr=res.stderr.replace(marker, "<sandbox>"),
             duration_s=res.duration_s,
             timed_out=res.timed_out,
+            output_limited=res.output_limited,
         )
+
+    def _capture(self, flux: BinaryIO, tag: str) -> str:
+        """Lit une sortie sans la charger sans borne en RAM et l'offloade si necessaire."""
+        flux.flush()
+        taille = flux.seek(0, os.SEEK_END)
+        flux.seek(0)
+        limite = MAX_OUTPUT
+        tete = flux.read(limite)
+        texte = tete.decode("utf-8", "replace")
+        if taille <= limite:
+            return texte
+        if self.offload_dir is None:
+            return texte + f"\n…[{taille - limite} octets tronques]"
+        self.offload_dir.mkdir(parents=True, exist_ok=True)
+        chemin = self.offload_dir / f"{tag}-{int(time.time() * 1000)}.log"
+        flux.seek(0)
+        with chemin.open("wb") as destination:
+            shutil.copyfileobj(flux, destination)
+        return f"{texte}\n…[{taille - limite} octets offloades vers {chemin}]"
+
+    @staticmethod
+    def _drainer(
+        pipe: BinaryIO, destination: BinaryIO, overflow: threading.Event
+    ) -> None:
+        """Consomme un pipe sans croissance disque/RAM au-dela du plafond par flux."""
+        captured = 0
+        while True:
+            chunk = pipe.read(8192)
+            if not chunk:
+                break
+            room = MAX_CAPTURE_BYTES - captured
+            if room > 0:
+                kept = chunk[:room]
+                destination.write(kept)
+                captured += len(kept)
+            if len(chunk) > room:
+                overflow.set()
+
+    @staticmethod
+    def _kill_group(proc: subprocess.Popen) -> None:
+        if os.name == "posix":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:
+            proc.kill()
 
     def run_command(
         self, argv: Sequence[str], *, cwd: Path | None = None, tag: str = "cmd"
     ) -> SandboxResult:
-        started = time.perf_counter()
-        try:
-            proc = subprocess.run(  # noqa: S603 — argv explicite, jamais de shell=True
-                list(argv),
-                cwd=str(cwd) if cwd else (str(self.workdir) if self.workdir else None),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                env=self._env(),
-            )
-        except subprocess.TimeoutExpired:
-            elapsed = time.perf_counter() - started
-            return SandboxResult(
-                exit_code=124,
-                stdout="",
-                stderr=f"TIMEOUT apres {self.timeout}s — le code ne termine pas",
-                duration_s=elapsed,
-                timed_out=True,
-            )
-        except FileNotFoundError as exc:
-            return SandboxResult(exit_code=127, stdout="", stderr=str(exc), duration_s=0.0)
+        """Execute sans shell, borne les sorties et tue tout le groupe au timeout.
 
+        Les lecteurs consomment continuellement les pipes, mais ne conservent que 2 Mo par
+        flux ; un processus qui inonde stdout ne peut donc pas remplir la RAM ou le disque.
+        Le depassement arrete le groupe et produit un verdict explicite, jamais un succes base
+        sur une sortie tronquee. Sous POSIX, les descendants sont aussi termines. Ce n'est
+        toujours PAS un bac a sable securise : filesystem et reseau restent accessibles.
+        """
+        started = time.perf_counter()
+        overflow = threading.Event()
+        try:
+            with (
+                tempfile.TemporaryFile(mode="w+b") as stdout_file,
+                tempfile.TemporaryFile(mode="w+b") as stderr_file,
+            ):
+                proc = subprocess.Popen(
+                    list(argv),
+                    cwd=str(cwd)
+                    if cwd
+                    else (str(self.workdir) if self.workdir else None),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=self._env(),
+                    start_new_session=(os.name == "posix"),
+                )
+                assert proc.stdout is not None and proc.stderr is not None
+                readers = [
+                    threading.Thread(
+                        target=self._drainer,
+                        args=(proc.stdout, stdout_file, overflow),
+                        daemon=True,
+                    ),
+                    threading.Thread(
+                        target=self._drainer,
+                        args=(proc.stderr, stderr_file, overflow),
+                        daemon=True,
+                    ),
+                ]
+                for reader in readers:
+                    reader.start()
+                deadline = started + self.timeout
+                timed_out = False
+                while proc.poll() is None or any(
+                    reader.is_alive() for reader in readers
+                ):
+                    if overflow.is_set():
+                        self._kill_group(proc)
+                        break
+                    remaining = deadline - time.perf_counter()
+                    if remaining <= 0:
+                        timed_out = True
+                        self._kill_group(proc)
+                        break
+                    time.sleep(min(0.002, remaining))
+                proc.wait()
+                for reader in readers:
+                    reader.join(timeout=2)
+                for stream in (proc.stdout, proc.stderr):
+                    stream.close()
+                stdout = self._capture(stdout_file, f"{tag}-out")
+                stderr = self._capture(stderr_file, f"{tag}-err")
+        except FileNotFoundError as exc:
+            return SandboxResult(
+                exit_code=127, stdout="", stderr=str(exc), duration_s=0.0
+            )
+
+        if overflow.is_set():
+            stderr = (
+                stderr + "\n" if stderr else ""
+            ) + f"OUTPUT_LIMIT: plafond de {MAX_CAPTURE_BYTES} octets par flux depasse"
+            return SandboxResult(
+                125, stdout, stderr, time.perf_counter() - started, output_limited=True
+            )
+        if timed_out:
+            stderr = (
+                stderr + "\n" if stderr else ""
+            ) + f"TIMEOUT apres {self.timeout}s — processus termine"
+            return SandboxResult(
+                124, stdout, stderr, time.perf_counter() - started, timed_out=True
+            )
         return SandboxResult(
             exit_code=proc.returncode,
-            stdout=self._offload(proc.stdout or "", f"{tag}-out"),
-            stderr=self._offload(proc.stderr or "", f"{tag}-err"),
+            stdout=stdout,
+            stderr=stderr,
             duration_s=time.perf_counter() - started,
         )
 
@@ -213,58 +333,59 @@ _FILE_REELLE = '_jio_module.__dict__["__file__"] = {chemin!r}\n'
 _AUDIT_AS_MODULE = (
     "# L'artefact est audite COMME MODULE, jamais comme script : sinon son bloc\n"
     '# `if __name__ == "__main__":` (demonstration, script) s\'execute, et le\n'
-    '# verdict porte sur la demonstration au lieu du code. Constate sur une\n'
-    '# bibliotheque reelle dont la demo divise par zero : module declare fautif.\n'
-    '#\n'
-    '# Le nom doit aussi EXISTER dans sys.modules : dataclasses et typing y\n'
-    '# cherchent le module de definition pour lire les annotations, et un nom\n'
-    '# absent fait echouer tout fichier annote (`NoneType object has no\n'
+    "# verdict porte sur la demonstration au lieu du code. Constate sur une\n"
+    "# bibliotheque reelle dont la demo divise par zero : module declare fautif.\n"
+    "#\n"
+    "# Le nom doit aussi EXISTER dans sys.modules : dataclasses et typing y\n"
+    "# cherchent le module de definition pour lire les annotations, et un nom\n"
+    "# absent fait echouer tout fichier annote (`NoneType object has no\n"
     "# attribute __dict__`). On enregistre donc un module VIDE avant l'execution\n"
-    '# — il suffit que son dictionnaire existe — et on le remplit APRES, quand\n'
-    '# les noms sont la.\n'
-    'import sys as _jio_sys, types as _jio_types\n'
+    "# — il suffit que son dictionnaire existe — et on le remplit APRES, quand\n"
+    "# les noms sont la.\n"
+    "import sys as _jio_sys, types as _jio_types\n"
     '_jio_module = _jio_types.ModuleType("__jio_artefact__")\n'
     '_jio_sys.modules["__jio_artefact__"] = _jio_module\n'
     '__name__ = "__jio_artefact__"\n'
-    '# Le TYPE de l\'exception non rattrapee, ecrit AVANT le traceback habituel (qui\n'
-    '# reste intact). Un traceback n\'imprime que le nom de la classe : `PilNotAvailable`\n'
+    "# Le TYPE de l'exception non rattrapee, ecrit AVANT le traceback habituel (qui\n"
+    "# reste intact). Un traceback n'imprime que le nom de la classe : `PilNotAvailable`\n"
     "# herite d'`ImportError` et signale une dependance absente, mais rien dans le texte\n"
     "# ne le disait — la bibliotheque etait declaree fautive. La chaine d'heritage est\n"
-    '# un fait.\n'
-    'def _jio_hook(_jio_t, _jio_v, _jio_tb):\n'
-    '    try:\n'
+    "# un fait.\n"
+    "def _jio_hook(_jio_t, _jio_v, _jio_tb):\n"
+    "    try:\n"
     '        _jio_noms = " <- ".join(c.__name__ for c in type(_jio_v).__mro__[:6])\n'
-    '    except Exception:\n'
-    '        _jio_noms = type(_jio_v).__name__\n'
+    "    except Exception:\n"
+    "        _jio_noms = type(_jio_v).__name__\n"
     '    _jio_sys.stderr.write("[JIO-TYPE] " + _jio_noms + "\\n")\n'
-    '    _jio_sys.__excepthook__(_jio_t, _jio_v, _jio_tb)\n'
-    '_jio_sys.excepthook = _jio_hook\n'
-    '# --- Bac a sable FERME : aucune connexion sortante. ---\n'
-    '#\n'
-    '# Un audit ne depend jamais du reseau : un exemple qui appelle une API ne dit rien du\n'
+    "    _jio_sys.__excepthook__(_jio_t, _jio_v, _jio_tb)\n"
+    "_jio_sys.excepthook = _jio_hook\n"
+    "# --- Bac a sable FERME : aucune connexion sortante. ---\n"
+    "#\n"
+    "# Un audit ne depend jamais du reseau : un exemple qui appelle une API ne dit rien du\n"
     "# code, et un depot hostile pourrait s'en servir pour exfiltrer ce qu il lit. Mesure\n"
-    '# sur du code public : le doctest de `urllib3.connectionpool` fait un vrai GET sur\n'
-    '# google.com, et echouait donc pour une raison qui n appartient pas au fichier. Le\n'
-    '# refus est EXPLICITE (marqueur lisible dans le rapport) : la limite se declare au\n'
-    '# lieu de produire un verdict sur l environnement.\n'
-    'class JioReseauFerme(RuntimeError):\n'
+    "# sur du code public : le doctest de `urllib3.connectionpool` fait un vrai GET sur\n"
+    "# google.com, et echouait donc pour une raison qui n appartient pas au fichier. Le\n"
+    "# refus est EXPLICITE (marqueur lisible dans le rapport) : la limite se declare au\n"
+    "# lieu de produire un verdict sur l environnement.\n"
+    "class JioReseauFerme(RuntimeError):\n"
     '    """Le bac a sable est ferme : aucune connexion sortante."""\n'
-    'def _jio_refuse_le_reseau(*_a, **_k):\n'
-    '    raise JioReseauFerme(\n'
+    "def _jio_refuse_le_reseau(*_a, **_k):\n"
+    "    raise JioReseauFerme(\n"
     '        "[JIO-RESEAU] connexion reseau refusee : le bac a sable est ferme "\n'
     '        "(aucune requete sortante). Cet exemple ne peut pas etre verifie ici, et un "\n'
     '        "audit ne depend jamais du reseau."\n'
-    '    )\n'
-    'import socket as _jio_socket\n'
-    '_jio_socket.create_connection = _jio_refuse_le_reseau\n'
-    '_jio_socket.getaddrinfo = _jio_refuse_le_reseau\n'
+    "    )\n"
+    "import socket as _jio_socket\n"
+    "_jio_socket.create_connection = _jio_refuse_le_reseau\n"
+    "_jio_socket.getaddrinfo = _jio_refuse_le_reseau\n"
     '_jio_cnx = getattr(_jio_socket.socket, "connect", None)\n'
-    'if _jio_cnx is not None:\n'
-    '    _jio_socket.socket.connect = _jio_refuse_le_reseau\n'
+    "if _jio_cnx is not None:\n"
+    "    _jio_socket.socket.connect = _jio_refuse_le_reseau\n"
     '_jio_cnx_ex = getattr(_jio_socket.socket, "connect_ex", None)\n'
-    'if _jio_cnx_ex is not None:\n'
-    '    _jio_socket.socket.connect_ex = _jio_refuse_le_reseau\n'
+    "if _jio_cnx_ex is not None:\n"
+    "    _jio_socket.socket.connect_ex = _jio_refuse_le_reseau\n"
 )
+
 
 #: Preparation du module avant d'y executer la source : Python fait vivre les globales
 #: d'un module dans SON dictionnaire (`module.__dict__`). Un fichier qui lit
@@ -286,8 +407,9 @@ def _prepare_module(chemin: Path | None) -> str:
     return (
         _FILE_REELLE.format(chemin=str(chemin.resolve()))
         + '_jio_module.__dict__["__package__"] = globals().get("__package__") or ""\n'
-        + f'_jio_sys.path.insert(0, {str(chemin.resolve().parent)!r})\n'
+        + f"_jio_sys.path.insert(0, {str(chemin.resolve().parent)!r})\n"
     )
+
 
 #: La source est executee DANS le dictionnaire du module, pas dans celui du script.
 _EXEC_ARTEFACT = (
@@ -430,7 +552,9 @@ class ExecutableProver:
             + "\n"
             + textwrap.dedent(check_src)
         )
-        res = self.sandbox.run_python(program, tag=f"rule-{rule.id}", chemin_reel=chemin)
+        res = self.sandbox.run_python(
+            program, tag=f"rule-{rule.id}", chemin_reel=chemin
+        )
         detail = _extract_assertion(res.stderr)
         return Witness(
             rule_id=rule.id,
@@ -470,4 +594,4 @@ def _extract_assertion(stderr: str) -> str:
     return ""
 
 
-__all__ = ["Sandbox", "SandboxResult", "ExecutableProver", "ProverResult"]
+__all__ = ["ExecutableProver", "ProverResult", "Sandbox", "SandboxResult"]

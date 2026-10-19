@@ -64,7 +64,11 @@ def _run_probe(hash_seed: str) -> list[str]:
     root = str(Path(__file__).resolve().parent.parent)
     out = subprocess.run(
         [sys.executable, "-c", _PROBE % root],
-        capture_output=True, text=True, env=env, timeout=120,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+        check=False,
     )
     assert out.returncode == 0, out.stderr
     wanted = ("statut", "votes", "calls", "witness", "seed", "stderr", "hash")
@@ -117,11 +121,17 @@ def test_empreinte_de_temoin_stable_dans_le_meme_processus():
     def once() -> str:
         res = sandbox.run_python("raise ValueError(__file__)", tag="h")
         return Witness(
-            rule_id="R-1", command="x", exit_code=res.exit_code, ok=False,
-            stdout=res.stdout, stderr=res.stderr,
+            rule_id="R-1",
+            command="x",
+            exit_code=res.exit_code,
+            ok=False,
+            stdout=res.stdout,
+            stderr=res.stderr,
         ).output_hash
 
-    assert once() == once(), "deux executions identiques doivent donner la meme empreinte"
+    assert once() == once(), (
+        "deux executions identiques doivent donner la meme empreinte"
+    )
 
 
 def test_le_bac_a_sable_reste_fonctionnel_apres_normalisation():
@@ -144,7 +154,9 @@ def test_le_gain_est_multiplicatif_et_non_additif():
     from jio.providers.simulated import Persona, SimulatedProvider
 
     p = SimulatedProvider(persona=Persona("test"))
-    assert p._amplify(0.0, 0.15) == 0.0, "a competence nulle, un avertissement ne peut rien"
+    assert p._amplify(0.0, 0.15) == 0.0, (
+        "a competence nulle, un avertissement ne peut rien"
+    )
     assert p._amplify(0.0, 1.0) == 0.0
     assert p._amplify(0.4, 0.15) > 0.4, "a competence non nulle, l'effet doit exister"
     assert p._amplify(0.4, 0.15) <= 1.0
@@ -163,8 +175,11 @@ def test_un_modele_qui_se_trompe_toujours_abstient_toujours():
     task = TASKS_BY_ID["parse_duration"]
     memory = FailureMemory()
     memory.record(
-        objective=task.objective, symptom="regle R-002 non satisfaite",
-        root_cause="exemple de test", correct_fix="n/a", guard="regle R-002",
+        objective=task.objective,
+        symptom="regle R-002 non satisfaite",
+        root_cause="exemple de test",
+        correct_fix="n/a",
+        guard="regle R-002",
     )
     engine = _simulated_engine(task, skill=0.0, seed=0, max_rounds=3)
     engine.memory = memory
@@ -173,8 +188,12 @@ def test_un_modele_qui_se_trompe_toujours_abstient_toujours():
             provider.warning_gain = 0.99  # meme un avertissement enorme
     report = engine.run(
         Mission(objective=task.objective, max_rounds=3),
-        WorkItem(objective=task.objective, entrypoint=task.entrypoint,
-                 checks=dict(task.checks), spec=task.spec()),
+        WorkItem(
+            objective=task.objective,
+            entrypoint=task.entrypoint,
+            checks=dict(task.checks),
+            spec=task.spec(),
+        ),
     )
     assert report.status is MissionStatus.ABSTAINED
     assert report.passed < report.total_checks

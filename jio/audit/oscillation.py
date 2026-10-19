@@ -28,8 +28,8 @@ class ProgressPoint:
     """Un tour de boucle resume."""
 
     round_index: int
-    score: float          # 0..1 — part de regles satisfaites
-    digest: str           # empreinte de l'artefact
+    score: float  # 0..1 — part de regles satisfaites
+    digest: str  # empreinte de l'artefact
     errors: int = 0
 
 
@@ -38,7 +38,7 @@ class OscillationGuard:
     """Suit la progression et coupe court aux boucles steriles."""
 
     window: int = 6
-    min_gain: float = 0.01          # gain minimal pour considerer qu'on progresse
+    min_gain: float = 0.01  # gain minimal pour considerer qu'on progresse
     history: list[ProgressPoint] = field(default_factory=list)
 
     # -- enregistrement ----------------------------------------------------- #
@@ -54,16 +54,18 @@ class OscillationGuard:
         if len(digests) < 4:
             return False
         distinct = list(dict.fromkeys(digests))
-        return len(distinct) == 2 and digests[-1] == digests[-3] and digests[-2] == digests[-4]
+        return (
+            len(distinct) == 2
+            and digests[-1] == digests[-3]
+            and digests[-2] == digests[-4]
+        )
 
     def is_plateau(self) -> bool:
         """Aucun gain marginal sur la fenetre."""
         recent = self.history[-self.window :]
         if len(recent) < 3:
             return False
-        gains = [
-            recent[i + 1].score - recent[i].score for i in range(len(recent) - 1)
-        ]
+        gains = [recent[i + 1].score - recent[i].score for i in range(len(recent) - 1)]
         return all(g < self.min_gain for g in gains)
 
     def is_cycling(self) -> bool:
@@ -127,4 +129,4 @@ class OscillationGuard:
         return f"progression {pts} | amortissement {self.damping():.2f}"
 
 
-__all__ = ["ProgressPoint", "OscillationGuard"]
+__all__ = ["OscillationGuard", "ProgressPoint"]

@@ -23,7 +23,6 @@ from jio.core.errors import ProviderError
 from jio.providers.cli import CliProvider
 from jio.providers.registry import KNOWN_CLIS
 
-
 # --------------------------------------------------------------------------- #
 # 1. La specification : ce qui est accepte, et ce qui est refuse net
 # --------------------------------------------------------------------------- #
@@ -111,8 +110,13 @@ def test_openai_sans_configuration_est_refuse_au_lieu_de_simuler(monkeypatch) ->
     rien ne change. Le depot a un garde-fou pour cela (variables lues vs documentees), et
     il a fait son travail.
     """
-    for variable in ("JIO_OPENAI_BASE", "JIO_OLLAMA", "JIO_OPENAI_KEY",
-                     "OPENROUTER_API_KEY", "OPENAI_API_KEY"):
+    for variable in (
+        "JIO_OPENAI_BASE",
+        "JIO_OLLAMA",
+        "JIO_OPENAI_KEY",
+        "OPENROUTER_API_KEY",
+        "OPENAI_API_KEY",
+    ):
         monkeypatch.delenv(variable, raising=False)
 
     with pytest.raises(ProviderError) as exc:
@@ -162,7 +166,9 @@ def _faux_binaire(repertoire: Path, nom: str, trace: Path | None = None) -> Path
     return chemin
 
 
-def test_le_moteur_appelle_le_CLI_et_non_la_simulation(tmp_path: Path, monkeypatch) -> None:
+def test_le_moteur_appelle_le_CLI_et_non_la_simulation(
+    tmp_path: Path, monkeypatch
+) -> None:
     """La preuve que le branchement existe : le binaire est appele, sa reponse est utilisee.
 
     Un faux modele (script local) rend une implementation CORRECTE et laisse une trace.
@@ -185,8 +191,10 @@ def test_le_moteur_appelle_le_CLI_et_non_la_simulation(tmp_path: Path, monkeypat
     rapport = moteur.run(
         Mission(objective=T_SUM_EVEN.objective, id="preuve-cli", max_rounds=1),
         WorkItem(
-            objective=T_SUM_EVEN.objective, entrypoint=T_SUM_EVEN.entrypoint,
-            checks=T_SUM_EVEN.checks, spec=T_SUM_EVEN.spec(),
+            objective=T_SUM_EVEN.objective,
+            entrypoint=T_SUM_EVEN.entrypoint,
+            checks=T_SUM_EVEN.checks,
+            spec=T_SUM_EVEN.spec(),
         ),
     )
 
@@ -194,13 +202,14 @@ def test_le_moteur_appelle_le_CLI_et_non_la_simulation(tmp_path: Path, monkeypat
     assert trace.read_text(encoding="utf-8").count("appel") >= 1
     # Et la reponse du CLI est bien celle qui est jugee : elle est correcte, donc livree.
     assert rapport.status in (
-        MissionStatus.DELIVERED, MissionStatus.DELIVERED_WITH_RESERVATION
+        MissionStatus.DELIVERED,
+        MissionStatus.DELIVERED_WITH_RESERVATION,
     ), rapport.abstention_reason[:200]
     assert "if n % 2 == 0" in rapport.subject
     # Le moteur ne melange pas les sources : tous ses generateurs viennent du CLI.
-    assert all(
-        getattr(g, "name", "") == "cli:faux-llm" for g in moteur.generators
-    ), [getattr(g, "name", "?") for g in moteur.generators]
+    assert all(getattr(g, "name", "") == "cli:faux-llm" for g in moteur.generators), [
+        getattr(g, "name", "?") for g in moteur.generators
+    ]
 
 
 def test_sans_fournisseur_le_moteur_reste_simule() -> None:
@@ -210,14 +219,15 @@ def test_sans_fournisseur_le_moteur_reste_simule() -> None:
 
     moteur = _simulated_engine(T_SUM_EVEN, seed=0, max_rounds=1)
     assert moteur.generators
-    assert all("sim" in getattr(g, "name", "") or "gen" in getattr(g, "name", "")
-               for g in moteur.generators), [getattr(g, "name", "?") for g in moteur.generators]
+    assert all(
+        "sim" in getattr(g, "name", "") or "gen" in getattr(g, "name", "")
+        for g in moteur.generators
+    ), [getattr(g, "name", "?") for g in moteur.generators]
 
 
 def test_le_fournisseur_reel_ne_touche_pas_aux_personas_du_panel() -> None:
     """Un panel d'une seule voix n'est pas un panel : la decorelation est le sujet."""
     from jio.bench.tasks import T_SUM_EVEN
-
     from jio.cli import _simulated_engine
 
     fournisseur = Fournisseur(spec="faux", genre="cli", provider=None, instances=5)
@@ -231,7 +241,9 @@ def test_le_fournisseur_reel_ne_touche_pas_aux_personas_du_panel() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_run_refuse_un_modele_nomme_mais_indisponible(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_run_refuse_un_modele_nomme_mais_indisponible(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     """Une mission qui n'a pas fait tourner le modele demande doit s'arreter, pas mentir."""
     from jio.cli import main
 
@@ -275,17 +287,26 @@ def test_run_avec_un_cli_reel_livre_les_preuves_et_NOMME_la_reserve(
     monkeypatch.setenv("JIO_BIN_FAUX_RUN", str(binaire))
     monkeypatch.setenv("JIO_CLI_FAUX_RUN_ARGV", "{binary}")
 
-    code = main([
-        "run", T_SUM_EVEN.objective, "--task", T_SUM_EVEN.id,
-        "--provider", "cli:faux-run", "--state", str(tmp_path / "etat"),
-        # Le journal est NOMME, et ce n'est pas un detail de confort : sans lui, une mission
-        # lancee depuis la racine du depot ecrit dans `.jio/journal.jsonl` — le journal du
-        # PROJET, celui dont `jio coherence` verifie la chaine et compte les evenements. Une
-        # suite de tests qui ecrit dans la preuve qu'elle verifie la fait deriver, et le jour ou
-        # elle casse pour de vrai, personne ne sait plus si c'est le produit ou la suite.
-        # Mesure : 66 evenements ajoutes par execution avant ce changement.
-        "--journal", str(tmp_path / "journal.jsonl"),
-    ])
+    code = main(
+        [
+            "run",
+            T_SUM_EVEN.objective,
+            "--task",
+            T_SUM_EVEN.id,
+            "--provider",
+            "cli:faux-run",
+            "--state",
+            str(tmp_path / "etat"),
+            # Le journal est NOMME, et ce n'est pas un detail de confort : sans lui, une mission
+            # lancee depuis la racine du depot ecrit dans `.jio/journal.jsonl` — le journal du
+            # PROJET, celui dont `jio coherence` verifie la chaine et compte les evenements. Une
+            # suite de tests qui ecrit dans la preuve qu'elle verifie la fait deriver, et le jour ou
+            # elle casse pour de vrai, personne ne sait plus si c'est le produit ou la suite.
+            # Mesure : 66 evenements ajoutes par execution avant ce changement.
+            "--journal",
+            str(tmp_path / "journal.jsonl"),
+        ]
+    )
 
     sortie = capsys.readouterr().out
     assert code in (0, 1), sortie[-400:]
@@ -298,7 +319,9 @@ def test_run_avec_un_cli_reel_livre_les_preuves_et_NOMME_la_reserve(
 # --------------------------------------------------------------------------- #
 
 
-def test_nommer_DEUX_modeles_donne_un_panel_heterogene(tmp_path: Path, monkeypatch) -> None:
+def test_nommer_DEUX_modeles_donne_un_panel_heterogene(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Cinq appels au meme modele ne font pas cinq avis — deux modeles, oui.
 
     `AuditPanel.llm` prend un fournisseur par critique : avec deux modeles nommes, les
@@ -306,8 +329,8 @@ def test_nommer_DEUX_modeles_donne_un_panel_heterogene(tmp_path: Path, monkeypat
     C'est la difference entre un consensus et un echo.
     """
     from jio.audit.panel import DEFAULT_PERSONAS
-    from jio.bench.tasks import T_SUM_EVEN
     from jio.bench.provider_spec import resoudre_liste
+    from jio.bench.tasks import T_SUM_EVEN
     from jio.cli import _simulated_engine
 
     for nom in ("un", "deux"):
@@ -333,8 +356,14 @@ def test_un_seul_modele_nomme_reste_un_echo_et_le_harness_le_DIT(
     from jio.core.types import Verdict, Vote
 
     votes = tuple(
-        Vote(agent=f"critique-{i}", decision=Verdict.PASS, confidence=0.9,
-             rationale="", model="sim-1", provider="cli:un")
+        Vote(
+            agent=f"critique-{i}",
+            decision=Verdict.PASS,
+            confidence=0.9,
+            rationale="",
+            model="sim-1",
+            provider="cli:un",
+        )
         for i in range(5)
     )
     outcome = ConsensusEngine(min_panel=3).decide(votes)
@@ -373,18 +402,25 @@ def test_l_endpoint_openai_compatible_est_normalise_une_seule_fois() -> None:
     def endpoint(url: str) -> str:
         return OpenAiCompatProvider(base_url=url, api_key="x")._endpoint()
 
-    assert endpoint("http://localhost:8000") == "http://localhost:8000/v1/chat/completions"
     assert (
-        endpoint("http://localhost:8000/v1") == "http://localhost:8000/v1/chat/completions"
+        endpoint("http://localhost:8000") == "http://localhost:8000/v1/chat/completions"
+    )
+    assert (
+        endpoint("http://localhost:8000/v1")
+        == "http://localhost:8000/v1/chat/completions"
     )
     assert (
         endpoint("http://localhost:8000/v1/chat/completions")
         == "http://localhost:8000/v1/chat/completions"
     )
-    assert endpoint("http://localhost:8000/") == "http://localhost:8000/v1/chat/completions"
+    assert (
+        endpoint("http://localhost:8000/")
+        == "http://localhost:8000/v1/chat/completions"
+    )
     assert "v1/v1" not in endpoint("http://localhost:8000/v1/")
     # Le delai par defaut est une MESURE d'usage : trois minutes, pas deux.
     assert OpenAiCompatProvider(base_url="http://x", api_key="k").timeout == 180
+
 
 def test_un_fournisseur_demande_UNE_instance_par_defaut() -> None:
     """`instances = 1` : sans demande explicite, on ne fabrique pas d'instances en plus.

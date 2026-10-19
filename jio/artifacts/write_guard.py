@@ -40,7 +40,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ["Decision", "ecrire_manifest", "MARQUE", "REGISTRE", "lire_registre"]
+__all__ = ["MARQUE", "REGISTRE", "Decision", "ecrire_manifest", "lire_registre"]
 
 #: La marque posee en tete des fichiers generes, quand le format accepte un commentaire.
 MARQUE = re.compile(r"genere par\s+`?jio\b", re.IGNORECASE)
@@ -59,7 +59,7 @@ class Decision:
     """Ce qui est arrive a UN fichier, et pourquoi."""
 
     chemin: str
-    action: str          # ecrit | remplace | sauvegarde | preserve | inchange
+    action: str  # ecrit | remplace | sauvegarde | preserve | inchange
     detail: str = ""
 
     @property
@@ -103,7 +103,8 @@ def _ecrire_registre(racine: Path, entrees: dict[str, str]) -> None:
                 ),
                 "fichiers": dict(sorted(entrees.items())),
             },
-            indent=2, ensure_ascii=False,
+            indent=2,
+            ensure_ascii=False,
         )
         + "\n",
         encoding="utf-8",
@@ -161,18 +162,24 @@ def ecrire_manifest(
             # reecrit rien » etait fausse a la deuxieme execution. Mesure faite sur un projet
             # ETRANGER, en comparant les dates de tous les fichiers avant/apres : `AGENTS.md.jio`
             # etait le seul a changer, sans qu'un octet de son contenu change.
-            if not apart.is_file() or apart.read_text(encoding="utf-8", errors="replace") != contenu:
+            if (
+                not apart.is_file()
+                or apart.read_text(encoding="utf-8", errors="replace") != contenu
+            ):
                 apart.parent.mkdir(parents=True, exist_ok=True)
                 apart.write_text(contenu, encoding="utf-8")
             decisions.append(
                 Decision(
-                    rel, "preserve",
+                    rel,
+                    "preserve",
                     f"ecrit par vous, non touche — notre version est dans {rel}.jio",
                 )
             )
             continue
 
-        modifie = notre_empreinte is not None and _empreinte(existant) != notre_empreinte
+        modifie = (
+            notre_empreinte is not None and _empreinte(existant) != notre_empreinte
+        )
         if modifie:
             sauvegarde = chemin.with_name(chemin.name + ".avant-jio")
             sauvegarde.write_text(existant, encoding="utf-8")
@@ -183,8 +190,9 @@ def ecrire_manifest(
             Decision(
                 rel,
                 "sauvegarde" if modifie else "remplace",
-                "mis a jour, votre version est dans "
-                f"{chemin.name}.avant-jio" if modifie else "genere par jio, mis a jour",
+                f"mis a jour, votre version est dans {chemin.name}.avant-jio"
+                if modifie
+                else "genere par jio, mis a jour",
             )
         )
 

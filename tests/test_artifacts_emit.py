@@ -63,7 +63,9 @@ def test_un_agent_sans_outil_n_affiche_pas_de_section_OUTILS_VIDE() -> None:
     """
     sans_outil = AgentSpec(name="essai", description="d", prompt="p", tools={})
     assert "tools:" not in emit._agent_markdown(sans_outil)
-    avec_outil = AgentSpec(name="essai", description="d", prompt="p", tools={"read": True})
+    avec_outil = AgentSpec(
+        name="essai", description="d", prompt="p", tools={"read": True}
+    )
     assert "tools:\n  read: true" in emit._agent_markdown(avec_outil)
 
 
@@ -84,7 +86,7 @@ def test_les_accents_ne_sont_JAMAIS_echappes_dans_les_artefacts() -> None:
         texte = artefacts[nom]
         assert "\\u" not in texte
         assert json.loads(texte)  # et c'est du JSON valide
-        assert "\n  \"" in texte, "indent=2 attendu : sinon le fichier est illisible"
+        assert '\n  "' in texte, "indent=2 attendu : sinon le fichier est illisible"
 
 
 def test_la_borne_de_cent_cinquante_lignes_mord_EXACTEMENT_a_151(monkeypatch) -> None:
@@ -167,7 +169,9 @@ def test_ecrire_deux_fois_donne_le_meme_octet_et_le_dit(tmp_path) -> None:
     cibles = ("claude", "agents", "mcp", "hermes")
     premier = ecrire_manifest(tmp_path, emit.manifest(cibles))
     assert premier and all(d.action in {"ecrit", "remplace"} for d in premier)
-    contenus = {d.chemin: (tmp_path / d.chemin).read_text(encoding="utf-8") for d in premier}
+    contenus = {
+        d.chemin: (tmp_path / d.chemin).read_text(encoding="utf-8") for d in premier
+    }
 
     second = ecrire_manifest(tmp_path, emit.manifest(cibles))
     assert all(d.action == "inchange" for d in second), [d.action for d in second]
@@ -196,7 +200,9 @@ def test_un_fichier_ecrit_par_l_utilisateur_est_PRESERVE(tmp_path) -> None:
     assert "jio" in (tmp_path / "CLAUDE.md.jio").read_text(encoding="utf-8")
 
 
-def test_un_artefact_a_nous_mais_MODIFIE_est_sauvegarde_avant_mise_a_jour(tmp_path) -> None:
+def test_un_artefact_a_nous_mais_MODIFIE_est_sauvegarde_avant_mise_a_jour(
+    tmp_path,
+) -> None:
     """Quelqu'un a edite un fichier que nous avions genere : sa version est mise de cote.
 
     La difference entre « preserve » et « sauvegarde » n'est pas cosmetique : le premier
@@ -207,14 +213,20 @@ def test_un_artefact_a_nous_mais_MODIFIE_est_sauvegarde_avant_mise_a_jour(tmp_pa
     from jio.artifacts.write_guard import ecrire_manifest
 
     ecrire_manifest(tmp_path, emit.manifest(("agents",)))
-    edite = (tmp_path / "AGENTS.md").read_text(encoding="utf-8") + "\nNote ajoutee a la main.\n"
+    edite = (tmp_path / "AGENTS.md").read_text(
+        encoding="utf-8"
+    ) + "\nNote ajoutee a la main.\n"
     (tmp_path / "AGENTS.md").write_text(edite, encoding="utf-8")
 
     decisions = ecrire_manifest(tmp_path, emit.manifest(("agents",)))
     assert [d.action for d in decisions] == ["sauvegarde"]
     assert (tmp_path / "AGENTS.md.avant-jio").read_text(encoding="utf-8") == edite
-    assert "Note ajoutee a la main." not in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
-    assert AGENTS and SKILLS  # les sources existent bien : sinon ce fichier teste le vide
+    assert "Note ajoutee a la main." not in (tmp_path / "AGENTS.md").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        AGENTS and SKILLS
+    )  # les sources existent bien : sinon ce fichier teste le vide
 
 
 # --------------------------------------------------------------------------- #
@@ -229,14 +241,21 @@ def test_les_outils_MCP_sont_exposes_et_comptes() -> None:
     recoit « outil inconnu », et conclut que le serveur est casse. Le controle croise donc
     `TOOLS` (l'annonce) et `_HANDLERS` (l'implementation) — deux verites, un seul test.
     """
-    from jio.mcp_server import TOOLS, _HANDLERS
+    from jio.mcp_server import _HANDLERS, TOOLS
 
     noms_annonces = {outil["name"] for outil in TOOLS}
     assert noms_annonces == set(_HANDLERS), (
         f"annonce et implementation divergent : {noms_annonces ^ set(_HANDLERS)}"
     )
-    assert {"jio_prove", "jio_audit", "jio_claims", "jio_contract", "jio_skills",
-            "jio_clarify", "jio_status"} <= noms_annonces
+    assert {
+        "jio_prove",
+        "jio_audit",
+        "jio_claims",
+        "jio_contract",
+        "jio_skills",
+        "jio_clarify",
+        "jio_status",
+    } <= noms_annonces
     for outil in TOOLS:
         assert outil["description"].strip(), outil["name"]
         assert outil["inputSchema"]["type"] == "object", outil["name"]
@@ -252,10 +271,14 @@ def test_l_outil_MCP_de_clarification_demande_la_meme_chose_que_la_CLI() -> None
     from jio.mcp_server import handle
 
     def appeler(argument: dict) -> str:
-        reponse = handle({
-            "jsonrpc": "2.0", "id": 7, "method": "tools/call",
-            "params": {"name": "jio_clarify", "arguments": argument},
-        })
+        reponse = handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {"name": "jio_clarify", "arguments": argument},
+            }
+        )
         assert reponse is not None
         contenu = (reponse.get("result") or {}).get("content") or [{}]
         return str(contenu[0].get("text", ""))
@@ -266,8 +289,12 @@ def test_l_outil_MCP_de_clarification_demande_la_meme_chose_que_la_CLI() -> None
         assert question in vague
     assert "AVANT de commencer" in vague or "AVANT de travailler" in vague
 
-    precis = appeler({"objective": "corriger tests/test_start.py : le drapeau --sans-mcp doit "
-                                 "ne rien ecrire, avec un test qui le prouve"})
+    precis = appeler(
+        {
+            "objective": "corriger tests/test_start.py : le drapeau --sans-mcp doit "
+            "ne rien ecrire, avec un test qui le prouve"
+        }
+    )
     assert "actionnable" in precis.lower()
     assert "AVANT de commencer" not in precis
 
@@ -287,10 +314,14 @@ def test_l_outil_MCP_d_etat_lit_le_DISQUE_et_ne_devine_rien(tmp_path) -> None:
     from jio.mcp_server import handle
 
     def etat() -> str:
-        reponse = handle({
-            "jsonrpc": "2.0", "id": 8, "method": "tools/call",
-            "params": {"name": "jio_status", "arguments": {}},
-        })
+        reponse = handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "tools/call",
+                "params": {"name": "jio_status", "arguments": {}},
+            }
+        )
         assert reponse is not None
         contenu = (reponse.get("result") or {}).get("content") or [{}]
         return str(contenu[0].get("text", ""))
@@ -305,7 +336,9 @@ def test_l_outil_MCP_d_etat_lit_le_DISQUE_et_ne_devine_rien(tmp_path) -> None:
         pas une assertion — elle s'apprend comme « test instable », donc elle finit ignoree.
         """
         ligne = next(
-            ligne for ligne in texte.splitlines() if ligne.startswith("artefacts natifs :")
+            ligne
+            for ligne in texte.splitlines()
+            if ligne.startswith("artefacts natifs :")
         )
         gauche, droite = ligne.split(":", 1)[1].split("presents")[0].strip().split("/")
         return int(gauche), int(droite)
@@ -317,7 +350,8 @@ def test_l_outil_MCP_d_etat_lit_le_DISQUE_et_ne_devine_rien(tmp_path) -> None:
         # Aucun artefact ecrit : le rapport doit dire 0 present, et le NOMBRE attendu vient de
         # la source (`manifest(TARGETS)`), jamais d'un 29 recopie a la main — ce depot a deja
         # paye ce genre de constante un jour de regeneration.
-        from jio.artifacts import TARGETS, manifest as _manifest
+        from jio.artifacts import TARGETS
+        from jio.artifacts import manifest as _manifest
 
         presents_0, attendus = presents(vide)
         assert (presents_0, attendus) == (0, len(_manifest(TARGETS))), vide
@@ -359,12 +393,18 @@ def test_l_outil_MCP_de_coherence_enonce_les_NEUF_controles(tmp_path: Path) -> N
     ancien = os.environ.get("JIO_ROOT")
     os.environ["JIO_ROOT"] = str(tmp_path)
     try:
-        reponse = handle({
-            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
-            "params": {"name": "jio_coherence", "arguments": {}},
-        })
+        reponse = handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "tools/call",
+                "params": {"name": "jio_coherence", "arguments": {}},
+            }
+        )
         assert reponse is not None
-        texte = str(((reponse.get("result") or {}).get("content") or [{}])[0].get("text", ""))
+        texte = str(
+            ((reponse.get("result") or {}).get("content") or [{}])[0].get("text", "")
+        )
     finally:
         if ancien is None:
             os.environ.pop("JIO_ROOT", None)
@@ -408,5 +448,9 @@ def test_chaque_fichier_de_contexte_dit_COMMENT_choisir_une_competence() -> None
     for cible, chemin in contextes.items():
         assert cible in TARGETS, f"la cible de contexte {cible} a disparu"
         texte = manifest((cible,))[chemin]
-        assert "jio skills" in texte, f"{chemin} ne dit pas comment choisir une competence"
-        assert ".hermes/skills/README.md" in texte, f"{chemin} ne dit pas OU est l'inventaire"
+        assert "jio skills" in texte, (
+            f"{chemin} ne dit pas comment choisir une competence"
+        )
+        assert ".hermes/skills/README.md" in texte, (
+            f"{chemin} ne dit pas OU est l'inventaire"
+        )

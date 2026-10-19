@@ -23,10 +23,10 @@ import sys
 RACINE = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
-from jio.skills.banc import BANC  # noqa: E402
-from jio.skills.controle import JEUX  # noqa: E402
-from jio.skills.router import catalogue_du_depot, choisir, proches  # noqa: E402
-from jio.skills.vecteurs import (  # noqa: E402
+from jio.skills.banc import BANC
+from jio.skills.controle import JEUX
+from jio.skills.router import catalogue_du_depot, choisir, proches
+from jio.skills.vecteurs import (
     CHEMIN_TABLE,
     appariement,
     classement_semantique,
@@ -47,7 +47,9 @@ def _taux(population, liste, combiens=(1, 3, 5, 12)) -> dict[str, str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--json", action="store_true", help="ecrire evidence/vecteurs-semantiques.json")
+    ap.add_argument(
+        "--json", action="store_true", help="ecrire evidence/vecteurs-semantiques.json"
+    )
     ap.add_argument("--sortie", type=pathlib.Path, default=None)
     args = ap.parse_args()
 
@@ -61,14 +63,19 @@ def main() -> int:
     refuses = [(t, a) for j in JEUX for t, a, _ in j.cas if not choisir(t, maximum=3)]
     tous = [(t, a) for j in JEUX for t, a, _ in j.cas]
     banc = [(o.texte, set(o.attendu)) for o in BANC if o.positif]
-    hors = [t for j in JEUX for t in j.hors_sujet] + [o.texte for o in BANC if not o.positif]
+    hors = [t for j in JEUX for t in j.hors_sujet] + [
+        o.texte for o in BANC if not o.positif
+    ]
 
     def bm25f(texte, maximum=12) -> list[str]:
         return [c.nom for c in choisir(texte, maximum=maximum, seuil=0)]
 
     def reordonnee(texte, maximum=12) -> list[str]:
-        return fusionner(bm25f(texte, maximum),
-                         classement_semantique(catalogue, texte, table, cles), poids_semantique=0.5)
+        return fusionner(
+            bm25f(texte, maximum),
+            classement_semantique(catalogue, texte, table, cles),
+            poids_semantique=0.5,
+        )
 
     def completee(texte, maximum=12) -> list[str]:
         return [c.nom for c in proches(texte, maximum=maximum)]
@@ -105,9 +112,16 @@ def main() -> int:
         }
 
     mesure = {
-        "horodatage": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S +0000"),
-        "commit": subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=RACINE,
-                                 capture_output=True, text=True).stdout.strip(),
+        "horodatage": datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S +0000"
+        ),
+        "commit": subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=RACINE,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip(),
         "table": {
             "source": table.entete.get("source"),
             "mots": len(table.mots),
@@ -142,10 +156,14 @@ def main() -> int:
 
     if args.json:
         chemin = args.sortie or (RACINE / "evidence" / "vecteurs-semantiques.json")
-        chemin.write_text(json.dumps(mesure, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        chemin.write_text(
+            json.dumps(mesure, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         print(f"ecrit : {chemin.relative_to(RACINE)}")
 
-    print(f"table : {len(table.mots)} radicaux, {mesure['table']['octets']/1e6:.2f} Mo")
+    print(
+        f"table : {len(table.mots)} radicaux, {mesure['table']['octets'] / 1e6:.2f} Mo"
+    )
     for nom in ("1_porte_semantique", "2_reordonner_la_liste", "3_completer_la_liste"):
         bloc = mesure[nom]
         print(f"\n{nom} — {bloc['verdict']}")  # type: ignore[union-attr]

@@ -18,8 +18,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 __all__ = ["TOOLS", "handle", "main"]
 
@@ -227,9 +228,11 @@ def _root() -> Path:
 def _confined(path_str: str) -> Path:
     """Resout un chemin en refusant toute sortie de JIO_ROOT."""
     root = _root()
-    candidate = (root / path_str).resolve() if not Path(path_str).is_absolute() else Path(
-        path_str
-    ).resolve()
+    candidate = (
+        (root / path_str).resolve()
+        if not Path(path_str).is_absolute()
+        else Path(path_str).resolve()
+    )
     try:
         candidate.relative_to(root)
     except ValueError as exc:
@@ -245,8 +248,8 @@ def _confined(path_str: str) -> Path:
 
 
 def _tool_prove(args: dict[str, Any]) -> str:
-    from .verify.executable import ExecutableProver, Sandbox
     from .core.types import Rule, RuleKind, Spec
+    from .verify.executable import ExecutableProver, Sandbox
 
     source = str(args.get("source", ""))
     if len(source) > MAX_SOURCE:
@@ -256,14 +259,21 @@ def _tool_prove(args: dict[str, Any]) -> str:
         return "REFUS : aucune regle fournie. Une preuve sans regle n'existe pas."
 
     rules = tuple(
-        Rule(id=rid, statement=f"regle fournie par l'appelant ({rid})", kind=RuleKind.TEST)
+        Rule(
+            id=rid,
+            statement=f"regle fournie par l'appelant ({rid})",
+            kind=RuleKind.TEST,
+        )
         for rid in checks
     )
     spec = Spec(mission="preuve MCP", rules=rules)
     prover = ExecutableProver(sandbox=Sandbox(timeout=30))
     try:
         res = prover.prove(
-            source, spec, hidden_checks=checks, entrypoint=str(args.get("entrypoint", ""))
+            source,
+            spec,
+            hidden_checks=checks,
+            entrypoint=str(args.get("entrypoint", "")),
         )
     except Exception as exc:  # fail-closed : jamais de « ca devrait passer »
         return f"INDETERMINE — la preuve n'a pas pu etre executee : {exc}"
@@ -281,8 +291,11 @@ def _tool_prove(args: dict[str, Any]) -> str:
             detail = rows[-1][:200] if rows else f"exit {w.exit_code}"
         lines.append(f"[{mark}] {w.rule_id} {detail}".rstrip())
     if not res.passed:
-        lines += ["", "Rappel : l'echec d'un test n'accuse pas toujours l'artefact.",
-                  "Verifier dans l'ordre : artefact, specification, test, environnement."]
+        lines += [
+            "",
+            "Rappel : l'echec d'un test n'accuse pas toujours l'artefact.",
+            "Verifier dans l'ordre : artefact, specification, test, environnement.",
+        ]
     return "\n".join(lines)
 
 
@@ -318,7 +331,9 @@ def _tool_audit(args: dict[str, Any]) -> str:
         entrypoint=derived.entrypoint,
         preamble=derived.preamble,
     )
-    out.append(f"{len(res.witnesses) - len(res.failures)}/{len(res.witnesses)} regles satisfaites")
+    out.append(
+        f"{len(res.witnesses) - len(res.failures)}/{len(res.witnesses)} regles satisfaites"
+    )
     out.append("")
     for w in res.witnesses:
         mark = "ok" if w.ok else ("??" if w.rule_id in res.advisory_ids else "KO")
@@ -387,7 +402,9 @@ def _tool_claims(args: dict[str, Any]) -> str:
             "Corrigez le texte, ou retirez l'affirmation."
         )
     else:
-        out.append("CONFORME sur ce qui est verifiable ; le reste est declare non verifie.")
+        out.append(
+            "CONFORME sur ce qui est verifiable ; le reste est declare non verifie."
+        )
     if rapport.ignorees or rapport.non_evaluees:
         out.append(
             f"PARTIEL : {rapport.ignorees} affirmation(s) au-dela de la limite de volume "
@@ -450,7 +467,11 @@ def _tool_skills(args: dict[str, Any]) -> str:
                 ]
                 lignes += [
                     f"- {c.nom} [{c.categorie}] score {c.score}"
-                    + ("" if c.proximite is None else f" · ressemblance {c.proximite:.2f}")
+                    + (
+                        ""
+                        if c.proximite is None
+                        else f" · ressemblance {c.proximite:.2f}"
+                    )
                     + f" — {', '.join(c.raisons) if c.raisons else 'aucun terme commun'}"
                     for c in liste
                 ]
@@ -463,9 +484,11 @@ def _tool_skills(args: dict[str, Any]) -> str:
                         f"trous, elle ne charge aucune procedure."
                     )
                 lignes += [
-                    f"Mesure : quand la porte se ferme, la premiere de cette liste est la bonne "
-                    f"{q['justes']:.0f} fois sur {q['cas']:.0f} ({q['taux']:.0%}), contre "
-                    f"{q['hasard']:.0%} au hasard. A toi de juger.",
+                    (
+                        f"Mesure : quand la porte se ferme, la premiere de cette liste est la bonne "
+                        f"{q['justes']:.0f} fois sur {q['cas']:.0f} ({q['taux']:.0%}), contre "
+                        f"{q['hasard']:.0%} au hasard. A toi de juger."
+                    ),
                 ]
             lignes += ["", "INVENTAIRE TIER 0 (nom, categorie, une ligne) :"]
             lignes += [f"- {s.name} [{s.category}] — {s.description}" for s in SKILLS]
@@ -476,8 +499,10 @@ def _tool_skills(args: dict[str, Any]) -> str:
                 )
             return "\n".join(lignes)
         lignes = [
-            f"Procedures retenues pour cet objectif ({injection.cout_jetons} jetons, budget "
-            f"{BUDGET_DEFAUT}) : {', '.join(injection.completes)}",
+            (
+                f"Procedures retenues pour cet objectif ({injection.cout_jetons} jetons, budget "
+                f"{BUDGET_DEFAUT}) : {', '.join(injection.completes)}"
+            ),
         ]
         if injection.ecartees:
             lignes.append(
@@ -499,7 +524,10 @@ def _tool_skills(args: dict[str, Any]) -> str:
             if skill.name == wanted:
                 return skill.body
         return f"competence inconnue : {wanted}"
-    rows = ["Competences disponibles (charger selon le declencheur, pas d'avance) :", ""]
+    rows = [
+        "Competences disponibles (charger selon le declencheur, pas d'avance) :",
+        "",
+    ]
     for skill in SKILLS:
         if category and skill.category != category:
             continue
@@ -523,11 +551,15 @@ def _tool_clarify(args: dict[str, Any]) -> str:
 
     objectif = str(args.get("objective", ""))
     if not objectif.strip():
-        return "REFUS : aucun objectif. Donnez la demande telle que l'humain l'a ecrite."
+        return (
+            "REFUS : aucun objectif. Donnez la demande telle que l'humain l'a ecrite."
+        )
     analyse = analyser(objectif, contexte=str(args.get("context", "")))
     texte = formater(analyse)
     if analyse.actionnable:
-        return texte + "\n\nVERDICT : actionnable — travaille, et declare tes hypotheses."
+        return (
+            texte + "\n\nVERDICT : actionnable — travaille, et declare tes hypotheses."
+        )
     return (
         texte
         + "\n\nVERDICT : demande CES questions a l'humain AVANT de commencer.\n"
@@ -545,7 +577,6 @@ def _tool_status(_args: dict[str, Any]) -> str:
     """
     import json
 
-    from .artifacts import manifest  # noqa: F401 - garde la surface d'import stable
     from .artifacts.write_guard import REGISTRE
 
     racine = _root()
@@ -562,28 +593,45 @@ def _tool_status(_args: dict[str, Any]) -> str:
         f"artefacts natifs : {len(attendus) - len(manquants)}/{len(attendus)} presents",
     ]
     if manquants:
-        lignes.append("  manquants : " + ", ".join(manquants[:6]) + (" ..." if len(manquants) > 6 else ""))
+        lignes.append(
+            "  manquants : "
+            + ", ".join(manquants[:6])
+            + (" ..." if len(manquants) > 6 else "")
+        )
         lignes.append("  -> `jio start` les ecrit, sans rien detruire.")
     registre = racine / REGISTRE
     if registre.is_file():
         try:
-            entrees = json.loads(registre.read_text(encoding="utf-8")).get("fichiers", {})
-            lignes.append(f"registre : {len(entrees)} fichier(s) signes par jio (mise a jour sure)")
+            entrees = json.loads(registre.read_text(encoding="utf-8")).get(
+                "fichiers", {}
+            )
+            lignes.append(
+                f"registre : {len(entrees)} fichier(s) signes par jio (mise a jour sure)"
+            )
         except (OSError, ValueError):
-            lignes.append("registre : ILLISIBLE — jio redeviendra prudent (regle de repli : la marque)")
+            lignes.append(
+                "registre : ILLISIBLE — jio redeviendra prudent (regle de repli : la marque)"
+            )
     else:
-        lignes.append("registre : absent — jio ne sait pas quels fichiers sont les siens")
+        lignes.append(
+            "registre : absent — jio ne sait pas quels fichiers sont les siens"
+        )
     lignes.append(
         f"fiche d'integration : {'presente' if fiche.is_file() else 'ABSENTE (.jio/ACTIVE.md)'}"
     )
-    cablage = [rel for rel in ("opencode.json", ".cursor/mcp.json", ".mcp.json")
-               if (racine / rel).is_file()]
-    lignes.append("cablage MCP : " + (", ".join(cablage) if cablage else "aucun fichier trouve"))
+    cablage = [
+        rel
+        for rel in ("opencode.json", ".cursor/mcp.json", ".mcp.json")
+        if (racine / rel).is_file()
+    ]
+    lignes.append(
+        "cablage MCP : " + (", ".join(cablage) if cablage else "aucun fichier trouve")
+    )
     lignes += [
         "",
         "PROCHAINES ETAPES",
         "  1. si des artefacts manquent : `jio start`",
-        "  2. avant de travailler : `jio clarify \"<objectif>\"` (code 3 = il faut DEMANDER)",
+        '  2. avant de travailler : `jio clarify "<objectif>"` (code 3 = il faut DEMANDER)',
         "  3. etat du systeme : `jio doctor`",
     ]
     return "\n".join(lignes)
@@ -646,8 +694,11 @@ def _arguments_inconnus(nom: str, arguments: dict[str, Any]) -> str:
     inconnus = sorted(cle for cle in arguments if cle not in attendus)
     if not inconnus:
         return ""
-    lignes = ["ARGUMENT(S) INCONNU(S) : " + ", ".join(f"`{cle}`" for cle in inconnus),
-              "  cet outil attend : " + (", ".join(f"`{cle}`" for cle in attendus) or "aucun")]
+    lignes = [
+        "ARGUMENT(S) INCONNU(S) : " + ", ".join(f"`{cle}`" for cle in inconnus),
+        "  cet outil attend : "
+        + (", ".join(f"`{cle}`" for cle in attendus) or "aucun"),
+    ]
     for cle in inconnus:
         proche = difflib.get_close_matches(cle, attendus, n=1, cutoff=0.6)
         if proche:

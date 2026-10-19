@@ -7,18 +7,18 @@ from .registry import KNOWN_CLIS, Registry, detect_clis, from_env
 from .simulated import Persona, SimulatedProvider, make_panel
 
 __all__ = [
+    "KNOWN_CLIS",
+    "CliProvider",
     "Completion",
     "Message",
+    "OpenAiCompatProvider",
+    "Persona",
     "Provider",
     "ProviderError",
-    "render",
-    "CliProvider",
-    "OpenAiCompatProvider",
     "Registry",
-    "KNOWN_CLIS",
+    "SimulatedProvider",
     "detect_clis",
     "from_env",
-    "Persona",
-    "SimulatedProvider",
     "make_panel",
+    "render",
 ]

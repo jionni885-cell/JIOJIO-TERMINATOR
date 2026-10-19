@@ -16,20 +16,21 @@ Ce que ces tests protegent, dans l'ordre d'importance :
 
 from __future__ import annotations
 
-import pytest
 import json
 
-from jio.bench.tasks import TASKS
+import pytest
+
+from jio.audit.panel import DEFAULT_PERSONAS
 from jio.bench.ablation import (
     LEVIERS,
-    ConsensusPremierAvis,
+    Bras,
     Comparaison,
+    ConsensusPremierAvis,
     Issue,
     PanelSansRedTeam,
     PorteOuverte,
     ProverAveugle,
     RapportAblation,
-    Bras,
     _activite_de_sens,
     _ecarts,
     _phrase_activite,
@@ -40,7 +41,7 @@ from jio.bench.ablation import (
     mcnemar_exact,
     mesurer,
 )
-from jio.audit.panel import DEFAULT_PERSONAS
+from jio.bench.tasks import TASKS
 from jio.core.types import MissionStatus, Verdict, Vote
 
 # --------------------------------------------------------------------------- #
@@ -84,7 +85,9 @@ def test_chaque_levier_dit_ce_que_sans_veut_dire() -> None:
     assert len(noms) == len(set(noms)), f"noms de leviers dupliques : {noms}"
     for lev in LEVIERS:
         assert lev.quoi.strip(), f"{lev.nom} : ce que la brique fait n'est pas ecrit"
-        assert lev.sans.strip(), f"{lev.nom} : ce que « sans » veut dire n'est pas ecrit"
+        assert lev.sans.strip(), (
+            f"{lev.nom} : ce que « sans » veut dire n'est pas ecrit"
+        )
     with pytest.raises(KeyError) as exc:
         levier("levier-inexistant")
     assert "red-team" in str(exc.value), "l'erreur doit citer les leviers existants"
@@ -274,7 +277,9 @@ def test_zero_dissociation_ne_dit_jamais_inutile() -> None:
     assert "NON DISTINGUABLE" in texte
     assert "inutile" not in texte.replace("n'est pas un levier inutile", "")
     assert "l'absence de preuve n'est pas la preuve de l'absence" in texte
-    assert "il faudrait" in texte, "un non-distingue sans budget de mesure laisse sans prise"
+    assert "il faudrait" in texte, (
+        "un non-distingue sans budget de mesure laisse sans prise"
+    )
     assert rapport.leviers[0].verdict == "NON DISTINGUABLE"
     assert rapport.leviers[0].ic_bas == 0.0 and rapport.leviers[0].ic_haut == 0.0
 
@@ -298,8 +303,14 @@ def test_un_nom_de_levier_inconnu_leve_avant_de_mesurer() -> None:
 
     def executer(indice: int, graine: int, ablations: tuple[str, ...]) -> Issue:
         appels.append("tourne")
-        return Issue(juste=True, livree=True, reservee=False, silencieuse=False,
-                     abstention=False, appels=1)
+        return Issue(
+            juste=True,
+            livree=True,
+            reservee=False,
+            silencieuse=False,
+            abstention=False,
+            appels=1,
+        )
 
     with pytest.raises(KeyError):
         mesurer(executer, taches=1, graines=1, leviers=["pas-un-levier"])
@@ -339,9 +350,9 @@ def _executeur_livraison(effet: str):
 
     def executer(indice: int, graine: int, ablations: tuple[str, ...]) -> Issue:
         if not ablations:
-            livree = effet != "cout"        # le moteur complet
+            livree = effet != "cout"  # le moteur complet
         else:
-            livree = effet == "cout"        # le bras prive de la brique
+            livree = effet == "cout"  # le bras prive de la brique
         return Issue(
             juste=True,
             livree=livree,
@@ -399,18 +410,26 @@ def test_l_ablation_SIGNALE_son_avancement_a_chaque_mission() -> None:
     """
     executer, _appels = _executeur_truque()
     vus: list[str] = []
-    rapport = mesurer(executer, taches=3, graines=2, leviers=["preuve", "red-team"],
-                      avancer=vus.append)
+    rapport = mesurer(
+        executer,
+        taches=3,
+        graines=2,
+        leviers=["preuve", "red-team"],
+        avancer=vus.append,
+    )
 
     missions_par_bras = 3 * 2
-    assert len(vus) == missions_par_bras * 3, "un signal par mission, bras complet compris"
+    assert len(vus) == missions_par_bras * 3, (
+        "un signal par mission, bras complet compris"
+    )
     assert vus[0] == f"complet 1/{len(vus)}"
     assert vus[-1].endswith(f"{len(vus)}/{len(vus)}")
     assert any(libelle.startswith("sans preuve") for libelle in vus)
     assert any(libelle.startswith("sans red-team") for libelle in vus)
     # Le rapport lui-meme ne depend pas du signalement : c'est un canal, pas un calcul.
-    sans_signal = mesurer(_executeur_truque()[0], taches=3, graines=2,
-                          leviers=["preuve", "red-team"])
+    sans_signal = mesurer(
+        _executeur_truque()[0], taches=3, graines=2, leviers=["preuve", "red-team"]
+    )
     assert sans_signal.prouves == rapport.prouves
     assert len(sans_signal.leviers) == len(rapport.leviers)
 
@@ -437,17 +456,31 @@ def test_un_compteur_de_volume_n_est_pas_de_l_activite() -> None:
     Mesure a l'origine : `usage:events` bougeait pour TOUTES les ablations (142 -> 104),
     comme il bougerait pour n'importe quel changement de chemin de code.
     """
-    empreinte = {"temoins": 4, "temoins_ok": 3, "votes": 5, "usage:events": 142, "sujet_caracteres": 630}
-    assert _activite_de_sens(empreinte) == (("temoins", 4), ("temoins_ok", 3), ("votes", 5))
+    empreinte = {
+        "temoins": 4,
+        "temoins_ok": 3,
+        "votes": 5,
+        "usage:events": 142,
+        "sujet_caracteres": 630,
+    }
+    assert _activite_de_sens(empreinte) == (
+        ("temoins", 4),
+        ("temoins_ok", 3),
+        ("votes", 5),
+    )
     # Le volume seul ne compte pas comme un ecart de sens.
-    assert _ecarts({"usage:events": 1}, {"usage:events": 2}) == (("usage:events", 1, 2),)
-    assert _activite_de_sens({"usage:events": 1}) == _activite_de_sens({"usage:events": 2})
+    assert _ecarts({"usage:events": 1}, {"usage:events": 2}) == (
+        ("usage:events", 1, 2),
+    )
+    assert _activite_de_sens({"usage:events": 1}) == _activite_de_sens(
+        {"usage:events": 2}
+    )
 
 
 def test_les_ecarts_de_sens_passent_avant_les_compteurs_de_volume() -> None:
     """L'apercu du rapport doit parler du travail, pas du trafic."""
     ecarts = _ecarts({"usage:events": 900, "constat:mutation": 1}, {"usage:events": 10})
-    assert [cle for cle, _, _ in ecarts][0] == "constat:mutation"
+    assert next(cle for cle, _, _ in ecarts) == "constat:mutation"
 
 
 def test_activite_identique_dit_que_le_banc_n_exerce_pas_la_brique() -> None:
@@ -499,11 +532,30 @@ def test_une_brique_qui_agit_sans_changer_le_verdict_est_dite_agissante() -> Non
 def test_l_instrument_se_tait_quand_il_n_a_rien_compte() -> None:
     """« Je n'ai pas regarde » ne s'ecrit pas comme « il ne s'est rien passe »."""
     vide = Comparaison(
-        nom="porte", quoi="q", sans="s", n=1, justes_avec=1, justes_sans=1, livrees_avec=1,
-        livrees_sans=1, reservees_avec=0, reservees_sans=0, silencieuses_avec=0,
-        silencieuses_sans=0, abstentions_avec=0, abstentions_sans=0, appels_avec=1.0,
-        appels_sans=1.0, b=0, c=0, p_exact=1.0, ic_bas=0.0, ic_haut=0.0, b_propre=0,
-        c_propre=0, p_propre=1.0,
+        nom="porte",
+        quoi="q",
+        sans="s",
+        n=1,
+        justes_avec=1,
+        justes_sans=1,
+        livrees_avec=1,
+        livrees_sans=1,
+        reservees_avec=0,
+        reservees_sans=0,
+        silencieuses_avec=0,
+        silencieuses_sans=0,
+        abstentions_avec=0,
+        abstentions_sans=0,
+        appels_avec=1.0,
+        appels_sans=1.0,
+        b=0,
+        c=0,
+        p_exact=1.0,
+        ic_bas=0.0,
+        ic_haut=0.0,
+        b_propre=0,
+        c_propre=0,
+        p_propre=1.0,
     )
     assert _phrase_activite(vide) == ""
 
@@ -511,12 +563,33 @@ def test_l_instrument_se_tait_quand_il_n_a_rien_compte() -> None:
 def test_les_ecarts_qui_vont_contre_la_brique_sont_nommes() -> None:
     """Une brique qui degrade la ou elle agit doit etre signalee, pas defendue."""
     degrade = Comparaison(
-        nom="x", quoi="q", sans="s", n=10, justes_avec=8, justes_sans=9, livrees_avec=8,
-        livrees_sans=9, reservees_avec=0, reservees_sans=0, silencieuses_avec=0,
-        silencieuses_sans=0, abstentions_avec=0, abstentions_sans=0, appels_avec=1.0,
-        appels_sans=1.0, b=0, c=3, p_exact=0.25, ic_bas=0.0, ic_haut=0.0, b_propre=0,
-        c_propre=2, p_propre=0.5,
-        missions_activite_differente=3, observations_avec=20, observations_sans=22,
+        nom="x",
+        quoi="q",
+        sans="s",
+        n=10,
+        justes_avec=8,
+        justes_sans=9,
+        livrees_avec=8,
+        livrees_sans=9,
+        reservees_avec=0,
+        reservees_sans=0,
+        silencieuses_avec=0,
+        silencieuses_sans=0,
+        abstentions_avec=0,
+        abstentions_sans=0,
+        appels_avec=1.0,
+        appels_sans=1.0,
+        b=0,
+        c=3,
+        p_exact=0.25,
+        ic_bas=0.0,
+        ic_haut=0.0,
+        b_propre=0,
+        c_propre=2,
+        p_propre=0.5,
+        missions_activite_differente=3,
+        observations_avec=20,
+        observations_sans=22,
         ecarts_activite=(("temoins", 20, 22),),
     )
     phrase = _phrase_activite(degrade)
@@ -546,13 +619,18 @@ def test_le_banc_d_ablation_branche_l_apprentissage(capsys) -> None:
     from jio.cli import cmd_ablation
 
     args = _argparse.Namespace(
-        missions=2, levers="routeur", skill=0.35, rounds=4, fidelite=1.0,
-        sans_oracle=False, json=True,
+        missions=2,
+        levers="routeur",
+        skill=0.35,
+        rounds=4,
+        fidelite=1.0,
+        sans_oracle=False,
+        json=True,
     )
     code = cmd_ablation(args)
     assert code in (0, 1), "une mesure doit se terminer, meme avec un defaut affiche"
     sortie = capsys.readouterr().out
-    rapport = json.loads(sortie[sortie.index("{"):])
+    rapport = json.loads(sortie[sortie.index("{") :])
     routeur = rapport["leviers"][0]
     assert routeur["nom"] == "routeur"
     assert routeur["missions_activite_differente"] > 0, (
@@ -572,10 +650,17 @@ def test_le_banc_nettoie_son_etat_d_apprentissage() -> None:
 
     from jio.cli import cmd_ablation
 
-    cmd_ablation(_argparse.Namespace(
-        missions=1, levers="memoire", skill=0.35, rounds=4, fidelite=1.0,
-        sans_oracle=False, json=True,
-    ))
+    cmd_ablation(
+        _argparse.Namespace(
+            missions=1,
+            levers="memoire",
+            skill=0.35,
+            rounds=4,
+            fidelite=1.0,
+            sans_oracle=False,
+            json=True,
+        )
+    )
     apres = set(glob.glob(os.path.join(tempfile.gettempdir(), "jio-ablation-etat-*")))
     assert apres - avant == set(), "le banc a laisse un dossier d'etat derriere lui"
 
@@ -595,15 +680,25 @@ def test_la_tache_a_spec_partielle_exerce_le_differentiel(capsys) -> None:
 
     from jio.cli import cmd_ablation
 
-    cmd_ablation(_argparse.Namespace(
-        missions=2, levers="differentiel", taches="mean_partial", skill=0.7, rounds=4,
-        fidelite=1.0, sans_oracle=False, json=True,
-    ))
+    cmd_ablation(
+        _argparse.Namespace(
+            missions=2,
+            levers="differentiel",
+            taches="mean_partial",
+            skill=0.7,
+            rounds=4,
+            fidelite=1.0,
+            sans_oracle=False,
+            json=True,
+        )
+    )
     sortie = capsys.readouterr().out
-    rapport = json.loads(sortie[sortie.index("{"):])
+    rapport = json.loads(sortie[sortie.index("{") :])
     differentiel = rapport["leviers"][0]
     assert differentiel["nom"] == "differentiel"
-    constats = {e["cle"]: (e["complet"], e["sans"]) for e in differentiel["ecarts_activite"]}
+    constats = {
+        e["cle"]: (e["complet"], e["sans"]) for e in differentiel["ecarts_activite"]
+    }
     assert constats.get("constat:divergence", (0, 0))[0] > 0, (
         "la tache partielle ne produit plus de constat de divergence : soit la tache a "
         "ete serree (la spec parle maintenant de la liste vide), soit le differentiel a "
@@ -618,10 +713,18 @@ def test_une_tache_inconnue_est_refusee_avec_un_nom(capsys) -> None:
 
     from jio.cli import cmd_ablation
 
-    code = cmd_ablation(_argparse.Namespace(
-        missions=2, levers="differentiel", taches="mean_partiel", skill=0.7, rounds=4,
-        fidelite=1.0, sans_oracle=False, json=True,
-    ))
+    code = cmd_ablation(
+        _argparse.Namespace(
+            missions=2,
+            levers="differentiel",
+            taches="mean_partiel",
+            skill=0.7,
+            rounds=4,
+            fidelite=1.0,
+            sans_oracle=False,
+            json=True,
+        )
+    )
     sortie = capsys.readouterr()
     assert code == 2, "une tache inconnue est une erreur d'appel, pas une mesure vide"
     assert "mean_partiel" in sortie.err
@@ -645,25 +748,39 @@ def test_la_composition_des_votes_et_la_sentinelle_entrent_dans_l_empreinte() ->
     from jio.cli import _empreinte_activite
 
     rapport_unanime = SimpleNamespace(
-        witnesses=(), findings=(), votes=[
-            SimpleNamespace(decision=Verdict.PASS), SimpleNamespace(decision=Verdict.PASS),
+        witnesses=(),
+        findings=(),
+        votes=[
+            SimpleNamespace(decision=Verdict.PASS),
+            SimpleNamespace(decision=Verdict.PASS),
         ],
-        integrity=None, usage={}, subject="", status=MissionStatus.DELIVERED,
+        integrity=None,
+        usage={},
+        subject="",
+        status=MissionStatus.DELIVERED,
     )
     empreinte = dict(_empreinte_activite(rapport_unanime))
     assert empreinte["votes_pass"] == 2 and empreinte["votes_fail"] == 0
     assert empreinte["avis_en_phase"] == 1, "majorite pass, livre : en phase"
 
     rapport_contredit = SimpleNamespace(
-        witnesses=(), findings=(), votes=[
-            SimpleNamespace(decision=Verdict.PASS), SimpleNamespace(decision=Verdict.FAIL),
+        witnesses=(),
+        findings=(),
+        votes=[
+            SimpleNamespace(decision=Verdict.PASS),
+            SimpleNamespace(decision=Verdict.FAIL),
             SimpleNamespace(decision=Verdict.FAIL),
         ],
-        integrity=None, usage={}, subject="", status=MissionStatus.DELIVERED,
+        integrity=None,
+        usage={},
+        subject="",
+        status=MissionStatus.DELIVERED,
     )
     empreinte = dict(_empreinte_activite(rapport_contredit))
     assert empreinte["votes_pass"] == 1 and empreinte["votes_fail"] == 2
-    assert empreinte["avis_en_phase"] == 0, "majorite fail, livre : la decision contredit"
+    assert empreinte["avis_en_phase"] == 0, (
+        "majorite fail, livre : la decision contredit"
+    )
 
 
 def test_un_filtre_de_decision_n_est_pas_un_banc_muet() -> None:
@@ -672,20 +789,46 @@ def test_un_filtre_de_decision_n_est_pas_un_banc_muet() -> None:
     pas, aucune puissance d'echantillon ne conclura » — faux : elargir EST ce qui peut
     trancher, chaque dissociation rapproche du seuil."""
     filtre = Comparaison(
-        nom="porte", quoi="q", sans="s", n=10, justes_avec=10, justes_sans=10,
-        livrees_avec=3, livrees_sans=4, reservees_avec=3, reservees_sans=2,
-        silencieuses_avec=0, silencieuses_sans=0, abstentions_avec=0, abstentions_sans=0,
-        appels_avec=7.0, appels_sans=7.0, b=0, c=1, p_exact=1.0, ic_bas=0.0, ic_haut=0.0,
-        b_propre=0, c_propre=1, p_propre=1.0,
-        missions_activite_differente=0, observations_avec=500, observations_sans=500,
+        nom="porte",
+        quoi="q",
+        sans="s",
+        n=10,
+        justes_avec=10,
+        justes_sans=10,
+        livrees_avec=3,
+        livrees_sans=4,
+        reservees_avec=3,
+        reservees_sans=2,
+        silencieuses_avec=0,
+        silencieuses_sans=0,
+        abstentions_avec=0,
+        abstentions_sans=0,
+        appels_avec=7.0,
+        appels_sans=7.0,
+        b=0,
+        c=1,
+        p_exact=1.0,
+        ic_bas=0.0,
+        ic_haut=0.0,
+        b_propre=0,
+        c_propre=1,
+        p_propre=1.0,
+        missions_activite_differente=0,
+        observations_avec=500,
+        observations_sans=500,
         ecarts_activite=(),
     )
     phrase = _phrase_activite(filtre)
     assert "FILTRE DE DECISION" in phrase
     assert "0 contre 1" in phrase
     assert "--missions" in phrase, "elargir est exactement ce qui peut trancher ici"
-    rapport = RapportAblation(complet=Bras(nom="complet"), leviers=[filtre],
-                              n_missions=10, taches=5, graines=2)
+    rapport = RapportAblation(
+        complet=Bras(nom="complet"),
+        leviers=[filtre],
+        n_missions=10,
+        taches=5,
+        graines=2,
+    )
     texte = formater(rapport)
     assert "aucune puissance d'echantillon ne conclura" not in texte
 
@@ -703,8 +846,12 @@ def test_les_points_de_calibration_mesurent_les_candidats() -> None:
 
     points = _points_de_calibration(list(TASKS))
     parfaits = [p for p in points if p.score == 1.0]
-    assert all(p.correct for p in parfaits), "score 1,0 sans verite : calibration mentie"
-    assert any(not p.correct and p.score < 1.0 for p in points), "aucun distracteur echoue"
+    assert all(p.correct for p in parfaits), (
+        "score 1,0 sans verite : calibration mentie"
+    )
+    assert any(not p.correct and p.score < 1.0 for p in points), (
+        "aucun distracteur echoue"
+    )
     # Deterministe : memes taches, memes points.
     assert _points_de_calibration(list(TASKS)) == points
 
@@ -732,10 +879,20 @@ def test_le_regime_calibre_est_annonce_dans_l_en_tete(capsys) -> None:
 
     from jio.cli import cmd_ablation
 
-    code = cmd_ablation(_argparse.Namespace(
-        missions=1, levers="porte", taches="", skill=0.35, rounds=2, fidelite=1.0,
-        sans_oracle=False, correlee=True, calibree=True, json=True,
-    ))
+    code = cmd_ablation(
+        _argparse.Namespace(
+            missions=1,
+            levers="porte",
+            taches="",
+            skill=0.35,
+            rounds=2,
+            fidelite=1.0,
+            sans_oracle=False,
+            correlee=True,
+            calibree=True,
+            json=True,
+        )
+    )
     sortie = capsys.readouterr().out
     assert code in (0, 1)
     assert "porte CALIBREE" in sortie

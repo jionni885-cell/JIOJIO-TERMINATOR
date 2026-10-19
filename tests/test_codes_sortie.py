@@ -47,7 +47,9 @@ def test_une_reserve_n_est_pas_une_faute_mais_pas_un_quitus() -> None:
     assert code_de_mission(MissionStatus.ABSTAINED) == 2
     assert code_de_mission(MissionStatus.ABSTAINED) != code_de_mission(
         MissionStatus.DELIVERED_WITH_RESERVATION
-    ), "c'est exactement la confusion corrigee : corriger ou fournir ne sont pas la meme action"
+    ), (
+        "c'est exactement la confusion corrigee : corriger ou fournir ne sont pas la meme action"
+    )
 
 
 def test_CHAQUE_code_dit_l_action_qu_il_demande() -> None:
@@ -67,13 +69,16 @@ def test_aucune_commande_n_invente_un_code_hors_doctrine() -> None:
     Un `return 4` ajoute un jour dans une fonction ferait un contrat invisible. Ce test
     l'attrape a la seconde ou il est ecrit, avec le numero fautif dans le message.
     """
-    source = (Path(__file__).resolve().parent.parent / "jio" / "cli.py").read_text("utf-8")
-    rendus = {int(n) for n in re.findall(r"^[ \t]*return (\d+)\s*$", source, flags=re.MULTILINE)}
+    source = (Path(__file__).resolve().parent.parent / "jio" / "cli.py").read_text(
+        "utf-8"
+    )
+    rendus = {
+        int(n)
+        for n in re.findall(r"^[ \t]*return (\d+)\s*$", source, flags=re.MULTILINE)
+    }
     # Les codes rendus par une expression (`return 0 if ... else 1`) sont couverts par le
     # controle ci-dessous, qui lit TOUS les entiers apparaissant a droite d'un `return`.
-    rendus |= {
-        int(n) for n in re.findall(r"return[^\n]*?(?<!\d)(\d)(?!\d)", source)
-    }
+    rendus |= {int(n) for n in re.findall(r"return[^\n]*?(?<!\d)(\d)(?!\d)", source)}
     inconnus = sorted(rendus - set(CODES))
     assert not inconnus, (
         f"codes de sortie hors doctrine dans jio/cli.py : {inconnus} — "
@@ -104,9 +109,11 @@ def test_la_sortie_de_run_EST_le_code_de_la_table(monkeypatch) -> None:
     ):
         rapports: list[MissionReport] = []
 
-        def faux_run(self, mission, work):  # noqa: ANN001, ANN202 - substitut de test
+        def faux_run(self, mission, work, statut=statut, rapports=rapports):
             rapport = MissionReport(
-                mission_id="test", objective="objectif", status=statut,
+                mission_id="test",
+                objective="objectif",
+                status=statut,
                 abstention_reason="rien ne peut etre prouve",
             )
             rapports.append(rapport)
@@ -115,10 +122,16 @@ def test_la_sortie_de_run_EST_le_code_de_la_table(monkeypatch) -> None:
         from jio.loop import engine as module_moteur
 
         monkeypatch.setattr(module_moteur.Engine, "run", faux_run, raising=True)
-        code = main([
-            "run", "Sum even numbers below two hundred",
-            "--simulate", "--task", "sum_even", "--sans-competences",
-        ])
+        code = main(
+            [
+                "run",
+                "Sum even numbers below two hundred",
+                "--simulate",
+                "--task",
+                "sum_even",
+                "--sans-competences",
+            ]
+        )
         assert code == attendu, f"{statut} devrait sortir en {attendu}, sorti en {code}"
 
 
@@ -127,23 +140,33 @@ def test_l_abstention_explique_QUOI_fournir(capsys, monkeypatch) -> None:
     from jio.cli import main
     from jio.core.types import MissionReport
 
-    def faux_run(self, mission, work):  # noqa: ANN001, ANN202
+    def faux_run(self, mission, work):
         return MissionReport(
-            mission_id="test", objective="objectif", status=MissionStatus.ABSTAINED,
+            mission_id="test",
+            objective="objectif",
+            status=MissionStatus.ABSTAINED,
             abstention_reason="aucun temoin disponible",
         )
 
     from jio.loop import engine as module_moteur
 
     monkeypatch.setattr(module_moteur.Engine, "run", faux_run, raising=True)
-    code = main([
-        "run", "Sum even numbers below two hundred",
-        "--simulate", "--task", "sum_even", "--sans-competences",
-    ])
+    code = main(
+        [
+            "run",
+            "Sum even numbers below two hundred",
+            "--simulate",
+            "--task",
+            "sum_even",
+            "--sans-competences",
+        ]
+    )
     sortie = capsys.readouterr().out
     assert code == 2
     assert "code 2" in sortie
-    assert "fournir" in sortie, "l'appelant doit savoir quoi faire, pas seulement que ca a rate"
+    assert "fournir" in sortie, (
+        "l'appelant doit savoir quoi faire, pas seulement que ca a rate"
+    )
 
 
 def test_mesurer_sans_matiere_est_INDETERMINE(tmp_path, capsys, monkeypatch) -> None:

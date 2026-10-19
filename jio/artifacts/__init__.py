@@ -7,11 +7,11 @@ from .emit import TARGETS, manifest, write_manifest
 
 __all__ = [
     "AGENTS",
-    "SKILLS",
     "PRINCIPLES",
+    "SKILLS",
+    "TARGETS",
     "AgentSpec",
     "SkillSpec",
-    "TARGETS",
     "manifest",
     "write_manifest",
 ]

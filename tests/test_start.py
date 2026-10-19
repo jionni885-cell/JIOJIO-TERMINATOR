@@ -23,8 +23,8 @@ from pathlib import Path
 
 import pytest
 
-from jio.cli import build_parser, cmd_start
 from jio.artifacts.emit import manifest
+from jio.cli import build_parser, cmd_start
 
 
 def _args(root: Path, **extra) -> argparse.Namespace:
@@ -81,7 +81,9 @@ def test_start_ne_detruit_jamais_le_travail_de_l_utilisateur(tmp_path: Path) -> 
     # « possede » pas et ne le mettra jamais a jour tout seul.
     import json
 
-    registre = json.loads((tmp_path / ".jio/generated.json").read_text(encoding="utf-8"))
+    registre = json.loads(
+        (tmp_path / ".jio/generated.json").read_text(encoding="utf-8")
+    )
     assert "AGENTS.md" not in registre["fichiers"]
 
 
@@ -103,6 +105,7 @@ def test_start_est_IDEMPOTENTE_et_le_dit(tmp_path: Path) -> None:
     quandt meme bouger la date de modification — donc apparait comme un changement pour tout
     outil qui la regarde (git status ne la voit pas, un cache de build si).
     """
+
     def contenu() -> dict[Path, str]:
         # TOUS les fichiers, la fiche d'etat comprise : c'est elle qui a menti le plus longtemps.
         return {
@@ -182,12 +185,14 @@ def test_la_fiche_ne_cite_que_des_commandes_qui_existent(tmp_path: Path) -> None
     cmd_start(_args(tmp_path))
     texte = (tmp_path / ".jio/ACTIVE.md").read_text(encoding="utf-8")
     connues: set[str] = set()
-    for action in build_parser()._actions:  # noqa: SLF001 - le parseur reel, pas une copie
-        if isinstance(action, ap._SubParsersAction):  # noqa: SLF001
+    for action in build_parser()._actions:
+        if isinstance(action, ap._SubParsersAction):
             connues = set(action.choices)
     citees = set(re.findall(r"jio ([a-z][a-z0-9-]*)", texte))
     inconnues = {c for c in citees if c not in connues and c not in {"start"}}
-    assert not inconnues, f"la fiche cite des commandes inexistantes : {sorted(inconnues)}"
+    assert not inconnues, (
+        f"la fiche cite des commandes inexistantes : {sorted(inconnues)}"
+    )
     assert {"doctor", "clarify", "run"} <= citees
 
 
@@ -203,8 +208,11 @@ def test_les_commandes_d_integration_repondent_a_help(commande: str) -> None:
 
     proc = subprocess.run(
         [sys.executable, "-m", "jio", commande, "--help"],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True,
+        text=True,
+        timeout=120,
         cwd=str(Path(__file__).resolve().parents[1]),
+        check=False,
     )
     assert proc.returncode == 0, proc.stderr
     assert "usage:" in proc.stdout
@@ -224,10 +232,17 @@ def test_la_fiche_active_porte_l_etat_de_COHERENCE_mesure(tmp_path: Path) -> Non
     from jio.cli import _fiche_active
 
     fiche = _fiche_active(
-        tmp_path, ["opencode"], ["opencode"], presents=30, total=30, a_jour=30,
+        tmp_path,
+        ["opencode"],
+        ["opencode"],
+        presents=30,
+        total=30,
+        a_jour=30,
         coherence="COHERENT (9 controles)",
     )
-    assert "coherence du depot a l'instant de l'ecriture : COHERENT (9 controles)" in fiche
+    assert (
+        "coherence du depot a l'instant de l'ecriture : COHERENT (9 controles)" in fiche
+    )
     # Sans mesure, la fiche le DIT au lieu d'affirmer : c'est la meme regle que partout ailleurs.
     assert "non mesuree" in _fiche_active(tmp_path, [], [], 0)
     # AUCUNE DUREE dans la fiche. C'est ce qui la rendait non-idempotente : deux executions
@@ -238,7 +253,8 @@ def test_la_fiche_active_porte_l_etat_de_COHERENCE_mesure(tmp_path: Path) -> Non
     # y voit une duree. Une recherche trop large est une fausse alerte qui apprend a elargir
     # les exceptions ; une recherche trop etroite ne voit rien. Celle-ci vise la ligne.
     ligne = next(
-        l for l in fiche.splitlines()
+        l
+        for l in fiche.splitlines()
         if l.startswith("- coherence du depot a l'instant de l'ecriture :")
     )
     assert not re.search(r"\d+([.,]\d+)?\s*(s|ms)\b", ligne), (
@@ -259,11 +275,18 @@ def test_la_fiche_est_reecrite_quand_l_etat_CHANGE(tmp_path: Path) -> None:
 
     avant = _fiche_active(tmp_path, [], [], 0, coherence="COHERENT (9 controles)")
     apres = _fiche_active(
-        tmp_path, ["opencode"], ["opencode"], presents=12, total=30, a_jour=12,
+        tmp_path,
+        ["opencode"],
+        ["opencode"],
+        presents=12,
+        total=30,
+        a_jour=12,
         coherence="2 controle(s) en echec : sources",
     )
     assert avant != apres
-    assert "2 controle(s) en echec : sources" in apres, "le verdict de la porte doit suivre"
+    assert "2 controle(s) en echec : sources" in apres, (
+        "le verdict de la porte doit suivre"
+    )
     assert "artefacts natifs : 12/30 present(s)" in apres
     assert "cablage MCP : opencode" in apres
 
@@ -277,7 +300,9 @@ def test_la_fiche_enseigne_le_routeur_de_procedures() -> None:
     """
     from jio.cli import _fiche_active
 
-    fiche = _fiche_active(Path("/tmp/projet"), ["opencode"], ["opencode"], 30, 30, 30, "COHERENT")
+    fiche = _fiche_active(
+        Path("/tmp/projet"), ["opencode"], ["opencode"], 30, 30, 30, "COHERENT"
+    )
     assert "jio skills" in fiche
     assert "jio sorties" in fiche
     assert "--sans-competences" in fiche
@@ -287,8 +312,9 @@ def test_la_fiche_enseigne_le_routeur_de_procedures() -> None:
     assert len(fiche.splitlines()) < 110
 
 
-
-def test_start_INSTALLE_les_competences_la_ou_hermes_les_lit(tmp_path, monkeypatch, capsys) -> None:
+def test_start_INSTALLE_les_competences_la_ou_hermes_les_lit(
+    tmp_path, monkeypatch, capsys
+) -> None:
     """La demande qui a motive cette etape : « quand je donne le depot a mon IA, elle s'integre
     et fait tout ce qu'il faut » — sans `cp -r` a taper a la main.
 
@@ -311,7 +337,9 @@ def test_start_INSTALLE_les_competences_la_ou_hermes_les_lit(tmp_path, monkeypat
     assert code == 0
     assert "COMPETENCES HERMES" in sortie
     installees = list((maison / "skills").rglob("SKILL.md"))
-    assert len(installees) == 12, f"12 procedures attendues, {len(installees)} installees"
+    assert len(installees) == 12, (
+        f"12 procedures attendues, {len(installees)} installees"
+    )
     assert "total : 13 copie(s)" in sortie or "copie(s)" in sortie
     # La fiche que lit l'IA porte l'ETAT de cette installation : elle doit pouvoir savoir si
     # son outil a reellement les procedures, sans deviner.

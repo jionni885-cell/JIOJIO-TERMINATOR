@@ -21,14 +21,14 @@ from jio.cli import COLORS, couleur_activee, render_report
 class _Terminal(io.StringIO):
     """Un flux qui se declare terminal — ce que fait le vrai `sys.stdout` sous un TTY."""
 
-    def isatty(self) -> bool:  # noqa: D102 — la seule chose que ce faux flux doit savoir faire
+    def isatty(self) -> bool:
         return True
 
 
 class _Fichier(io.StringIO):
     """Un flux qui se declare NON terminal — un tube, une redirection, un fichier."""
 
-    def isatty(self) -> bool:  # noqa: D102
+    def isatty(self) -> bool:
         return False
 
 
@@ -42,7 +42,9 @@ def test_NO_COLOR_coupe_tout_meme_dans_un_terminal(monkeypatch) -> None:
     monkeypatch.setenv("NO_COLOR", "1")
     assert couleur_activee(_Terminal()) is False
     monkeypatch.setenv("NO_COLOR", "   ")
-    assert couleur_activee(_Terminal()) is True, "une variable vide n'est pas une demande"
+    assert couleur_activee(_Terminal()) is True, (
+        "une variable vide n'est pas une demande"
+    )
 
 
 def test_JIO_NO_COLOR_existe_pour_ne_pas_toucher_NO_COLOR(monkeypatch) -> None:
@@ -77,20 +79,28 @@ def _rapport_reel():
     from jio.core.types import Mission
     from jio.loop.engine import WorkItem
 
-    tache = [t for t in TASKS if t.id == "sum_even"][0]
+    tache = next(t for t in TASKS if t.id == "sum_even")
     moteur = _simulated_engine(tache, skill=0.9, seed=0, max_rounds=2)
     return moteur.run(
         Mission(objective=tache.objective, id="couleur", max_rounds=2),
-        WorkItem(objective=tache.objective, entrypoint=tache.entrypoint,
-                 checks=tache.checks, spec=tache.spec()),
+        WorkItem(
+            objective=tache.objective,
+            entrypoint=tache.entrypoint,
+            checks=tache.checks,
+            spec=tache.spec(),
+        ),
     )
 
 
-def test_le_rapport_ne_contient_AUCUNE_sequence_quand_la_sortie_n_est_pas_un_terminal() -> None:
+def test_le_rapport_ne_contient_AUCUNE_sequence_quand_la_sortie_n_est_pas_un_terminal() -> (
+    None
+):
     """Le defaut mesure : sept sequences ANSI dans un fichier redirige."""
     texte = render_report(_rapport_reel(), color=couleur_activee(_Fichier()))
     assert "\033[" not in texte
     assert "[OK]" in texte
+    assert "agents de revue adaptés à la demande" in texte
+    assert "brief_interpreter" in texte
 
 
 def test_le_rapport_PEINT_quand_la_sortie_est_un_terminal() -> None:

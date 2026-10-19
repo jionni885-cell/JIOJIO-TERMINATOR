@@ -36,7 +36,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
-__all__ = ["Mutation", "MutationReport", "mutate", "MUTATION_BUDGET"]
+__all__ = ["MUTATION_BUDGET", "Mutation", "MutationReport", "mutate"]
 
 #: Nombre maximum de mutants executes. Chaque mutant coute une passe complete de
 #: verification : on borne le cout, on ne cherche pas l'exhaustivite.
@@ -140,9 +140,12 @@ class _Mutator(ast.NodeTransformer):
             if self._hit(f"booleen {node.value} -> {not node.value}"):
                 return ast.copy_location(ast.Constant(value=not node.value), node)
             return node
-        if isinstance(node.value, int) and not isinstance(node.value, bool):
-            if self._hit(f"constante {node.value} -> {node.value + 1}"):
-                return ast.copy_location(ast.Constant(value=node.value + 1), node)
+        if (
+            isinstance(node.value, int)
+            and not isinstance(node.value, bool)
+            and self._hit(f"constante {node.value} -> {node.value + 1}")
+        ):
+            return ast.copy_location(ast.Constant(value=node.value + 1), node)
         return node
 
     def visit_If(self, node: ast.If) -> ast.AST:

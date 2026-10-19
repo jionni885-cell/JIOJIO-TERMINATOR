@@ -35,10 +35,19 @@ def _rapport():
             "S3": [1.0, 1.0, 1.0, 0.0],
         },
         appels={"S0": [1, 1, 1, 1], "S2": [4, 4, 4, 4], "S3": [4, 4, 4, 4]},
-        libelles={"S0": "modele brut", "S2": "verification", "S3": "JIO complet",
-                  "S4r": "sans oracle"},
+        libelles={
+            "S0": "modele brut",
+            "S2": "verification",
+            "S3": "JIO complet",
+            "S4r": "sans oracle",
+        },
         ordre=("S0", "S2", "S3", "S4r"),
-        modele=_Modele(), skill=0.35, runs=1, taches=4, rounds=4, duree_s=12.5,
+        modele=_Modele(),
+        skill=0.35,
+        runs=1,
+        taches=4,
+        rounds=4,
+        duree_s=12.5,
         commit="deadbee",
         integrite={"ERREURS LIVREES SANS RESERVE": 0},
         ecarts=[
@@ -55,7 +64,12 @@ def test_un_bras_sans_donnee_est_NON_MESURE_jamais_zero() -> None:
     assert bras["S4r"].mesure is False
     assert bras["S4r"].reussite is None
     assert "| sans oracle | non mesure |" in rapport.en_markdown()
-    assert "0.0%" not in rapport.en_markdown().split("## Les comparaisons")[0].split("sans oracle")[1]
+    assert (
+        "0.0%"
+        not in rapport.en_markdown()
+        .split("## Les comparaisons")[0]
+        .split("sans oracle")[1]
+    )
 
 
 def test_les_intervalles_sont_ecrits_pour_CHAQUE_bras_mesure() -> None:
@@ -71,7 +85,9 @@ def test_les_intervalles_sont_ecrits_pour_CHAQUE_bras_mesure() -> None:
     bas, haut = intervalle_wilson(1, 4)
     texte = rapport.en_markdown()
     assert "| modele brut | 25.0%" in texte
-    assert f"[{bas:.0%} ; {haut:.0%}]" in texte, "les bornes doivent etre celles de Wilson"
+    assert f"[{bas:.0%} ; {haut:.0%}]" in texte, (
+        "les bornes doivent etre celles de Wilson"
+    )
 
 
 def test_un_ecart_dont_l_intervalle_CONTIENT_zero_est_indetermine() -> None:
@@ -101,7 +117,7 @@ def test_un_intervalle_de_largeur_NULLE_est_declare_degenere() -> None:
 
 def test_un_ecart_sans_bras_est_non_mesurable_pas_nul() -> None:
     rapport = _rapport()
-    e = [x for x in rapport.ecarts if x.droite == "S4r"][0]
+    e = next(x for x in rapport.ecarts if x.droite == "S4r")
     assert e.delta is None
     assert "non mesurable" in e.verdict
     assert e.table()["delta_points"] is None
@@ -130,7 +146,10 @@ def test_le_meme_rapport_s_ecrit_en_markdown_ET_en_json() -> None:
         assert charge["integrite"]["ERREURS LIVREES SANS RESERVE"] == 0
         # Le contenu doit etre le MEME dans les deux formes : une divergence serait une
         # deuxieme verite.
-        assert str(charge["bras"][0]["reussite"])[:3] in md.read_text(encoding="utf-8") or True
+        assert (
+            str(charge["bras"][0]["reussite"])[:3] in md.read_text(encoding="utf-8")
+            or True
+        )
 
 
 def test_le_bras_declare_son_NOMBRE_d_essais() -> None:
@@ -149,11 +168,23 @@ def test_une_simulation_le_DIT_dans_le_rapport() -> None:
         note = "reponses simulees"
 
     rapport = construire(
-        resultats={"S0": [0.0], "S3": [1.0]}, appels={"S0": [1], "S3": [3]},
-        libelles={"S0": "brut", "S3": "jio"}, ordre=("S0", "S3"), modele=Simule(),
-        skill=0.35, runs=1, taches=1, rounds=4, duree_s=1.0, commit="x",
-        hypotheses=("les reponses du modele sont SIMULEES : ce rapport mesure l'ARCHITECTURE "
-                    "du harness, pas un modele reel.",),
+        resultats={"S0": [0.0], "S3": [1.0]},
+        appels={"S0": [1], "S3": [3]},
+        libelles={"S0": "brut", "S3": "jio"},
+        ordre=("S0", "S3"),
+        modele=Simule(),
+        skill=0.35,
+        runs=1,
+        taches=1,
+        rounds=4,
+        duree_s=1.0,
+        commit="x",
+        hypotheses=(
+            (
+                "les reponses du modele sont SIMULEES : ce rapport mesure l'ARCHITECTURE "
+                "du harness, pas un modele reel."
+            ),
+        ),
     )
     texte = rapport.en_markdown()
     assert "simule" in texte

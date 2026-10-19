@@ -30,7 +30,6 @@ from jio.learn.cycles import (
     run_cycles,
 )
 
-
 # --- Le protocole apparie -----------------------------------------------------------------
 
 
@@ -44,7 +43,11 @@ def rapport_petit() -> RapportCycles:
     c'est la REGLE qui est testee, pas la difficulte du banc.
     """
     return run_cycles(
-        skill=0.12, runs=1, cycles=2, rounds=1, task_ids=("sum_even",),
+        skill=0.12,
+        runs=1,
+        cycles=2,
+        rounds=1,
+        task_ids=("sum_even",),
     )
 
 
@@ -81,7 +84,9 @@ def test_le_routeur_fige_ne_choisit_jamais_autre_chose() -> None:
     assert fige.observations == 1, "le froid OBSERVE le resultat mais n'apprend pas"
 
 
-def test_un_cycle_respecte_le_nombre_d_essais_annonce(rapport_petit: RapportCycles) -> None:
+def test_un_cycle_respecte_le_nombre_d_essais_annonce(
+    rapport_petit: RapportCycles,
+) -> None:
     """`essais` n'est pas un compte de terrain : c'est `taches x runs`, et il est verifie."""
     rapport = rapport_petit
 
@@ -107,21 +112,45 @@ def _rapport(*cycles: Cycle, gain: float = 0.0) -> RapportCycles:
     )
 
 
-def _cycle(numero: int, froid: int, chaud: int, *, temoin: int = 0, memo_avant: int = 0,
-           memo_apres: int = 0, essais: int = 10, caracteres: int = 0,
-           avertis: int = 0, appels: int = 0, chaud_seul: int = 0,
-           temoin_seul: int = 0, bloc: int = 0) -> Cycle:
+def _cycle(
+    numero: int,
+    froid: int,
+    chaud: int,
+    *,
+    temoin: int = 0,
+    memo_avant: int = 0,
+    memo_apres: int = 0,
+    essais: int = 10,
+    caracteres: int = 0,
+    avertis: int = 0,
+    appels: int = 0,
+    chaud_seul: int = 0,
+    temoin_seul: int = 0,
+    bloc: int = 0,
+) -> Cycle:
     return Cycle(
-        numero=numero, memo_avant=memo_avant, memo_apres=memo_apres, rappels=0,
-        froid=froid, temoin=temoin, chaud=chaud, essais=essais,
-        caracteres_memoire=caracteres, avertis=avertis, appels=appels,
-        chaud_seul=chaud_seul, temoin_seul=temoin_seul, bloc=bloc,
+        numero=numero,
+        memo_avant=memo_avant,
+        memo_apres=memo_apres,
+        rappels=0,
+        froid=froid,
+        temoin=temoin,
+        chaud=chaud,
+        essais=essais,
+        caracteres_memoire=caracteres,
+        avertis=avertis,
+        appels=appels,
+        chaud_seul=chaud_seul,
+        temoin_seul=temoin_seul,
+        bloc=bloc,
     )
 
 
 def test_le_vocabulaire_des_verdicts_est_ferme(rapport_petit: RapportCycles) -> None:
     assert rapport_petit.verdict() in VERDICTS
-    assert len(VERDICTS) == 3, "un verdict ajoute ailleurs serait un verdict que personne ne teste"
+    assert len(VERDICTS) == 3, (
+        "un verdict ajoute ailleurs serait un verdict que personne ne teste"
+    )
 
 
 def test_une_rechute_condamne() -> None:
@@ -143,7 +172,9 @@ def test_une_rechute_condamne() -> None:
 def test_l_ecart_ignore_le_bras_froid() -> None:
     """Le contraste causal est chaud/temoin. Un froid tres en dessous ne doit pas
     transformer un plateau en progres, ni l'inverse."""
-    rapport = _rapport(_cycle(1, froid=1, temoin=8, chaud=8, memo_avant=2, memo_apres=3))
+    rapport = _rapport(
+        _cycle(1, froid=1, temoin=8, chaud=8, memo_avant=2, memo_apres=3)
+    )
     assert rapport.ecart == 0
     assert rapport.artefact == 7, "l'artefact est declare, pas cache"
     assert rapport.verdict() == "PLATEAU"
@@ -154,9 +185,21 @@ def test_la_portee_borne_l_interpretation() -> None:
     presque jamais ete arme. Le rapport doit le dire, sinon il conclut au-dela de sa
     mesure — le peche qu'il existe pour empecher."""
     rapport = RapportCycles(
-        cycles=[_cycle(1, froid=8, temoin=8, chaud=8, memo_avant=5, memo_apres=9,
-                       caracteres=4000, avertis=1, appels=100)],
-        skill=0.5, warning_gain=0.20,
+        cycles=[
+            _cycle(
+                1,
+                froid=8,
+                temoin=8,
+                chaud=8,
+                memo_avant=5,
+                memo_apres=9,
+                caracteres=4000,
+                avertis=1,
+                appels=100,
+            )
+        ],
+        skill=0.5,
+        warning_gain=0.20,
     )
     assert rapport.portee == pytest.approx(0.01)
     assert rapport.effet_attendu_max() < 1.0
@@ -169,9 +212,21 @@ def test_une_portee_large_autorise_a_conclure() -> None:
     """Symetrique du precedent : si le levier etait arme partout, un ecart nul CONDAMNE
     l'effet a ce niveau — et le rapport le dit aussi."""
     rapport = RapportCycles(
-        cycles=[_cycle(1, froid=8, temoin=8, chaud=8, memo_avant=5, memo_apres=9,
-                       caracteres=4000, avertis=100, appels=100)],
-        skill=0.5, warning_gain=0.20,
+        cycles=[
+            _cycle(
+                1,
+                froid=8,
+                temoin=8,
+                chaud=8,
+                memo_avant=5,
+                memo_apres=9,
+                caracteres=4000,
+                avertis=100,
+                appels=100,
+            )
+        ],
+        skill=0.5,
+        warning_gain=0.20,
     )
     assert rapport.effet_attendu_max() >= 1.0
     assert "il ne s'est pas vu" in rapport.explication()
@@ -195,7 +250,9 @@ def test_le_temoin_separe_l_effet_de_la_loterie() -> None:
     decision, le premier laisse l'utilisateur sans action."""
     rapport = _rapport(
         _cycle(1, froid=4, temoin=4, chaud=4, memo_apres=3, caracteres=100),
-        _cycle(2, froid=4, temoin=4, chaud=4, memo_avant=3, memo_apres=8, caracteres=3400),
+        _cycle(
+            2, froid=4, temoin=4, chaud=4, memo_avant=3, memo_apres=8, caracteres=3400
+        ),
     )
     assert rapport.verdict() == "PLATEAU"
     assert rapport.cout_du_plateau() == 850, "3400 caracteres ~ 850 jetons"
@@ -205,7 +262,9 @@ def test_le_temoin_separe_l_effet_de_la_loterie() -> None:
 def test_pas_de_cout_affiche_si_la_memoire_n_a_pas_grandi() -> None:
     rapport = _rapport(
         _cycle(1, froid=4, temoin=4, chaud=4, memo_apres=5, caracteres=900),
-        _cycle(2, froid=4, temoin=4, chaud=4, memo_avant=5, memo_apres=5, caracteres=900),
+        _cycle(
+            2, froid=4, temoin=4, chaud=4, memo_avant=5, memo_apres=5, caracteres=900
+        ),
     )
     assert rapport.cout_du_plateau() == 0
 
@@ -230,12 +289,16 @@ def test_la_troncature_garde_les_souvenirs_les_plus_recents(tmp_path) -> None:
     memoire = FailureMemory(path=tmp_path / "failures.jsonl")
     for i in range(10):
         memoire.record(
-            objective=f"objectif numero {i}", symptom=f"echec {i}",
-            root_cause=f"cause {i}", correct_fix=f"correction {i}",
+            objective=f"objectif numero {i}",
+            symptom=f"echec {i}",
+            root_cause=f"cause {i}",
+            correct_fix=f"correction {i}",
             guard=f"controle {i}",
         )
     avant = memoire.size
-    assert avant >= 10, "le stock de depart doit etre reel pour que la borne ait un sens"
+    assert avant >= 10, (
+        "le stock de depart doit etre reel pour que la borne ait un sens"
+    )
 
     _tronquer(memoire, 4)
 
@@ -255,9 +318,21 @@ def test_le_gain_declare_se_calcule_sur_la_COMPETENCE_pas_sur_le_taux_observe() 
     pour +7,0 observes.
     """
     rapport = RapportCycles(
-        cycles=[_cycle(1, froid=21, temoin=21, chaud=23, essais=25, memo_apres=8,
-                       caracteres=7000, avertis=25, appels=25)],
-        skill=0.40, warning_gain=0.20,
+        cycles=[
+            _cycle(
+                1,
+                froid=21,
+                temoin=21,
+                chaud=23,
+                essais=25,
+                memo_apres=8,
+                caracteres=7000,
+                avertis=25,
+                appels=25,
+            )
+        ],
+        skill=0.40,
+        warning_gain=0.20,
     )
     assert rapport.gain_declare == pytest.approx(7.9, abs=0.2)
     # Et le taux OBSERVE (92 %) ne doit pas entrer dans ce calcul.
@@ -274,10 +349,17 @@ def test_l_intervalle_est_POOL_sur_tous_les_cycles() -> None:
     essais par bras, mesure).
     """
     rapport = RapportCycles(
-        cycles=[_cycle(n, froid=f, temoin=t, chaud=c, essais=25, memo_apres=5 * n)
-                for n, f, t, c in ((1, 20, 20, 22), (2, 24, 24, 24),
-                                   (3, 19, 19, 23), (4, 22, 22, 23))],
-        skill=0.4, warning_gain=0.20,
+        cycles=[
+            _cycle(n, froid=f, temoin=t, chaud=c, essais=25, memo_apres=5 * n)
+            for n, f, t, c in (
+                (1, 20, 20, 22),
+                (2, 24, 24, 24),
+                (3, 19, 19, 23),
+                (4, 22, 22, 23),
+            )
+        ],
+        skill=0.4,
+        warning_gain=0.20,
     )
     assert rapport.ecart_cumule == 7
     assert rapport.essais_cumules == 100
@@ -300,13 +382,22 @@ def test_le_test_apparie_est_le_BON_test_pour_ce_plan(tmp_path) -> None:
     """
     from jio.bench.ablation import mcnemar_exact
 
-    rapport = _rapport(_cycle(1, froid=191, temoin=191, chaud=201, essais=220,
-                              chaud_seul=17, temoin_seul=6))
+    rapport = _rapport(
+        _cycle(
+            1,
+            froid=191,
+            temoin=191,
+            chaud=201,
+            essais=220,
+            chaud_seul=17,
+            temoin_seul=6,
+        )
+    )
     assert rapport.paires == (17, 6)
     assert rapport.p_valeur_appariee == mcnemar_exact(17, 6)
     assert rapport.p_valeur_appariee < 0.05
     assert rapport.tranche_apparie is True
-    bas, haut = rapport.intervalle_apparie
+    bas, _haut = rapport.intervalle_apparie
     assert bas > 0.0, "l'intervalle apparie doit exclure zero"
     assert rapport.verdict() == "PROGRESSE"
 
@@ -335,8 +426,9 @@ def test_le_piege_du_cumul_conserve_les_paires(tmp_path) -> None:
     from jio.learn.cycles import Cumul
 
     cumul = Cumul(chemin, skill=0.4, runs=4, rounds=2, gain=0.20, seed_base=1000)
-    cumul.ajouter(_cycle(2, froid=45, temoin=45, chaud=51, essais=55,
-                         chaud_seul=6, temoin_seul=1))
+    cumul.ajouter(
+        _cycle(2, froid=45, temoin=45, chaud=51, essais=55, chaud_seul=6, temoin_seul=1)
+    )
     cumul.lever_le_verrou()
 
     relu = depuis_cumul(chemin)
@@ -355,9 +447,12 @@ def test_le_rapport_separe_les_REPLICATIONS_et_ne_cache_pas_l_heterogeneite() ->
         cycles=[
             _cycle(1, froid=45, temoin=45, chaud=51, essais=55, chaud_seul=6, bloc=0),
             _cycle(2, froid=45, temoin=45, chaud=51, essais=55, chaud_seul=3, bloc=0),
-            _cycle(3, froid=51, temoin=51, chaud=51, essais=55, chaud_seul=1, bloc=1000),
+            _cycle(
+                3, froid=51, temoin=51, chaud=51, essais=55, chaud_seul=1, bloc=1000
+            ),
         ],
-        skill=0.4, warning_gain=0.20,
+        skill=0.4,
+        warning_gain=0.20,
         replications=[{"seed_base": 0}, {"seed_base": 1000}],
     )
     # Ecarts : +6, +6, puis +0. Le cumul (+12) est juste, mais il n'existe dans AUCUN des
@@ -369,13 +464,16 @@ def test_le_rapport_separe_les_REPLICATIONS_et_ne_cache_pas_l_heterogeneite() ->
     assert "bloc de graines 0 : +12" in ligne
     assert "bloc de graines 1000 : +0" in ligne
     assert "NE disent PAS la meme chose" in ligne
-    assert ligne in rapport.explication(), "la phrase doit etre DANS le rapport, pas a cote"
+    assert ligne in rapport.explication(), (
+        "la phrase doit etre DANS le rapport, pas a cote"
+    )
 
 
 def test_un_seul_bloc_n_est_pas_encore_un_effet_REPRODUIT() -> None:
     """Dire ce qui manque : un effet dans un seul bloc de graines peut etre un tirage."""
-    rapport = _rapport(_cycle(1, froid=45, temoin=45, chaud=51, essais=55,
-                              chaud_seul=6, bloc=0))
+    rapport = _rapport(
+        _cycle(1, froid=45, temoin=45, chaud=51, essais=55, chaud_seul=6, bloc=0)
+    )
     ligne = rapport.ligne_des_blocs()
     assert "une seule pour l'instant" in ligne
     assert "pas encore un effet REPRODUIT" in ligne
@@ -384,9 +482,14 @@ def test_un_seul_bloc_n_est_pas_encore_un_effet_REPRODUIT() -> None:
 def test_des_blocs_qui_vont_DANS_LE_MEME_SENS_le_disent_aussi() -> None:
     """Le controle symetrique : un rapport qui ne signale que l'heterogeneite est biaise."""
     rapport = RapportCycles(
-        cycles=[_cycle(1, froid=45, temoin=45, chaud=51, essais=55, chaud_seul=6, bloc=0),
-                _cycle(2, froid=45, temoin=45, chaud=50, essais=55, chaud_seul=5, bloc=1000)],
-        skill=0.4, warning_gain=0.20,
+        cycles=[
+            _cycle(1, froid=45, temoin=45, chaud=51, essais=55, chaud_seul=6, bloc=0),
+            _cycle(
+                2, froid=45, temoin=45, chaud=50, essais=55, chaud_seul=5, bloc=1000
+            ),
+        ],
+        skill=0.4,
+        warning_gain=0.20,
     )
     ligne = rapport.ligne_des_blocs()
     assert "meme sens dans tous les blocs" in ligne
@@ -407,12 +510,28 @@ def test_les_cycles_sans_champ_bloc_sont_attribues_a_leur_replication(tmp_path) 
     lignes = [
         {"type": "entete", "skill": 0.4, "runs": 4, "rounds": 2, "gain": 0.2},
         {"type": "replication", "seed_base": 0, "runs": 4, "rounds": 2},
-        {"type": "cycle", "numero": 1, "froid": 40, "temoin": 40, "chaud": 45,
-         "essais": 45, "chaud_seul": 5, "temoin_seul": 0},
+        {
+            "type": "cycle",
+            "numero": 1,
+            "froid": 40,
+            "temoin": 40,
+            "chaud": 45,
+            "essais": 45,
+            "chaud_seul": 5,
+            "temoin_seul": 0,
+        },
         {"type": "replication", "seed_base": 1000, "runs": 4, "rounds": 2},
         # Ce cycle n'a JAMAIS eu de champ `bloc` : c'est le format d'avant.
-        {"type": "cycle", "numero": 2, "froid": 41, "temoin": 41, "chaud": 41,
-         "essais": 45, "chaud_seul": 0, "temoin_seul": 0},
+        {
+            "type": "cycle",
+            "numero": 2,
+            "froid": 41,
+            "temoin": 41,
+            "chaud": 41,
+            "essais": 45,
+            "chaud_seul": 0,
+            "temoin_seul": 0,
+        },
     ]
     chemin.write_text("\n".join(json.dumps(l) for l in lignes) + "\n", encoding="utf-8")
 
@@ -430,24 +549,59 @@ def test_un_ecart_nul_ne_se_demontre_pas_par_plus_d_essais() -> None:
     nul mais trop petit pour 60 essais a un budget, et le rapport doit le donner.
     """
     # Aucune dissociation nette : il n'y a rien a demontrer.
-    nul = _rapport(_cycle(1, froid=8, temoin=8, chaud=8, essais=20,
-                          memo_avant=3, memo_apres=9, chaud_seul=2, temoin_seul=2))
+    nul = _rapport(
+        _cycle(
+            1,
+            froid=8,
+            temoin=8,
+            chaud=8,
+            essais=20,
+            memo_avant=3,
+            memo_apres=9,
+            chaud_seul=2,
+            temoin_seul=2,
+        )
+    )
     assert nul.essais_requis() == 0
 
     # 12 dissociations favorables contre 3 defavorables sur 40 paires : le budget existe,
     # et il est en PAIRES (le plan experimental), pas en « essais par bras ».
-    petit = _rapport(_cycle(1, froid=32, temoin=32, chaud=41, essais=40,
-                            memo_avant=3, memo_apres=9, chaud_seul=12, temoin_seul=3))
+    petit = _rapport(
+        _cycle(
+            1,
+            froid=32,
+            temoin=32,
+            chaud=41,
+            essais=40,
+            memo_avant=3,
+            memo_apres=9,
+            chaud_seul=12,
+            temoin_seul=3,
+        )
+    )
     requis = petit.essais_requis()
     assert 40 < requis < 4000, f"budget inattendu : {requis}"
 
 
 def test_le_budget_de_mesure_est_dit_et_chiffre() -> None:
     """Le message doit donner le BUDGET, pas une conclusion que la mesure ne porte pas."""
-    rapport = _rapport(_cycle(1, froid=32, temoin=32, chaud=41, essais=40,
-                              memo_avant=3, memo_apres=9, caracteres=4000,
-                              avertis=100, appels=100, chaud_seul=12, temoin_seul=5),
-                       gain=0.20)
+    rapport = _rapport(
+        _cycle(
+            1,
+            froid=32,
+            temoin=32,
+            chaud=41,
+            essais=40,
+            memo_avant=3,
+            memo_apres=9,
+            caracteres=4000,
+            avertis=100,
+            appels=100,
+            chaud_seul=12,
+            temoin_seul=5,
+        ),
+        gain=0.20,
+    )
     texte = rapport.explication()
     assert "n'est pas DEMONTRE" in texte
     assert "PAIRES" in texte
@@ -460,13 +614,26 @@ def test_le_budget_de_mesure_est_dit_et_chiffre() -> None:
 # --- Le cumul entre executions -------------------------------------------------------------
 
 
-def _mini(numero: int, *, froid: int, temoin: int, chaud: int, essais: int = 20) -> Cycle:
-    return _cycle(numero, froid=froid, temoin=temoin, chaud=chaud, essais=essais,
-                  memo_apres=3 * numero, caracteres=1000, avertis=essais, appels=essais)
+def _mini(
+    numero: int, *, froid: int, temoin: int, chaud: int, essais: int = 20
+) -> Cycle:
+    return _cycle(
+        numero,
+        froid=froid,
+        temoin=temoin,
+        chaud=chaud,
+        essais=essais,
+        memo_apres=3 * numero,
+        caracteres=1000,
+        avertis=essais,
+        appels=essais,
+    )
 
 
 def _run(*cycles: Cycle) -> RapportCycles:
-    return RapportCycles(cycles=list(cycles), skill=0.4, runs=4, rounds=2, warning_gain=0.20)
+    return RapportCycles(
+        cycles=list(cycles), skill=0.4, runs=4, rounds=2, warning_gain=0.20
+    )
 
 
 def test_chaque_cycle_est_ecrit_DES_qu_il_est_mesure(tmp_path) -> None:
@@ -486,7 +653,9 @@ def test_chaque_cycle_est_ecrit_DES_qu_il_est_mesure(tmp_path) -> None:
 
     cumul.ajouter(_mini(1, froid=15, temoin=15, chaud=16))
     ecrit = chemin.read_text(encoding="utf-8")
-    assert '"type": "cycle"' in ecrit, "le cycle doit etre SUR LE DISQUE, pas en memoire"
+    assert '"type": "cycle"' in ecrit, (
+        "le cycle doit etre SUR LE DISQUE, pas en memoire"
+    )
     assert depuis_cumul(chemin).essais_cumules == 20
 
     cumul.ajouter(_mini(2, froid=15, temoin=15, chaud=17))
@@ -505,14 +674,26 @@ def test_le_cumul_empile_les_cycles_et_renumerote(tmp_path) -> None:
     from jio.learn.cycles import cumuler, depuis_cumul
 
     chemin = tmp_path / "cycles.jsonl"
-    premier = cumuler(chemin, _run(_mini(1, froid=15, temoin=15, chaud=16),
-                                   _mini(2, froid=16, temoin=16, chaud=17)),
-                      runs=4, rounds=2, seed_base=0)
+    premier = cumuler(
+        chemin,
+        _run(
+            _mini(1, froid=15, temoin=15, chaud=16),
+            _mini(2, froid=16, temoin=16, chaud=17),
+        ),
+        runs=4,
+        rounds=2,
+        seed_base=0,
+    )
     assert premier.essais_cumules == 40
     assert [c.numero for c in premier.cycles] == [1, 2]
 
-    second = cumuler(chemin, _run(_mini(1, froid=14, temoin=14, chaud=15)),
-                     runs=4, rounds=2, seed_base=1000)
+    second = cumuler(
+        chemin,
+        _run(_mini(1, froid=14, temoin=14, chaud=15)),
+        runs=4,
+        rounds=2,
+        seed_base=1000,
+    )
     assert second.essais_cumules == 60, "les essais s'additionnent"
     assert [c.numero for c in second.cycles] == [1, 2, 3], "la numerotation continue"
 
@@ -521,7 +702,9 @@ def test_le_cumul_empile_les_cycles_et_renumerote(tmp_path) -> None:
     assert relu.skill == pytest.approx(0.4)
 
 
-def test_deux_executions_du_MEME_bloc_de_graines_ne_comptent_qu_une_fois(tmp_path) -> None:
+def test_deux_executions_du_MEME_bloc_de_graines_ne_comptent_qu_une_fois(
+    tmp_path,
+) -> None:
     """LE PIEGE DU CUMUL : rejouer les memes graines double le compte sans preuve nouvelle.
 
     L'intervalle se resserrerait alors autour de rien et le banc pourrait declarer
@@ -531,7 +714,7 @@ def test_deux_executions_du_MEME_bloc_de_graines_ne_comptent_qu_une_fois(tmp_pat
     from jio.learn.cycles import cumuler
 
     chemin = tmp_path / "cycles.jsonl"
-    passage = lambda: _run(_mini(1, froid=15, temoin=15, chaud=16))  # noqa: E731
+    passage = lambda: _run(_mini(1, froid=15, temoin=15, chaud=16))
     cumuler(chemin, passage(), runs=4, rounds=2, seed_base=0)
     cumule = cumuler(chemin, passage(), runs=4, rounds=2, seed_base=0)
 
@@ -546,8 +729,13 @@ def test_le_cumul_refuse_de_MELANGER_les_regimes(tmp_path) -> None:
 
     chemin = tmp_path / "cycles.jsonl"
     cumuler(chemin, _run(_mini(1, froid=15, temoin=15, chaud=16)), runs=4, rounds=2)
-    autre_regime = RapportCycles(cycles=[_mini(1, froid=15, temoin=15, chaud=16)],
-                                 skill=0.9, runs=4, rounds=2, warning_gain=0.20)
+    autre_regime = RapportCycles(
+        cycles=[_mini(1, froid=15, temoin=15, chaud=16)],
+        skill=0.9,
+        runs=4,
+        rounds=2,
+        warning_gain=0.20,
+    )
     with pytest.raises(ValueError, match="skill"):
         cumuler(chemin, autre_regime, runs=4, rounds=2)
 
@@ -579,10 +767,22 @@ def test_le_verrou_est_retire_meme_si_la_mesure_echoue(tmp_path) -> None:
     from jio.cli import _learn_cycles, build_parser
 
     chemin = tmp_path / "cycles.jsonl"
-    args = build_parser().parse_args([
-        "learn", "--cycles", "1", "--runs", "1", "--rounds", "1", "--skill", "0.4",
-        "--cumul", str(chemin), "--calibrer-gain",
-    ])
+    args = build_parser().parse_args(
+        [
+            "learn",
+            "--cycles",
+            "1",
+            "--runs",
+            "1",
+            "--rounds",
+            "1",
+            "--skill",
+            "0.4",
+            "--cumul",
+            str(chemin),
+            "--calibrer-gain",
+        ]
+    )
     assert _learn_cycles(args) == 2, "la calibration non implementee doit refuser"
     assert not chemin.with_suffix(".jsonl.verrou").exists(), (
         "le refus de calibration intervient avant le verrou : rien a laisser trainer"
@@ -616,8 +816,14 @@ def test_avec_un_gain_NUL_le_chaud_egale_le_temoin_exactement() -> None:
     c'est autre chose dans la chaine. C'est le test qui separe « le protocole mesure un
     effet » de « le protocole mesure une difference quelconque ».
     """
-    rapport = run_cycles(skill=0.4, runs=1, cycles=2, rounds=1,
-                         task_ids=("sum_even", "is_prime"), warning_gain=0.0)
+    rapport = run_cycles(
+        skill=0.4,
+        runs=1,
+        cycles=2,
+        rounds=1,
+        task_ids=("sum_even", "is_prime"),
+        warning_gain=0.0,
+    )
     for cycle in rapport.cycles:
         assert cycle.ecart == 0, (
             f"gain nul mais ecart chaud/temoin {cycle.ecart:+d} au cycle {cycle.numero} : "
@@ -634,13 +840,18 @@ def test_un_effet_DECLARE_est_detecte_integralement() -> None:
     tous les PLATEAU du banc perdent leur sens.
     """
     rapport = RapportCycles(
-        cycles=[_cycle(n, froid=f, temoin=t, chaud=c, essais=60, chaud_seul=bs)
-                for n, f, t, c, bs in ((1, 51, 51, 58, 9), (2, 51, 51, 57, 8))],
-        skill=0.4, warning_gain=2.0,
+        cycles=[
+            _cycle(n, froid=f, temoin=t, chaud=c, essais=60, chaud_seul=bs)
+            for n, f, t, c, bs in ((1, 51, 51, 58, 9), (2, 51, 51, 57, 8))
+        ],
+        skill=0.4,
+        warning_gain=2.0,
     )
     assert rapport.ecart_cumule == 13
     assert rapport.paires == (17, 0)
-    assert rapport.tranche_apparie is True, "17 dissociations favorables contre 0 doit trancher"
+    assert rapport.tranche_apparie is True, (
+        "17 dissociations favorables contre 0 doit trancher"
+    )
     assert rapport.verdict() == "PROGRESSE"
     assert "dissociation DEMONTREE" in rapport.explication()
 
@@ -698,6 +909,7 @@ def test_le_plafond_de_cout_refuse_au_lieu_de_mesurer(capsys) -> None:
 # Une preuve rangee dans un repertoire temporaire n'est pas une preuve
 # --------------------------------------------------------------------------- #
 
+
 def test_le_cumul_dans_un_repertoire_TEMPORAIRE_est_signale(tmp_path) -> None:
     """Le constat qui a fait naitre cet avertissement : une campagne perdue EN ENTIER.
 
@@ -711,26 +923,48 @@ def test_le_cumul_dans_un_repertoire_TEMPORAIRE_est_signale(tmp_path) -> None:
     # Un chemin temporaire : signale, avec le remede exact. `tmp_path` de pytest en fait
     # PARTIE (il vit sous /tmp) — ce qui est une bonne demonstration : le controle ne
     # reconnait pas un nom de fichier, il regarde l'endroit.
-    for chemin in (Path("/tmp/cumul.jsonl"), Path("/var/tmp/cumul.jsonl"),
-                   tmp_path / "cumul.jsonl"):
+    for chemin in (
+        Path("/tmp/cumul.jsonl"),
+        Path("/var/tmp/cumul.jsonl"),
+        tmp_path / "cumul.jsonl",
+    ):
         message = _preuve_dans_un_repertoire_temporaire(chemin)
         assert "repertoire EFFACE" in message, f"{chemin} aurait du etre signale"
         assert "evidence/" in message, "le message doit dire OU ecrire a la place"
 
     # Un chemin du depot : rien a signaler. Un avertissement qui se declenche toujours ne
     # dit plus rien — c'est la meme regle que le reste du depot.
-    for chemin in (Path("evidence/cumul.jsonl"),
-                   Path(__file__).resolve().parents[1] / "evidence" / "cumul.jsonl"):
+    for chemin in (
+        Path("evidence/cumul.jsonl"),
+        Path(__file__).resolve().parents[1] / "evidence" / "cumul.jsonl",
+    ):
         assert _preuve_dans_un_repertoire_temporaire(chemin) == ""
 
 
-def test_la_commande_learn_affiche_l_avertissement_avant_de_mesurer(tmp_path, capsys) -> None:
+def test_la_commande_learn_affiche_l_avertissement_avant_de_mesurer(
+    tmp_path, capsys
+) -> None:
     """L'avertissement doit arriver AVANT la mesure, pas apres : sinon il est trop tard."""
     from jio.cli import main
 
     chemin = Path(tempfile.gettempdir()) / f"jio-test-{uuid.uuid4().hex[:8]}.jsonl"
-    code = main(["learn", "--cycles", "1", "--runs", "1", "--rounds", "1", "--skill", "0.4",
-                 "--plafond-missions", "100", "--cumul", str(chemin)])
+    code = main(
+        [
+            "learn",
+            "--cycles",
+            "1",
+            "--runs",
+            "1",
+            "--rounds",
+            "1",
+            "--skill",
+            "0.4",
+            "--plafond-missions",
+            "100",
+            "--cumul",
+            str(chemin),
+        ]
+    )
     sortie = capsys.readouterr().out
     assert code == 0, f"la mesure elle-meme doit reussir (code {code})"
     assert "repertoire EFFACE" in sortie

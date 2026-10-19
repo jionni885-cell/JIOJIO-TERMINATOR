@@ -26,9 +26,10 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 __all__ = ["Bras", "Ecart", "RapportDuel", "construire", "ecrire"]
 
@@ -94,7 +95,11 @@ class Ecart:
         petit pour estimer une variance (toutes les differences observees sont identiques).
         L'afficher tel quel ferait croire a une certitude — vu sur ce depot : `[+100 ; +100]`
         a UN essai."""
-        return self.bas is not None and self.haut is not None and abs(self.haut - self.bas) < 1e-9
+        return (
+            self.bas is not None
+            and self.haut is not None
+            and abs(self.haut - self.bas) < 1e-9
+        )
 
     @property
     def verdict(self) -> str:
@@ -103,7 +108,9 @@ class Ecart:
         if abs(self.delta) < 1e-9:
             return "aucune difference sur ce jeu de taches."
         if self.delta < 0:
-            return "le bras de droite fait MOINS bien : a exhiber tel quel, pas a masquer."
+            return (
+                "le bras de droite fait MOINS bien : a exhiber tel quel, pas a masquer."
+            )
         if not self.tranche:
             return (
                 f"ecart de {self.delta:+.1f} points mais l'intervalle CONTIENT zero : "
@@ -128,10 +135,12 @@ class Ecart:
             "vers": self.droite,
             "question": self.question,
             "delta_points": None if self.delta is None else round(float(self.delta), 2),
-            "ic95_points": None if self.bas is None else [
-                round(float(self.bas), 2), round(float(self.haut), 2)
-            ],
-            "intervalle_exclut_zero": bool(self.tranche) if self.delta is not None else None,
+            "ic95_points": None
+            if self.bas is None
+            else [round(float(self.bas), 2), round(float(self.haut), 2)],
+            "intervalle_exclut_zero": bool(self.tranche)
+            if self.delta is not None
+            else None,
             "intervalle_degenere": self.intervalle_degenere,
             "essais": self.essais,
             "verdict": self.verdict,
@@ -199,8 +208,10 @@ class RapportDuel:
             "",
             f"- **date** : {self.horodatage}",
             f"- **modele mesure** : `{self.modele}` ({self.genre})",
-            f"- **taches** : {self.taches} tache(s) du banc · **{self.runs} tirage(s)** · "
-            f"{self.rounds} tour(s) de boucle maximum",
+            (
+                f"- **taches** : {self.taches} tache(s) du banc · **{self.runs} tirage(s)** · "
+                f"{self.rounds} tour(s) de boucle maximum"
+            ),
             f"- **duree** : {self.duree_s:.1f} s · **commit** : `{self.commit}`",
         ]
         if self.note:
@@ -215,9 +226,11 @@ class RapportDuel:
         lignes += [b.ligne() for b in self.bras]
         lignes += [
             "",
-            "Lire la colonne IC95 avant toute conclusion : un bras dont l'intervalle est large "
-            "situe la mesure, il ne la tranche pas. Et un bras « non mesure » n'est pas un bras "
-            "a zero — c'est un bras qui n'a pas tourne.",
+            (
+                "Lire la colonne IC95 avant toute conclusion : un bras dont l'intervalle est large "
+                "situe la mesure, il ne la tranche pas. Et un bras « non mesure » n'est pas un bras "
+                "a zero — c'est un bras qui n'a pas tourne."
+            ),
             "",
             "## Les comparaisons qui tranchent",
             "",
@@ -236,19 +249,25 @@ class RapportDuel:
             "",
             "## Ce que ce rapport prouve, et ce qu'il ne prouve pas",
             "",
-            "**Il prouve** : ce que le harness change sur CE modele, a budget d'appels EGAL — "
-            "le controle apparie utilise autant d'appels du modele que le bras qu'il controle, "
-            "donc un gain ne peut pas venir du nombre d'essais.",
+            (
+                "**Il prouve** : ce que le harness change sur CE modele, a budget d'appels EGAL — "
+                "le controle apparie utilise autant d'appels du modele que le bras qu'il controle, "
+                "donc un gain ne peut pas venir du nombre d'essais."
+            ),
             "",
-            "**Il ne prouve pas** : le niveau absolu du modele sur un benchmark public. Les "
-            "chiffres de la litterature (Terminal-Bench, SWE-bench) portent sur d'autres taches, "
-            "d'autres budgets et d'autres reglages ; les citer ici comme reference serait un "
-            "raccourci faux. Ce rapport repond a une question locale, et il y repond avec ses "
-            "intervalles.",
+            (
+                "**Il ne prouve pas** : le niveau absolu du modele sur un benchmark public. Les "
+                "chiffres de la litterature (Terminal-Bench, SWE-bench) portent sur d'autres taches, "
+                "d'autres budgets et d'autres reglages ; les citer ici comme reference serait un "
+                "raccourci faux. Ce rapport repond a une question locale, et il y repond avec ses "
+                "intervalles."
+            ),
             "",
-            "**Pour aller plus loin** : `--runs` elargit l'echantillon (les intervalles se "
-            "resserrent), `--taches 0` prend tout le banc, et `jio ablation` retire une brique "
-            "du harness pour dire laquelle porte le gain.",
+            (
+                "**Pour aller plus loin** : `--runs` elargit l'echantillon (les intervalles se "
+                "resserrent), `--taches 0` prend tout le banc, et `jio ablation` retire une brique "
+                "du harness pour dire laquelle porte le gain."
+            ),
             "",
         ]
         return "\n".join(lignes)
@@ -290,11 +309,18 @@ def construire(
         if not valeurs:
             bras.append(Bras(cle, libelles.get(cle, cle), None, None, None, None, 0))
             continue
-        bas, haut = intervalle_wilson(int(round(sum(valeurs))), len(valeurs))
-        bras.append(Bras(
-            cle, libelles.get(cle, cle), moyenne(valeurs), bas, haut,
-            moyenne(list(appels.get(cle, ()))), len(valeurs),
-        ))
+        bas, haut = intervalle_wilson(round(sum(valeurs)), len(valeurs))
+        bras.append(
+            Bras(
+                cle,
+                libelles.get(cle, cle),
+                moyenne(valeurs),
+                bas,
+                haut,
+                moyenne(list(appels.get(cle, ()))),
+                len(valeurs),
+            )
+        )
 
     liste_ecarts: list[Ecart] = []
     for gauche, droite, question, delta, intervalle, tranche in ecarts:
@@ -302,22 +328,39 @@ def construire(
         if delta is None or intervalle is None:
             # Un ecart sans intervalle n'est pas un ecart : un bras manquait. On le declare
             # plutot que d'inventer une borne.
-            liste_ecarts.append(Ecart(gauche, droite, question, None, None, None, False, n))
+            liste_ecarts.append(
+                Ecart(gauche, droite, question, None, None, None, False, n)
+            )
             continue
         bas, haut = intervalle
-        liste_ecarts.append(Ecart(
-            gauche, droite, question, float(delta), float(bas), float(haut), bool(tranche), n,
-        ))
+        liste_ecarts.append(
+            Ecart(
+                gauche,
+                droite,
+                question,
+                float(delta),
+                float(bas),
+                float(haut),
+                bool(tranche),
+                n,
+            )
+        )
 
     return RapportDuel(
         horodatage=_dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z"),
         modele=str(getattr(modele, "spec", modele)),
         genre=str(getattr(modele, "genre", "inconnu")),
         note=str(getattr(modele, "note", "") or ""),
-        skill=float(skill), runs=int(runs), taches=int(taches), rounds=int(rounds),
-        duree_s=float(duree_s), commit=commit,
-        bras=tuple(bras), ecarts=tuple(liste_ecarts),
-        integrite=dict(integrite or {}), hypotheses=tuple(hypotheses),
+        skill=float(skill),
+        runs=int(runs),
+        taches=int(taches),
+        rounds=int(rounds),
+        duree_s=float(duree_s),
+        commit=commit,
+        bras=tuple(bras),
+        ecarts=tuple(liste_ecarts),
+        integrite=dict(integrite or {}),
+        hypotheses=tuple(hypotheses),
     )
 
 

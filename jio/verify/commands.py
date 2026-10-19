@@ -37,9 +37,10 @@ from __future__ import annotations
 import argparse
 import difflib
 import re
+import shlex
 from dataclasses import dataclass
 
-__all__ = ["CommandeCitee", "commandes_citees", "verifier_commande", "parser_reel"]
+__all__ = ["CommandeCitee", "commandes_citees", "parser_reel", "verifier_commande"]
 
 #: Une invocation ECRITE EN PLEINE PHRASE, entre backticks : `jio scan . --strict`.
 #: C'est une INSTRUCTION : le document dit a l'utilisateur de la taper.
@@ -66,6 +67,7 @@ _MOTIF_LIGNE = re.compile(
 #: dans la ligne de commande de `jq`.
 _FIN = re.compile(r"[|;&#<>]|\s2>|\s>|\n")
 
+
 @dataclass(frozen=True)
 class CommandeCitee:
     """Une invocation `jio ...` trouvee dans un document."""
@@ -88,10 +90,12 @@ def parser_reel() -> argparse.ArgumentParser:
         return build_parser()
 
 
-def _sous_parsers(parser: argparse.ArgumentParser) -> dict[str, argparse.ArgumentParser]:
+def _sous_parsers(
+    parser: argparse.ArgumentParser,
+) -> dict[str, argparse.ArgumentParser]:
     """Les sous-commandes declarees dans un parseur, quel que soit le niveau."""
-    for action in parser._actions:  # noqa: SLF001 - API interne stable et documentee
-        if isinstance(action, argparse._SubParsersAction):  # noqa: SLF001
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
             return dict(action.choices)
     return {}
 
@@ -171,8 +175,11 @@ def commandes_citees(texte: str) -> tuple[CommandeCitee, ...]:
             par_cle.setdefault(
                 (sous, options),
                 CommandeCitee(
-                    extrait=corps, sous_commande=sous, options=options,
-                    position=bloc.start() + correspondance.start(), dans_bloc=True,
+                    extrait=corps,
+                    sous_commande=sous,
+                    options=options,
+                    position=bloc.start() + correspondance.start(),
+                    dans_bloc=True,
                 ),
             )
 
@@ -190,11 +197,41 @@ def commandes_citees(texte: str) -> tuple[CommandeCitee, ...]:
         # l'affirme, meme s'il la montre aussi dans un bloc.
         engageante = citation and (ancienne.dans_bloc if ancienne else True)
         par_cle[(sous, options)] = CommandeCitee(
-            extrait=corps, sous_commande=sous, options=options,
-            position=position, dans_bloc=engageante,
+            extrait=corps,
+            sous_commande=sous,
+            options=options,
+            position=position,
+            dans_bloc=engageante,
         )
 
     return tuple(sorted(par_cle.values(), key=lambda c: c.position))
+
+
+def _parser_cible_commande(
+    parser: argparse.ArgumentParser, commande: CommandeCitee
+) -> argparse.ArgumentParser:
+    """Suit les sous-commandes imbriquees citees (`jio evolve compare ...`)."""
+    try:
+        mots = shlex.split(commande.extrait)
+    except ValueError:
+        mots = commande.extrait.split()
+    if not mots or mots[0] != commande.sous_commande:
+        return parser
+    courant = _sous_parsers(parser).get(commande.sous_commande)
+    reste = mots[1:]
+    while courant is not None:
+        choix = _sous_parsers(courant)
+        if not choix:
+            break
+        choisi = next((mot for mot in reste if mot in choix), None)
+        if choisi is None:
+            break
+        # Un meme nom de commande cite plus loin comme argument ne doit pas empecher la
+        # resolution : ne naviguer que vers le premier sous-parser reconnu.
+        index = reste.index(choisi)
+        courant = choix[choisi]
+        reste = reste[index + 1 :]
+    return courant or parser
 
 
 def verifier_commande(commande: CommandeCitee, racine_parseur=None) -> str | None:
@@ -234,10 +271,13 @@ def verifier_commande(commande: CommandeCitee, racine_parseur=None) -> str | Non
             "l'utilisateur dans une erreur."
         )
 
-    connues = _options_de(sous_parsers[commande.sous_commande]) | _options_de(parser)
+    cible = _parser_cible_commande(parser, commande)
+    connues = _options_de(cible) | _options_de(parser)
     for option in commande.options:
         if option not in connues:
-            proches = difflib.get_close_matches(option, sorted(connues), n=3, cutoff=0.6)
+            proches = difflib.get_close_matches(
+                option, sorted(connues), n=3, cutoff=0.6
+            )
             piste = f" — peut-etre `{proches[0]}` ?" if proches else ""
             return (
                 f"option INCONNUE : `{option}` sur `jio {commande.sous_commande}`"

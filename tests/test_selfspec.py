@@ -33,7 +33,7 @@ CORPUS = REPO / "evidence" / "selfspec"
 def _contrat_est_tenu(source: str) -> list[str]:
     espace: dict = {}
     try:
-        exec(source, espace)  # noqa: S102 - corpus de test, source de confiance
+        exec(source, espace)
     except Exception as exc:  # pragma: no cover - les corpus compilent
         return [f"ne s'execute pas : {exc}"]
     mean = espace.get("mean")

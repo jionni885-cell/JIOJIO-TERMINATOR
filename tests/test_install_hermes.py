@@ -24,7 +24,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jio.artifacts.install_hermes import REGISTRE, desinstaller, dossier_hermes, installer
+from jio.artifacts.install_hermes import (
+    REGISTRE,
+    desinstaller,
+    dossier_hermes,
+    installer,
+)
 
 
 def _projet(tmp_path: Path) -> Path:

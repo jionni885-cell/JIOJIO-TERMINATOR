@@ -176,8 +176,8 @@ def test_bm25_classe_mieux_que_le_recouvrement_de_mots(capsys) -> None:
     # de cas, et c'est exactement ce que ce depot verifie ailleurs (`jio chiffres`).
     lignes = [
         "",
-        f"  CLASSEMENT DES SOUVENIRS — {len(documents)} souvenirs, {len(cibles)} requetes, "
-        f"1 cible par requete",
+        (f"  CLASSEMENT DES SOUVENIRS — {len(documents)} souvenirs, {len(cibles)} requetes, "
+        f"1 cible par requete"),
     ]
     for m in mesures:
         lignes.append(

@@ -32,14 +32,16 @@ import ast
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Sequence
 
 from ..providers.base import Completion, Message
 from .tasks import Task
 
 #: Regles presentes dans un prompt de traduction : « - [R-001] (property) enonce ».
-_LIGNE_REGLE = re.compile(r"^\s*-\s*\[(?P<id>[^\]]+)\]\s*(?:\((?P<kind>[^)]*)\))?\s*(?P<reste>.*)$")
+_LIGNE_REGLE = re.compile(
+    r"^\s*-\s*\[(?P<id>[^\]]+)\]\s*(?:\((?P<kind>[^)]*)\))?\s*(?P<reste>.*)$"
+)
 
 
 def _graine(*parts: object) -> int:
@@ -49,8 +51,27 @@ def _graine(*parts: object) -> int:
 
 
 #: Fonctions de base : leur appel n'est pas celui de l'entree publique.
-_BASES = frozenset({"print", "len", "sum", "sorted", "list", "dict", "set", "tuple",
-                    "str", "int", "float", "bool", "abs", "round", "min", "max", "range"})
+_BASES = frozenset(
+    {
+        "print",
+        "len",
+        "sum",
+        "sorted",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "str",
+        "int",
+        "float",
+        "bool",
+        "abs",
+        "round",
+        "min",
+        "max",
+        "range",
+    }
+)
 
 
 def _appel_entree(arbre: ast.AST) -> ast.Call | None:
@@ -62,14 +83,17 @@ def _appel_entree(arbre: ast.AST) -> ast.Call | None:
     n'etait jamais construite — une mesure qui ne mesurait rien, encore une fois.
     """
     appels = [
-        node for node in ast.walk(arbre)
+        node
+        for node in ast.walk(arbre)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id not in _BASES
     ]
     if not appels:
         return None
-    return min(appels, key=lambda n: (getattr(n, "lineno", 0), getattr(n, "col_offset", 0)))
+    return min(
+        appels, key=lambda n: (getattr(n, "lineno", 0), getattr(n, "col_offset", 0))
+    )
 
 
 def contrefacon(test: str, distracteurs: Sequence[str]) -> str | None:
@@ -102,14 +126,16 @@ def contrefacon(test: str, distracteurs: Sequence[str]) -> str | None:
     # -- 1. comparaison a une constante ------------------------------------ #
     if isinstance(assertion.test, ast.Compare) and len(assertion.test.comparators) == 1:
         gauche = assertion.test.left
-        if isinstance(gauche, ast.Call) and isinstance(assertion.test.comparators[0], ast.Constant):
+        if isinstance(gauche, ast.Call) and isinstance(
+            assertion.test.comparators[0], ast.Constant
+        ):
             expression = ast.unparse(gauche)
             for source in distracteurs:
                 espace: dict[str, object] = {}
                 try:
-                    exec(source, espace)  # noqa: S102 — code du banc, pas du modele
+                    exec(source, espace)
                     valeur = eval(expression, espace)
-                except Exception:  # noqa: BLE001 — un distracteur qui echoue ne
+                except Exception:
                     # contrefait rien : on essaie le suivant, sans bruit.
                     continue
                 if valeur == assertion.test.comparators[0].value:
@@ -147,11 +173,11 @@ def _premiere_contrefacon(tache: Task, test: str) -> str:
     for source in tache.distractors:
         espace: dict[str, object] = {}
         try:
-            exec(source, espace)  # noqa: S102 — code du banc, pas du modele
-            exec(test, espace)  # noqa: S102
+            exec(source, espace)
+            exec(test, espace)
         except AssertionError:
             return source
-        except Exception:  # noqa: BLE001 — un distracteur qui plante n'est pas une preuve
+        except Exception:
             continue
     return ""
 
@@ -209,7 +235,9 @@ class TraducteurSimule:
         tache = self._tache(prompt)
         if tache is None:
             return Completion(
-                text="{}", model=self.model, provider=self.name,
+                text="{}",
+                model=self.model,
+                provider=self.name,
                 metadata={"sim_temoins": "tache inconnue"},
             )
 
@@ -223,7 +251,9 @@ class TraducteurSimule:
         for rid in regles:
             fidele = tache.checks.get(rid)
             if fidele is None:
-                traduits[rid] = {"impossible": "aucun oracle de reference pour cette regle"}
+                traduits[rid] = {
+                    "impossible": "aucun oracle de reference pour cette regle"
+                }
                 continue
             taux = min(1.0, max(0.0, self.fidelite))
             tirage = (_graine(tache.id, rid, seed) % 1000) / 1000.0

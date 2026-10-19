@@ -19,32 +19,34 @@ import json
 import math
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path
-
-from typing import Any, Mapping, Sequence
-
-from .core.env import bool_env, float_env, int_env, str_env
-from .verify.claims import RapportProse
-
+from collections.abc import Mapping, Sequence
 from dataclasses import replace as _replace
+from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .audit.consensus import ConsensusEngine
 from .audit.integrity import IntegrityMonitor
 from .bench.tasks import TASKS, TASKS_BY_ID, Task, build_bank
 from .bench.temoins import TraducteurSimule
+from .clarify import MAX_QUESTIONS
+from .core.env import bool_env, float_env, int_env, str_env
 from .core.journal import Journal
 from .core.types import Mission, MissionReport, MissionStatus
 from .gate.conformal import ConformalGate
+from .harness import inspect_harness, run_verification_commands
+from .harness import render_report as render_harness_report
+from .harness import to_json as harness_json
 from .loop.engine import Engine, EngineConfig, WorkItem
 from .providers.registry import detect_clis
 from .providers.simulated import Persona, SimulatedProvider, make_panel
 from .spec.compiler import SpecCompiler
+from .verify.claims import RapportProse
 from .verify.executable import ExecutableProver, Sandbox
-from .clarify import MAX_QUESTIONS
 
 BANNER = r"""
      ██╗██╗ ██████╗      ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ████████╗ ██████╗ ██████╗
@@ -125,7 +127,9 @@ def _consensus(min_panel: int) -> ConsensusEngine:
     return ConsensusEngine(min_panel=int(min_panel))
 
 
-def _engine_config(max_rounds: int, famille: str = "code", seed: int = 0) -> EngineConfig:
+def _engine_config(
+    max_rounds: int, famille: str = "code", seed: int = 0
+) -> EngineConfig:
     """Reglages du moteur : les defauts viennent de l'environnement, les flags priment.
 
     Chaque variable ci-dessous correspond a un parametre REEL de `EngineConfig`.
@@ -214,8 +218,10 @@ def _simulated_engine(
         panel = AuditPanel.simulated(personas, seed=seed)
     generateurs = fournisseurs or [
         SimulatedProvider(
-            name=f"gen::{p.name}", model="sim-1",
-            persona=Persona(name=f"gen-{p.name}", skill=skill), bank=bank,
+            name=f"gen::{p.name}",
+            model="sim-1",
+            persona=Persona(name=f"gen-{p.name}", skill=skill),
+            bank=bank,
         )
         for p in personas[:3]
     ]
@@ -278,9 +284,15 @@ def _injecteur_de_competences(actif: bool):
 
 
 def _real_engine(
-    *, journal_path: Path | None = None, max_rounds: int = 5, min_panel: int = 3,
-    famille: str = "code", racine: Path | None = None, fournisseur: object | None = None,
-    fournisseurs: object | None = None, competences: bool = True,
+    *,
+    journal_path: Path | None = None,
+    max_rounds: int = 5,
+    min_panel: int = 3,
+    famille: str = "code",
+    racine: Path | None = None,
+    fournisseur: object | None = None,
+    fournisseurs: object | None = None,
+    competences: bool = True,
 ) -> Engine:
     """Assemble un moteur adosse aux CLI/API reellement disponibles.
 
@@ -314,7 +326,7 @@ def _real_engine(
             "",
             "Sans cle, deux chemins existent DEJA, et ils ne demandent rien :",
             "  jio bench                                  mesure du harness sur son banc",
-            "  jio run \"<objectif>\" --simulate --task sum_even --no-oracle",
+            '  jio run "<objectif>" --simulate --task sum_even --no-oracle',
             "                                             mission reelle du banc, sans modele",
         ):
             print(f"  {message}" if message else "", file=sys.stderr)
@@ -374,6 +386,9 @@ def render_report(
         f"  |  integrite {'propre' if report.integrity.clean else 'COMPROMISE'}"
         f"  |  journal {report.journal_digest[:12]}"
     )
+    if report.votes:
+        roles = ", ".join(vote.agent for vote in report.votes)
+        lines.append(f"  agents de revue adaptés à la demande : {roles}")
 
     if report.spec and report.spec.under_specified:
         lines.append("")
@@ -399,10 +414,16 @@ def render_report(
         lines.append("")
         lines.append(_c("  INSTRUMENT (ce qui prouve, et a quel prix)", "bold", color))
         for f in instrument[:4]:
-            marque = _c("!!", "warn", color) if f.severity.value in ("medium", "high") else "  "
+            marque = (
+                _c("!!", "warn", color)
+                if f.severity.value in ("medium", "high")
+                else "  "
+            )
             lines.append(f"    {marque} {f.message[:150]}")
         if len(instrument) > 4:
-            lines.append(f"        (+{len(instrument) - 4} autre(s) constat(s) : `jio trace`)")
+            lines.append(
+                f"        (+{len(instrument) - 4} autre(s) constat(s) : `jio trace`)"
+            )
 
     blocking = [f for f in report.findings if f.blocking]
     if blocking:
@@ -418,7 +439,13 @@ def render_report(
     desaccords = [f for f in report.findings if f.agent == "divergence"]
     if desaccords:
         lines.append("")
-        lines.append(_c("  DESACCORDS ENTRE CANDIDATS (non bloquant, non tranche)", "warn", color))
+        lines.append(
+            _c(
+                "  DESACCORDS ENTRE CANDIDATS (non bloquant, non tranche)",
+                "warn",
+                color,
+            )
+        )
         for f in desaccords[:3]:
             lines.append(f"    - {f.message[:150]}")
             if f.evidence:
@@ -459,6 +486,146 @@ def render_report(
 # --------------------------------------------------------------------------- #
 
 
+def cmd_perf(args: argparse.Namespace) -> int:
+    """Mesure le surcoût local du runner, sans appel de modèle ni code de projet."""
+    from .bench.runtime import mesurer_runtime, rendre_runtime
+
+    try:
+        report = mesurer_runtime(args.runs)
+    except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        print(f"Mesure impossible : {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        _charge_utile(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(rendre_runtime(report))
+    return 0
+
+
+def cmd_harness(args: argparse.Namespace) -> int:
+    """Evalue des elements observables du harness, sans lancer de commande du depot."""
+    if args.instruction_budget < 1:
+        print("--instruction-budget doit etre superieur a zero", file=sys.stderr)
+        return 2
+    try:
+        report = inspect_harness(args.root, instruction_budget=args.instruction_budget)
+        if args.run_checks:
+            report["verification_runs"] = run_verification_commands(
+                report, args.root, timeout=args.timeout
+            )
+            report["verification_warning"] = (
+                "Les commandes de test executent du code arbitraire dans une copie temporaire "
+                "(sans .git, environnement virtuel ni caches). Cela protege le depot source "
+                "des effets de bord accidentels, mais n'isole pas le systeme : reseau et autres "
+                "chemins de l'hote restent accessibles."
+            )
+    except (OSError, NotADirectoryError, ValueError) as exc:
+        print(f"Impossible d'inspecter le depot : {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        _charge_utile(harness_json(report).rstrip("\n"))
+    else:
+        print(render_harness_report(report))
+        for check in report.get("verification_runs", []):
+            print(
+                f"[{check['status'].upper()}] {check['command']} · code={check['exit_code']}"
+            )
+            if check.get("stdout"):
+                print(check["stdout"])
+            if check.get("stderr"):
+                print(check["stderr"])
+        if args.run_checks:
+            print(report["verification_warning"])
+    checks_failed = any(
+        item["status"] != "passed" for item in report.get("verification_runs", [])
+    )
+    return 1 if (args.strict and report["summary"]["warnings"] or checks_failed) else 0
+
+
+def cmd_improve(args: argparse.Namespace) -> int:
+    """Audite JIO et forge des agents spécialisés à partir des constats observés."""
+    from .learn.agent_forge import auditer, enregistrer
+
+    root = Path(args.root).expanduser().resolve()
+    if not root.is_dir():
+        print(f"Racine introuvable : {root}", file=sys.stderr)
+        return 2
+    if args.timeout < 1 or not 1 <= args.max_agents <= 50:
+        print(
+            "--timeout doit être positif et --max-agents entre 1 et 50", file=sys.stderr
+        )
+        return 2
+
+    try:
+        findings, executions = auditer(
+            root,
+            timeout=args.timeout,
+            tests=not args.skip_tests,
+            scan=args.scan,
+        )
+        dossier = root / ".jio" / "improve"
+        rounds = (
+            [
+                int(path.name.removeprefix("round-"))
+                for path in dossier.glob("round-[0-9][0-9][0-9][0-9]")
+                if path.name.removeprefix("round-").isdigit()
+            ]
+            if dossier.exists()
+            else []
+        )
+        round_number = max(rounds, default=0) + 1
+        report, digest, agents = enregistrer(
+            root,
+            round_number=round_number,
+            findings=findings,
+            executions=executions,
+            maximum_agents=args.max_agents,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(
+            f"Boucle d'amélioration interrompue sans verdict : {exc}", file=sys.stderr
+        )
+        return 2
+
+    print(f"  AUTO-AMÉLIORATION · tour {round_number} · SHA-256 {digest}")
+    print(f"  Contrôles exécutés : {len(executions)} · constats : {len(findings)}")
+    for execution in executions:
+        status = execution["returncode"]
+        print(f"    [{execution['name']}] code={status}")
+    if agents:
+        print(f"  Agents spécialisés créés selon les besoins : {len(agents)}")
+        for agent in agents:
+            print(f"    {agent.id}: {len(agent.findings)} constat(s) · {agent.title}")
+        print("  Mandats et preuves attendues :")
+        print(f"    {report.parent / 'agents'}")
+        print(
+            "  Étape suivante : un agent traite chaque mandat; relancer jio improve après les changements."
+        )
+        return 1
+
+    print(
+        "  Aucun constat dans le périmètre exécuté; ce n'est pas une preuve de perfection."
+    )
+    print(f"  Rapport : {report}")
+    return 0
+
+
+def cmd_evolve_compare(args: argparse.Namespace) -> int:
+    """Compare deux variantes sur un holdout apparié; ne promeut jamais automatiquement."""
+    try:
+        baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
+        candidate = json.loads(Path(args.candidate).read_text(encoding="utf-8"))
+        from .learn.promotion import compare_campaigns
+
+        result = compare_campaigns(baseline, candidate, alpha=args.alpha)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"Comparaison refusee : {exc}", file=sys.stderr)
+        return 2
+    _charge_utile(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    # 0 signifie seulement « eligibilite a une revue », jamais « preuve de perfection ».
+    return 0 if result["status"] == "PROMOTE_ELIGIBLE" else 1
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     # Sans `--root`, `doctor` ne savait diagnostiquer que le depot COURANT : toutes les
     # autres commandes (`recover`, `scan`, `claims`, `sync`...) acceptent `--root`, et un
@@ -475,13 +642,21 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         for c in clis:
             print(f"    - {c.name}  ({c.binary})")
     else:
-        print("    aucun CLI externe trouve (opencode, hermes, claude, codex, gemini, aider)")
+        print(
+            "    aucun CLI externe trouve (opencode, hermes, claude, codex, gemini, aider)"
+        )
 
     import os
 
     keys = [
-        k for k in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-                    "DEEPSEEK_API_KEY", "JIO_OPENAI_BASE")
+        k
+        for k in (
+            "OPENROUTER_API_KEY",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "JIO_OPENAI_BASE",
+        )
         if os.environ.get(k)
     ]
     print(f"    cles API presentes : {', '.join(keys) if keys else 'aucune'}")
@@ -489,7 +664,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("  Mode disponible :")
     print("    - simulation deterministe  (aucune cle requise)  -> `jio bench`")
     if clis or keys:
-        print("    - mode reel                -> `jio run \"<objectif>\"`")
+        print('    - mode reel                -> `jio run "<objectif>"`')
     print()
     print(f"  Banc d'essai : {len(TASKS)} taches verifiables avec oracles caches")
     # Ce que la configuration coute AVANT la premiere question. Un fichier de contexte
@@ -502,20 +677,35 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         # inclut des commentaires de maintenance qui ne sont pas emis. Mesurer la source
         # annoncait « TROP LONG » pour des fichiers de 133 lignes (mesure faite).
         contexte = {
-            chemin: texte for chemin, texte in manifest().items()
-            if chemin in {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursor/rules/jio.mdc",
-                          ".github/copilot-instructions.md"}
+            chemin: texte
+            for chemin, texte in manifest().items()
+            if chemin
+            in {
+                "AGENTS.md",
+                "CLAUDE.md",
+                "GEMINI.md",
+                ".cursor/rules/jio.mdc",
+                ".github/copilot-instructions.md",
+            }
         }
-        mesures = sorted((mesurer(c, x) for c, x in contexte.items()),
-                         key=lambda m: -m.lignes)
+        mesures = sorted(
+            (mesurer(c, x) for c, x in contexte.items()), key=lambda m: -m.lignes
+        )
         if mesures:
             pire = mesures[0]
-            etat = ("dans le budget" if pire.lignes <= SEUILS["contexte_lignes"]
-                    else "TROP LONG ; a raccourcir")
-            print(f"  Fichier de contexte le plus long : {pire.chemin} — "
-                  f"{pire.lignes} ligne(s), {pire.intervalle()} jetons — {etat}")
-            print(f"    (seuil {SEUILS['contexte_lignes']} lignes ; detail : "
-                  "`jio artifacts --budget`)")
+            etat = (
+                "dans le budget"
+                if pire.lignes <= SEUILS["contexte_lignes"]
+                else "TROP LONG ; a raccourcir"
+            )
+            print(
+                f"  Fichier de contexte le plus long : {pire.chemin} — "
+                f"{pire.lignes} ligne(s), {pire.intervalle()} jetons — {etat}"
+            )
+            print(
+                f"    (seuil {SEUILS['contexte_lignes']} lignes ; detail : "
+                "`jio artifacts --budget`)"
+            )
     except Exception:  # un diagnostic qui plante ne diagnostique rien
         pass
     print()
@@ -537,14 +727,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if suspect is not None:
         commits, non_suivis = suspect
         print("  /!\\ DEPOT SUSPECT : l'historique local a peut-etre ete reinitialise.")
-        print(f"      {commits} commit(s) local(aux) pour {non_suivis} fichier(s) NON SUIVIS.")
-        print("      Le travail est sur le disque, mais git ne le suit plus : un commit")
+        print(
+            f"      {commits} commit(s) local(aux) pour {non_suivis} fichier(s) NON SUIVIS."
+        )
+        print(
+            "      Le travail est sur le disque, mais git ne le suit plus : un commit"
+        )
         print("      maintenant fabriquerait un historique absurde.")
         print("      Reparation SANS perte, en UNE commande :")
         print("        jio recover")
-        print("      Elle restaure l'historique distant, indexe le travail retrouve, et ne")
-        print("      touche a aucun fichier du disque (ni --hard, ni checkout, ni clean).")
-        print("      Detail de ce qui sera fait, sans rien faire :  jio recover --dry-run")
+        print(
+            "      Elle restaure l'historique distant, indexe le travail retrouve, et ne"
+        )
+        print(
+            "      touche a aucun fichier du disque (ni --hard, ni checkout, ni clean)."
+        )
+        print(
+            "      Detail de ce qui sera fait, sans rien faire :  jio recover --dry-run"
+        )
         print()
 
     etat = _git_state(racine)
@@ -561,27 +761,45 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             # un depot avec `origin` configure mais sans reference locale affichait
             # « aucun depot origin », en envoyant l'utilisateur verifier une chose
             # qui n'etait pas en cause.
-            print(f"    branche {branche}  ·  AUCUN DISTANT COMPARABLE"
-                  f"  ({'distant present' if distant_existe else 'aucun distant configure'})")
+            print(
+                f"    branche {branche}  ·  AUCUN DISTANT COMPARABLE"
+                f"  ({'distant present' if distant_existe else 'aucun distant configure'})"
+            )
             if distant_existe:
-                print(f"        `origin` est configure, mais la branche {branche} n'a pas de")
+                print(
+                    f"        `origin` est configure, mais la branche {branche} n'a pas de"
+                )
                 print("        reference locale : impossible de dire si ce travail est")
-                print(f"        sauvegarde. Rendre la comparaison possible :  git fetch origin {branche}")
+                print(
+                    f"        sauvegarde. Rendre la comparaison possible :  git fetch origin {branche}"
+                )
             else:
-                print("        Aucun depot distant configure : ce travail n'existe QUE ici.")
+                print(
+                    "        Aucun depot distant configure : ce travail n'existe QUE ici."
+                )
                 print("        Verifier avec `git remote -v` (et pousser si besoin).")
         else:
-            print(f"    branche {branche}  ·  {avance} commit(s) en avance  ·  {recul} en retard")
+            print(
+                f"    branche {branche}  ·  {avance} commit(s) en avance  ·  {recul} en retard"
+            )
         if distant and recul and not avance:
             print()
-            print(f"    /!\\ Le depot local est EN RETARD de {recul} commit(s) sur origin.")
+            print(
+                f"    /!\\ Le depot local est EN RETARD de {recul} commit(s) sur origin."
+            )
             print("        Reparation sure (aucun travail perdu) :  scripts/sync.sh")
         elif distant and recul and avance:
             print()
-            print(f"    /!\\ Les historiques ont DIVERGE ({avance} local, {recul} distant).")
-            print("        Ne rien forcer a l'aveugle : comparer, puis fusionner ou choisir.")
+            print(
+                f"    /!\\ Les historiques ont DIVERGE ({avance} local, {recul} distant)."
+            )
+            print(
+                "        Ne rien forcer a l'aveugle : comparer, puis fusionner ou choisir."
+            )
         elif distant and avance:
-            print("        travail local non pousse (normal en session ; pousser pour le garder)")
+            print(
+                "        travail local non pousse (normal en session ; pousser pour le garder)"
+            )
     print()
     return 0
 
@@ -599,7 +817,7 @@ def _git_state(racine: str = ".") -> tuple[str, int, int, bool, bool] | None:
     travail est sauvegarde ailleurs ». C'est le diagnostic du silence : il envoie
     l'utilisateur verifier `git remote -v` alors que le distant est la, et que la
     seule chose qui manque est un `git fetch`.
-    
+
 
     Que des lectures : on ne modifie JAMAIS le depot depuis `doctor`. Un diagnostic
     qui agit est un diagnostic qu'on n'ose plus lancer.
@@ -628,7 +846,12 @@ def _git_state(racine: str = ".") -> tuple[str, int, int, bool, bool] | None:
             # qui rend possible un script « diagnostic puis reparation » sur plusieurs
             # depots, `doctor` et `recover` acceptant alors le meme argument.
             proc = subprocess.run(
-                ["git", *argv], capture_output=True, text=True, timeout=10, cwd=racine,
+                ["git", *argv],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=racine,
+                check=False,
             )
         except Exception:
             return 1, ""
@@ -683,7 +906,12 @@ def _depot_suspect(racine: str = ".") -> tuple[int, int] | None:
     def git(*argv: str) -> tuple[int, str]:
         try:
             proc = subprocess.run(
-                ["git", *argv], capture_output=True, text=True, timeout=10, cwd=racine
+                ["git", *argv],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=racine,
+                check=False,
             )
         except Exception:
             return 1, ""
@@ -740,24 +968,34 @@ def cmd_recover(args: argparse.Namespace) -> int:
     print(f"    {resultat.motif}")
     if resultat.fait:
         print()
-        print(f"    contenu de l'arbre : {resultat.avant[:12]} (avant) == "
-              f"{resultat.apres[:12]} (apres)  ->  "
-              f"{'INTACT' if resultat.contenu_intact else 'MODIFIE'}")
+        print(
+            f"    contenu de l'arbre : {resultat.avant[:12]} (avant) == "
+            f"{resultat.apres[:12]} (apres)  ->  "
+            f"{'INTACT' if resultat.contenu_intact else 'MODIFIE'}"
+        )
         if resultat.etiquette:
             print(f"    etiquette posee sur l'etat precedent : {resultat.etiquette}")
-        print(f"    etat local : {resultat.fichiers_modifies} modification(s), "
-              f"{resultat.fichiers_non_suivis} fichier(s) non suivi(s)")
+        print(
+            f"    etat local : {resultat.fichiers_modifies} modification(s), "
+            f"{resultat.fichiers_non_suivis} fichier(s) non suivi(s)"
+        )
         if resultat.preuves_perimees:
             nombre = resultat.preuves_perimees
             if nombre == 1:
-                phrase = ("1 preuve enregistree porte le sceau d'un AUTRE etat du monde "
-                          f"(sur {resultat.preuves_total} au total).")
+                phrase = (
+                    "1 preuve enregistree porte le sceau d'un AUTRE etat du monde "
+                    f"(sur {resultat.preuves_total} au total)."
+                )
             else:
-                phrase = (f"{nombre} preuves enregistrees portent le sceau d'un AUTRE etat "
-                          f"du monde (sur {resultat.preuves_total} au total).")
+                phrase = (
+                    f"{nombre} preuves enregistrees portent le sceau d'un AUTRE etat "
+                    f"du monde (sur {resultat.preuves_total} au total)."
+                )
             print()
             print(f"    {phrase}")
-            print("    Elles restent valides pour ce qu'elles decrivent, pas pour l'etat")
+            print(
+                "    Elles restent valides pour ce qu'elles decrivent, pas pour l'etat"
+            )
             print("    actuel : `jio trace` les montre, groupees par monde.")
         print()
         print("    Aucune commande n'a touche aux fichiers du disque (ni `--hard`, ni")
@@ -796,8 +1034,10 @@ def cmd_chiffres(args: argparse.Namespace) -> int:
         )
         for ecart in trouves:
             marque = "ECART" if ecart.reparable else "SIGNAL"
-            print(f"    {marque}  {chemin.name} ligne {ecart.ligne} : {ecart.ancien}"
-                  f"  ->  {ecart.nouveau}")
+            print(
+                f"    {marque}  {chemin.name} ligne {ecart.ligne} : {ecart.ancien}"
+                f"  ->  {ecart.nouveau}"
+            )
         print(f"    {message}")
         print()
         code = max(code, resultat)
@@ -809,8 +1049,10 @@ def cmd_tasks(args: argparse.Namespace) -> int:
     print("  BANC D'ESSAI")
     print()
     for t in TASKS:
-        print(f"    {t.id:<16} [{t.difficulty:<7}] {len(t.rules)} regles"
-              f"  |  {len(t.distractors)} distracteurs")
+        print(
+            f"    {t.id:<16} [{t.difficulty:<7}] {len(t.rules)} regles"
+            f"  |  {len(t.distractors)} distracteurs"
+        )
         print(f"      {t.objective[:96]}")
     print()
     return 0
@@ -827,18 +1069,25 @@ def _bench_prose(args: argparse.Namespace) -> int:
     from .bench.prose import PROSE_TASKS, mesurer_prose
 
     print(BANNER)
-    print(f"  Mesure du harness sur des DOCUMENTS  ·  competence simulee {args.skill:.2f}"
-          f"  ·  {args.runs} tirage(s)  ·  {len(PROSE_TASKS)} tache(s)")
-    print("  Aucune cle API requise : les documents sont simules, la VERIFICATION est reelle.")
+    print(
+        f"  Mesure du harness sur des DOCUMENTS  ·  competence simulee {args.skill:.2f}"
+        f"  ·  {args.runs} tirage(s)  ·  {len(PROSE_TASKS)} tache(s)"
+    )
+    print(
+        "  Aucune cle API requise : les documents sont simules, la VERIFICATION est reelle."
+    )
     print()
     print("    bras                                   justes       IC95   comparaison")
-    print("    -------------------------------------- -------  ----------  --------------------")
+    print(
+        "    -------------------------------------- -------  ----------  --------------------"
+    )
     total = {"essais": 0, "silencieux": 0, "sous_reserve": 0, "abstentions": 0}
     debut = time.monotonic()
     mesures: list[tuple[float, object]] = []
     for skill in sorted({0.0, 0.35, float(args.skill)}):
-        mesure = mesurer_prose(skill=skill, runs=args.runs, max_rounds=args.rounds,
-                               racine=Path.cwd())
+        mesure = mesurer_prose(
+            skill=skill, runs=args.runs, max_rounds=args.rounds, racine=Path.cwd()
+        )
         mesures.append((skill, mesure))
         bas, haut = mesure.intervalle()
         resume = mesure.resume(f"competence {skill:.2f}")
@@ -852,17 +1101,27 @@ def _bench_prose(args: argparse.Namespace) -> int:
         total["abstentions"] += mesure.abstentions
     print()
     print(f"  {total['essais']} essai(s) au total")
-    print(f"  ERREURS LIVREES SANS RIEN DIRE : {total['silencieux']}"
-          "  <- le seul chiffre qui doit rester a zero")
-    print(f"  livres avec une reserve NOMMEE (chemin introuvable, "
-          f"confiance sous le seuil) : {total['sous_reserve']}")
-    print(f"  abstentions (rien de verifiable, ou preuve impossible) : {total['abstentions']}")
+    print(
+        f"  ERREURS LIVREES SANS RIEN DIRE : {total['silencieux']}"
+        "  <- le seul chiffre qui doit rester a zero"
+    )
+    print(
+        f"  livres avec une reserve NOMMEE (chemin introuvable, "
+        f"confiance sous le seuil) : {total['sous_reserve']}"
+    )
+    print(
+        f"  abstentions (rien de verifiable, ou preuve impossible) : {total['abstentions']}"
+    )
     print()
     print("  LIMITES, en toute honnete :")
-    print("    - un document peut etre FAUX sans qu'aucune de ses affirmations ne le soit :")
+    print(
+        "    - un document peut etre FAUX sans qu'aucune de ses affirmations ne le soit :"
+    )
     print("      la verification porte sur ce qui est calculable, pas sur le sens.")
     print("    - competence 0.00 : tous les tirages sont des distracteurs. Le systeme")
-    print("      livre alors SOUS RESERVE, ou s'abstient — jamais en presentant un faux")
+    print(
+        "      livre alors SOUS RESERVE, ou s'abstient — jamais en presentant un faux"
+    )
     print("      calcul comme prouve.")
     print("    - les documents sont SIMULES : ce chiffre mesure l'architecture.")
     print()
@@ -893,8 +1152,12 @@ def _ecrire_rapport_prose(args: argparse.Namespace, mesures, duree_s: float) -> 
 
         try:
             sortie = subprocess.run(
-                ["git", "rev-parse", "--short", "HEAD"], cwd=Path.cwd(),
-                capture_output=True, text=True, timeout=10,
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=Path.cwd(),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
             )
         except (OSError, subprocess.SubprocessError):
             return "inconnu"
@@ -906,19 +1169,21 @@ def _ecrire_rapport_prose(args: argparse.Namespace, mesures, duree_s: float) -> 
     bras = []
     for skill, mesure in mesures:
         bas, haut = mesure.intervalle()
-        bras.append({
-            "competence": skill,
-            "justes": round(mesure.jio * mesure.essais),
-            "essais": mesure.essais,
-            "taux": round(mesure.jio, 4),
-            "ic95": [round(bas, 4), round(haut, 4)],
-            "aveugle": round(mesure.aveugle, 4),
-            "aveugle_best_of": round(mesure.aveugle_best_of, 4),
-            "silencieuses": mesure.erreurs_silencieuses,
-            "sous_reserve": mesure.sous_reserve,
-            "abstentions": mesure.abstentions,
-            "appels": round(mesure.appels, 2),
-        })
+        bras.append(
+            {
+                "competence": skill,
+                "justes": round(mesure.jio * mesure.essais),
+                "essais": mesure.essais,
+                "taux": round(mesure.jio, 4),
+                "ic95": [round(bas, 4), round(haut, 4)],
+                "aveugle": round(mesure.aveugle, 4),
+                "aveugle_best_of": round(mesure.aveugle_best_of, 4),
+                "silencieuses": mesure.erreurs_silencieuses,
+                "sous_reserve": mesure.sous_reserve,
+                "abstentions": mesure.abstentions,
+                "appels": round(mesure.appels, 2),
+            }
+        )
     silencieuses = sum(b["silencieuses"] for b in bras)
     donnees = {
         "horodatage": horodatage,
@@ -939,14 +1204,18 @@ def _ecrire_rapport_prose(args: argparse.Namespace, mesures, duree_s: float) -> 
         "",
         f"- **date** : {horodatage}",
         f"- **modele mesure** : `simule` — {donnees['note_modele']}",
-        f"- **taches** : {len(PROSE_TASKS)} document(s) · **{args.runs} tirage(s)** · "
-        f"{args.rounds} tour(s) de boucle maximum",
+        (
+            f"- **taches** : {len(PROSE_TASKS)} document(s) · **{args.runs} tirage(s)** · "
+            f"{args.rounds} tour(s) de boucle maximum"
+        ),
         f"- **duree** : {duree_s:.1f} s · **commit** : `{donnees['commit']}`",
         "",
         "## Les bras, avec leurs intervalles",
         "",
-        "| competence | justes | IC95 | aveugle | best-of (oracle) | SILENCIEUX | "
-        "sous reserve | abstentions | appels |",
+        (
+            "| competence | justes | IC95 | aveugle | best-of (oracle) | SILENCIEUX | "
+            "sous reserve | abstentions | appels |"
+        ),
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for b in bras:
@@ -973,16 +1242,19 @@ def _ecrire_rapport_prose(args: argparse.Namespace, mesures, duree_s: float) -> 
         "## Reproduction",
         "",
         "```sh",
-        f"jio bench --prose --runs {args.runs} --rounds {args.rounds} "
-        f"--rapport {getattr(args, 'rapport', 'evidence/bench-prose.md')}",
+        (
+            f"jio bench --prose --runs {args.runs} --rounds {args.rounds} "
+            f"--rapport {getattr(args, 'rapport', 'evidence/bench-prose.md')}"
+        ),
         "```",
         "",
     ]
-    cible = Path(getattr(args, "rapport"))
+    cible = Path(args.rapport)
     cible.parent.mkdir(parents=True, exist_ok=True)
     cible.write_text("\n".join(lignes), encoding="utf-8")
     cible.with_suffix(".json").write_text(
-        _json.dumps(donnees, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+        _json.dumps(donnees, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
     )
     return cible
 
@@ -1022,7 +1294,8 @@ class _Progression:
             f"  [{self.fait:>3}/{self.total}] {self.quoi}"
             + (f" · {libelle}" if libelle else "")
             + f"  ·  {_duree(ecoule)} ecoulees{suite}",
-            file=self.flux, flush=True,
+            file=self.flux,
+            flush=True,
         )
 
 
@@ -1073,18 +1346,32 @@ def cmd_bench(args: argparse.Namespace) -> int:
 
     print(BANNER)
     if modele.genre == "simule":
-        print(f"  Mesure du harness  ·  competence simulee {skill:.2f}  ·  {runs} tirage(s)  ·"
-              f"  {len(taches)} taches")
-        print("  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.")
+        print(
+            f"  Mesure du harness  ·  competence simulee {skill:.2f}  ·  {runs} tirage(s)  ·"
+            f"  {len(taches)} taches"
+        )
+        print(
+            "  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle."
+        )
     else:
-        print(f"  Mesure du harness  ·  modele : {modele.spec}  ·  {runs} tirage(s)  ·"
-              f"  {len(taches)} taches")
+        print(
+            f"  Mesure du harness  ·  modele : {modele.spec}  ·  {runs} tirage(s)  ·"
+            f"  {len(taches)} taches"
+        )
         print(f"  {modele.note}")
     print()
 
     results: dict[str, list[float]] = {
-        "S0": [], "S1": [], "S1b": [], "S2": [], "S3": [], "S4": [], "S4b": [], "S4c": [],
-        "S4r": [], "S4rc": [],
+        "S0": [],
+        "S1": [],
+        "S1b": [],
+        "S2": [],
+        "S3": [],
+        "S4": [],
+        "S4b": [],
+        "S4c": [],
+        "S4r": [],
+        "S4rc": [],
     }
     calls: dict[str, list[int]] = {k: [] for k in results}
     integrity_hits = 0
@@ -1103,16 +1390,17 @@ def cmd_bench(args: argparse.Namespace) -> int:
     # branche son propre modele : les bras S0/S1/S1b mesuraient alors la simulation, et
     # le rapport avait l'air de parler de son modele. Corrige ici.
     generateurs_reels = (
-        [] if modele.provider is None
-        else [modele.provider] * max(3, modele.instances)
+        [] if modele.provider is None else [modele.provider] * max(3, modele.instances)
     )
     avancer = _Progression(len(seeds) * len(taches), quoi=f"tirage {skill:.2f}")
     for seed in seeds:
         for task in taches:
             generators = generateurs_reels or [
                 SimulatedProvider(
-                    name=f"gen{i}", model="sim-1",
-                    persona=Persona(name=f"gen{i}", skill=skill), bank=bank,
+                    name=f"gen{i}",
+                    model="sim-1",
+                    persona=Persona(name=f"gen{i}", skill=skill),
+                    bank=bank,
                 )
                 for i in range(3)
             ]
@@ -1125,8 +1413,12 @@ def cmd_bench(args: argparse.Namespace) -> int:
 
             # --- S1 : best-of-3, sans verification -------------------------
             cands = [
-                _code(generators[i % 3].complete([_msg(task.objective)], seed=seed + i).text,
-                      task.entrypoint)
+                _code(
+                    generators[i % 3]
+                    .complete([_msg(task.objective)], seed=seed + i)
+                    .text,
+                    task.entrypoint,
+                )
                 for i in range(3)
             ]
             results["S1"].append(1.0 if any(_check(x, task) for x in cands) else 0.0)
@@ -1137,9 +1429,17 @@ def cmd_bench(args: argparse.Namespace) -> int:
                 task, skill=skill, seed=seed, max_rounds=args.rounds, fournisseur=modele
             )
             report = engine.run(
-                Mission(objective=task.objective, id=f"{task.id}-{seed}", max_rounds=args.rounds),
-                WorkItem(objective=task.objective, entrypoint=task.entrypoint,
-                         checks=task.checks, spec=task.spec()),
+                Mission(
+                    objective=task.objective,
+                    id=f"{task.id}-{seed}",
+                    max_rounds=args.rounds,
+                ),
+                WorkItem(
+                    objective=task.objective,
+                    entrypoint=task.entrypoint,
+                    checks=task.checks,
+                    spec=task.spec(),
+                ),
             )
             n_calls = int(report.usage.get("calls", 0)) or 1
             ok = _check(report.subject, task)
@@ -1152,9 +1452,9 @@ def cmd_bench(args: argparse.Namespace) -> int:
             # On tire n_calls candidats et on les evalue tous sans feedback.
             blind = [
                 _code(
-                    generators[i % 3].complete(
-                        [_msg(task.objective)], seed=seed * 97 + i
-                    ).text,
+                    generators[i % 3]
+                    .complete([_msg(task.objective)], seed=seed * 97 + i)
+                    .text,
                     task.entrypoint,
                 )
                 for i in range(n_calls)
@@ -1164,7 +1464,8 @@ def cmd_bench(args: argparse.Namespace) -> int:
 
             # S3 = S2 + accepte seulement si le systeme le declare livre.
             delivered = report.status in (
-                MissionStatus.DELIVERED, MissionStatus.DELIVERED_WITH_RESERVATION
+                MissionStatus.DELIVERED,
+                MissionStatus.DELIVERED_WITH_RESERVATION,
             )
             results["S3"].append(1.0 if (ok and delivered) else 0.0)
             calls["S3"].append(n_calls)
@@ -1186,14 +1487,24 @@ def cmd_bench(args: argparse.Namespace) -> int:
             # resultat, pas un echec de la mesure.
             if modele.genre != "simule" and oracle_reel:
                 moteur_sans_oracle = _simulated_engine(
-                    task, skill=skill, seed=seed, max_rounds=args.rounds,
-                    temoins=True, fournisseur=modele,
+                    task,
+                    skill=skill,
+                    seed=seed,
+                    max_rounds=args.rounds,
+                    temoins=True,
+                    fournisseur=modele,
                 )
                 rapport_sans = moteur_sans_oracle.run(
-                    Mission(objective=task.objective, id=f"{task.id}-{seed}-S4r",
-                            max_rounds=args.rounds),
-                    WorkItem(objective=task.objective, entrypoint=task.entrypoint,
-                             spec=task.spec()),
+                    Mission(
+                        objective=task.objective,
+                        id=f"{task.id}-{seed}-S4r",
+                        max_rounds=args.rounds,
+                    ),
+                    WorkItem(
+                        objective=task.objective,
+                        entrypoint=task.entrypoint,
+                        spec=task.spec(),
+                    ),
                 )
                 n_appels = int(rapport_sans.usage.get("calls", 0)) or 1
                 juste = _check(rapport_sans.subject, task)
@@ -1208,16 +1519,18 @@ def cmd_bench(args: argparse.Namespace) -> int:
                 # CONTROLE apparié : autant de tirages du modele, AUCUNE verification.
                 aveugles = [
                     _code(
-                        generators[i % 3].complete(
-                            [_msg(task.objective)], seed=seed * 131 + i
-                        ).text,
+                        generators[i % 3]
+                        .complete([_msg(task.objective)], seed=seed * 131 + i)
+                        .text,
                         task.entrypoint,
                     )
                     for i in range(n_appels)
                 ]
                 results["S4r"].append(1.0 if juste else 0.0)
                 calls["S4r"].append(n_appels)
-                results["S4rc"].append(1.0 if any(_check(x, task) for x in aveugles) else 0.0)
+                results["S4rc"].append(
+                    1.0 if any(_check(x, task) for x in aveugles) else 0.0
+                )
                 calls["S4rc"].append(n_appels)
 
             # --- S4 : AUCUN ORACLE — les regles traduites en temoins -------- #
@@ -1232,23 +1545,35 @@ def cmd_bench(args: argparse.Namespace) -> int:
             # qu'il simule : voir jio/bench/temoins.py.
             for cle, fidelite in (
                 (("S4", 1.0), ("S4c", 0.5), ("S4b", 0.0))
-                if modele.genre == "simule" else ()
+                if modele.genre == "simule"
+                else ()
             ):
                 traducteur = TraducteurSimule(taches=taches, fidelite=fidelite)
                 moteur = _simulated_engine(
-                    task, skill=skill, seed=seed, max_rounds=args.rounds,
-                    temoins=True, traducteur=traducteur,
+                    task,
+                    skill=skill,
+                    seed=seed,
+                    max_rounds=args.rounds,
+                    temoins=True,
+                    traducteur=traducteur,
                 )
                 rapport = moteur.run(
-                    Mission(objective=task.objective, id=f"{task.id}-{seed}-{cle}",
-                            max_rounds=args.rounds),
-                    WorkItem(objective=task.objective, entrypoint=task.entrypoint,
-                             spec=task.spec()),
+                    Mission(
+                        objective=task.objective,
+                        id=f"{task.id}-{seed}-{cle}",
+                        max_rounds=args.rounds,
+                    ),
+                    WorkItem(
+                        objective=task.objective,
+                        entrypoint=task.entrypoint,
+                        spec=task.spec(),
+                    ),
                 )
                 contrefacons += len(traducteur.contrefaites)
                 justes.append((cle, _check(rapport.subject, task)))
                 candidat_juste = any(
-                    e.payload.get("sim_correct") for e in moteur.journal.events()
+                    e.payload.get("sim_correct")
+                    for e in moteur.journal.events()
                     if getattr(e, "kind", "") == "candidate"
                 )
                 if rapport.status is MissionStatus.ABSTAINED:
@@ -1309,10 +1634,14 @@ def cmd_bench(args: argparse.Namespace) -> int:
         # etait affiche quand le modele brut ne reussissait rien. On ecrit `n/a`, qui est
         # la verite, au lieu d'un nombre a douze chiffres qui n'en est pas une.
         ratio = f"{rate / base:>5.2f}x" if base > 1e-9 else "   n/a"
-        print(f"    {labels[key]:<40} {rate:>8.1%} "
-              f"{f'[{bas:.0%} ; {haut:.0%}]':>15} {budget:>7.1f} {ratio}")
+        print(
+            f"    {labels[key]:<40} {rate:>8.1%} "
+            f"{f'[{bas:.0%} ; {haut:.0%}]':>15} {budget:>7.1f} {ratio}"
+        )
     print()
-    print("    Lire l'IC95 avant de conclure : un ecart dont l'intervalle contient zero")
+    print(
+        "    Lire l'IC95 avant de conclure : un ecart dont l'intervalle contient zero"
+    )
     print("    est INDETERMINE a ce nombre d'essais, pas demontre. `--runs` elargit n.")
     print()
     print()
@@ -1322,14 +1651,22 @@ def cmd_bench(args: argparse.Namespace) -> int:
     delta, (bas_d, haut_d), tranche = _ecart(results["S1b"], results["S2"])
     print("  ISOLATION DE L'EFFET")
     print("    echantillonnage seul vs verification, MEME nombre d'appels du modele :")
-    print(f"      sans verification {s1b:>7.1%}   avec verification {s2:>7.1%}   "
-          f"ecart {delta:+.1f} points  IC95 [{bas_d:+.1f} ; {haut_d:+.1f}]")
+    print(
+        f"      sans verification {s1b:>7.1%}   avec verification {s2:>7.1%}   "
+        f"ecart {delta:+.1f} points  IC95 [{bas_d:+.1f} ; {haut_d:+.1f}]"
+    )
     if tranche and delta > 0:
-        print("      -> l'intervalle EXCLUT zero : le gain vient de la VERIFICATION, pas")
+        print(
+            "      -> l'intervalle EXCLUT zero : le gain vient de la VERIFICATION, pas"
+        )
         print("         du nombre d'essais.")
     elif delta > 0:
-        print("      -> ecart POSITIF mais l'intervalle CONTIENT zero : INDETERMINE a ce")
-        print("         nombre d'essais. Augmenter --runs avant de conclure quoi que ce soit.")
+        print(
+            "      -> ecart POSITIF mais l'intervalle CONTIENT zero : INDETERMINE a ce"
+        )
+        print(
+            "         nombre d'essais. Augmenter --runs avant de conclure quoi que ce soit."
+        )
         # Un constat « indéterminé » sans budget de mesure laisse l'utilisateur sans
         # prise. On calcule le nombre d'essais qu'il faudrait POUR CETTE TAILLE D'EFFET :
         # c'est la difference entre « je ne sais pas » et « voici ce qu'il faudrait ».
@@ -1338,53 +1675,98 @@ def cmd_bench(args: argparse.Namespace) -> int:
         besoin = essais_necessaires(s1b, s2)
         taches = max(1, len(results["S0"]) // max(1, args.runs))
         if besoin > 0:
-            print(f"         Pour demontrer un ecart de {delta:+.1f} points : environ "
-                  f"{besoin} essai(s) par bras,")
-            print(f"         soit `--runs {math.ceil(besoin / taches)}` sur ce jeu de "
-                  f"{taches} tache(s).")
+            print(
+                f"         Pour demontrer un ecart de {delta:+.1f} points : environ "
+                f"{besoin} essai(s) par bras,"
+            )
+            print(
+                f"         soit `--runs {math.ceil(besoin / taches)}` sur ce jeu de "
+                f"{taches} tache(s)."
+            )
     else:
-        print("      -> sur ce jeu de taches, l'echantillonnage suffisait : resultat honnete.")
+        print(
+            "      -> sur ce jeu de taches, l'echantillonnage suffisait : resultat honnete."
+        )
     print()
     gain, (bas_g, haut_g), tranche_g = _ecart(results["S0"], results["S3"])
-    print(f"    gain total du harness : {gain:+.1f} points  IC95 [{bas_g:+.1f} ; {haut_g:+.1f}]"
-          "  (cible mesuree dans la litterature : +15 a +54)")
-    print(f"    {'significatif' if tranche_g else 'INDETERMINE a cet echantillon'}"
-          f" — {len(results['S0'])} essai(s) par bras.")
+    print(
+        f"    gain total du harness : {gain:+.1f} points  IC95 [{bas_g:+.1f} ; {haut_g:+.1f}]"
+        "  (cible mesuree dans la litterature : +15 a +54)"
+    )
+    print(
+        f"    {'significatif' if tranche_g else 'INDETERMINE a cet echantillon'}"
+        f" — {len(results['S0'])} essai(s) par bras."
+    )
     print()
     if modele.genre != "simule":
-        print("  QUAND LA MISSION NE FOURNIT AUCUN ORACLE — le cas de toute mission reelle")
+        print(
+            "  QUAND LA MISSION NE FOURNIT AUCUN ORACLE — le cas de toute mission reelle"
+        )
         print("    Ici, vos regles ne sont pas des slogans : le moteur demande a VOTRE")
-        print("    modele de les traduire en temoins executables, et ne livre que ce qui")
+        print(
+            "    modele de les traduire en temoins executables, et ne livre que ce qui"
+        )
         print("    passe ces temoins. Le controle juste en dessous a le MEME budget.")
         print()
         if results["S4r"]:
             s4r, s4rc = _mean(results["S4r"]), _mean(results["S4rc"])
             ic4r, ic4rc = _wilson(results["S4r"]), _wilson(results["S4rc"])
-            delta_r, (bas_r, haut_r), tranche_r = _ecart(results["S4rc"], results["S4r"])
+            delta_r, (bas_r, haut_r), tranche_r = _ecart(
+                results["S4rc"], results["S4r"]
+            )
             cadre_r = f"[{ic4r[0]:.0%} ; {ic4r[1]:.0%}]"
             cadre_rc = f"[{ic4rc[0]:.0%} ; {ic4rc[1]:.0%}]"
-            print(f"      {'votre modele + harness (sans oracle)':<40} {s4r:>8.1%} "
-                  f"{cadre_r:>15} {_mean(calls['S4r']):>7.1f}")
-            print(f"      {'CONTROLE : autant d appels, 0 verification':<40} {s4rc:>8.1%} "
-                  f"{cadre_rc:>15} {_mean(calls['S4rc']):>7.1f}")
-            print(f"      ecart {delta_r:+.1f} points  IC95 [{bas_r:+.1f} ; {haut_r:+.1f}]"
-                  f"  {'-> l intervalle EXCLUT zero' if tranche_r else '-> INDETERMINE ici'}")
-            print(f"    issues de ce bras : {abstentions_sans_oracle} abstention(s) — une")
-            print("      abstention est une reponse : le moteur dit qu'il ne peut pas prouver.")
+            print(
+                f"      {'votre modele + harness (sans oracle)':<40} {s4r:>8.1%} "
+                f"{cadre_r:>15} {_mean(calls['S4r']):>7.1f}"
+            )
+            print(
+                f"      {'CONTROLE : autant d appels, 0 verification':<40} {s4rc:>8.1%} "
+                f"{cadre_rc:>15} {_mean(calls['S4rc']):>7.1f}"
+            )
+            print(
+                f"      ecart {delta_r:+.1f} points  IC95 [{bas_r:+.1f} ; {haut_r:+.1f}]"
+                f"  {'-> l intervalle EXCLUT zero' if tranche_r else '-> INDETERMINE ici'}"
+            )
+            print(
+                f"    issues de ce bras : {abstentions_sans_oracle} abstention(s) — une"
+            )
+            print(
+                "      abstention est une reponse : le moteur dit qu'il ne peut pas prouver."
+            )
         else:
-            print("    non mesure (`--sans-oracle-reel`) : le bras existe, il a ete ecarte.")
+            print(
+                "    non mesure (`--sans-oracle-reel`) : le bras existe, il a ete ecarte."
+            )
         print()
-        print("    HONNETETE SUR CE BRAS : le traducteur EST votre modele, donc ce chiffre")
-        print("    mesure le couple (votre modele, le harness) et pas le harness seul. C'est")
-        print("    exactement la question utile, et le controle apparié la rend lisible.")
-        print(f"    erreurs livrees SANS reserve : {erreurs_silencieuses}"
-              "  <- le seul chiffre qui doit rester a zero")
+        print(
+            "    HONNETETE SUR CE BRAS : le traducteur EST votre modele, donc ce chiffre"
+        )
+        print(
+            "    mesure le couple (votre modele, le harness) et pas le harness seul. C'est"
+        )
+        print(
+            "    exactement la question utile, et le controle apparié la rend lisible."
+        )
+        print(
+            f"    erreurs livrees SANS reserve : {erreurs_silencieuses}"
+            "  <- le seul chiffre qui doit rester a zero"
+        )
         print(f"    duree : {elapsed:.1f}s")
         print()
         if getattr(args, "rapport", ""):
             _ecrire_rapport_du_bench(
-                args, results, calls, labels, modele, skill, runs, len(taches), args.rounds,
-                elapsed, integrite={
+                args,
+                results,
+                calls,
+                labels,
+                modele,
+                skill,
+                runs,
+                len(taches),
+                args.rounds,
+                elapsed,
+                integrite={
                     "exploits d'integrite detectes": integrity_hits,
                     "abstentions sans oracle": abstentions_sans_oracle,
                     "candidats CORRECTS rejetes": rejets_faux,
@@ -1394,34 +1776,71 @@ def cmd_bench(args: argparse.Namespace) -> int:
         return 0
 
     print("  QUAND LA MISSION NE FOURNIT AUCUN ORACLE — le cas de toute mission reelle")
-    print("    sans oracle, le moteur ne peut RIEN prouver : il s'abstient, et il le dit.")
-    print("    avec les regles traduites en temoins, une seule echelle : fidelite du traducteur")
-    print(f"      fidelite 100 %  -> {_mean(results['S4']):>6.1%} de livraisons justes"
-          f"   ({_mean(calls['S4']):.1f} appels, autant qu'un best-of-4)")
-    print(f"      fidelite  50 %  -> {_mean(results['S4c']):>6.1%} de livraisons justes"
-          f"   ({_mean(calls['S4c']):.1f} appels)")
-    print(f"      fidelite   0 %  -> {_mean(results['S4b']):>6.1%} de livraisons justes"
-          f"   ({contrefacons} regle(s) contrefaite(s) au total)")
-    print(f"    issues des bras sans oracle : {abstentions_sans_oracle} abstention(s),"
-          f" {rejets_faux} rejet(s) d'un candidat CORRECT")
-    print(f"    ERREURS LIVREES SANS RESERVE : {erreurs_silencieuses}  <- le seul chiffre qui doit rester a zero")
-    print("    -> la traduction est le chainon qui rend la preuve POSSIBLE hors banc, et")
-    print("       elle marche quand le traducteur est juste. Quand il se trompe, le systeme")
-    print("       s'abstient ou livre AVEC reserve : il ne presente jamais un artefact faux")
-    print("       comme prouve. Un temoin que TOUS les candidats echouent est declare NON")
+    print(
+        "    sans oracle, le moteur ne peut RIEN prouver : il s'abstient, et il le dit."
+    )
+    print(
+        "    avec les regles traduites en temoins, une seule echelle : fidelite du traducteur"
+    )
+    print(
+        f"      fidelite 100 %  -> {_mean(results['S4']):>6.1%} de livraisons justes"
+        f"   ({_mean(calls['S4']):.1f} appels, autant qu'un best-of-4)"
+    )
+    print(
+        f"      fidelite  50 %  -> {_mean(results['S4c']):>6.1%} de livraisons justes"
+        f"   ({_mean(calls['S4c']):.1f} appels)"
+    )
+    print(
+        f"      fidelite   0 %  -> {_mean(results['S4b']):>6.1%} de livraisons justes"
+        f"   ({contrefacons} regle(s) contrefaite(s) au total)"
+    )
+    print(
+        f"    issues des bras sans oracle : {abstentions_sans_oracle} abstention(s),"
+        f" {rejets_faux} rejet(s) d'un candidat CORRECT"
+    )
+    print(
+        f"    ERREURS LIVREES SANS RESERVE : {erreurs_silencieuses}  <- le seul chiffre qui doit rester a zero"
+    )
+    print(
+        "    -> la traduction est le chainon qui rend la preuve POSSIBLE hors banc, et"
+    )
+    print(
+        "       elle marche quand le traducteur est juste. Quand il se trompe, le systeme"
+    )
+    print(
+        "       s'abstient ou livre AVEC reserve : il ne presente jamais un artefact faux"
+    )
+    print(
+        "       comme prouve. Un temoin que TOUS les candidats echouent est declare NON"
+    )
     print("       PROUVE : il ne peut ni accuser ni innocenter.")
     print(f"    exploites d'integrite detectes : {integrity_hits}")
     print(f"    duree : {elapsed:.1f}s")
     print()
     print("  LIMITES, en toute honnete :")
-    print("    - les reponses sont SIMULEES : ce chiffre mesure l'architecture, pas un modele reel.")
-    print("    - la litterature mesure le harness sur des modeles reels : +15 a +54 points.")
-    print("    - la verification n'aide que si la tache EST verifiable. Ailleurs : abstention.")
+    print(
+        "    - les reponses sont SIMULEES : ce chiffre mesure l'architecture, pas un modele reel."
+    )
+    print(
+        "    - la litterature mesure le harness sur des modeles reels : +15 a +54 points."
+    )
+    print(
+        "    - la verification n'aide que si la tache EST verifiable. Ailleurs : abstention."
+    )
     print("    - aucun harness ne cree de connaissance absente du modele.")
     print()
     if getattr(args, "rapport", ""):
         _ecrire_rapport_du_bench(
-            args, results, calls, labels, modele, skill, runs, len(taches), args.rounds, elapsed,
+            args,
+            results,
+            calls,
+            labels,
+            modele,
+            skill,
+            runs,
+            len(taches),
+            args.rounds,
+            elapsed,
             integrite={
                 "exploits d'integrite detectes": integrity_hits,
                 "abstentions sans oracle": abstentions_sans_oracle,
@@ -1434,8 +1853,20 @@ def cmd_bench(args: argparse.Namespace) -> int:
 
 
 def _ecrire_rapport_du_bench(
-    args, results, calls, labels, modele, skill, runs, taches, rounds, elapsed, *,
-    integrite=None, ecarts=(), hypotheses=(),
+    args,
+    results,
+    calls,
+    labels,
+    modele,
+    skill,
+    runs,
+    taches,
+    rounds,
+    elapsed,
+    *,
+    integrite=None,
+    ecarts=(),
+    hypotheses=(),
 ) -> None:
     """Ecrit le rapport du duel — la MEME mesure, sous une forme qui se garde.
 
@@ -1456,8 +1887,12 @@ def _ecrire_rapport_du_bench(
 
         try:
             sortie = subprocess.run(
-                ["git", "rev-parse", "--short", "HEAD"], cwd=Path.cwd(),
-                capture_output=True, text=True, timeout=10,
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=Path.cwd(),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
             )
         except (OSError, subprocess.SubprocessError):
             return "inconnu"
@@ -1473,24 +1908,42 @@ def _ecrire_rapport_du_bench(
 
     mesures = list(ecarts)
     mesures = [e for e in mesures if e[3] is not None]
-    mesures.append(_ecart_sur("S1b", "S2",
-                              "budget d'appels EGAL : verification vs echantillonnage"))
+    mesures.append(
+        _ecart_sur(
+            "S1b", "S2", "budget d'appels EGAL : verification vs echantillonnage"
+        )
+    )
     mesures.append(_ecart_sur("S0", "S3", "gain total du harness (modele brut -> JIO)"))
     if results.get("S4rc") and results.get("S4r"):
-        mesures.append(_ecart_sur("S4rc", "S4r",
-                                  "sans oracle : harness vs meme budget sans verification"))
+        mesures.append(
+            _ecart_sur(
+                "S4rc", "S4r", "sans oracle : harness vs meme budget sans verification"
+            )
+        )
 
     if modele.genre == "simule":
         hypotheses = (
-            "les reponses du modele sont SIMULEES : ce rapport mesure l'ARCHITECTURE du "
-            "harness, pas un modele reel. Le meme rapport avec `--provider cli:<votre outil>` "
-            "mesure votre modele.",
+            (
+                "les reponses du modele sont SIMULEES : ce rapport mesure l'ARCHITECTURE du "
+                "harness, pas un modele reel. Le meme rapport avec `--provider cli:<votre outil>` "
+                "mesure votre modele."
+            ),
         )
 
     rapport = construire(
-        resultats=results, appels=calls, libelles=labels, ordre=ordre, modele=modele,
-        skill=skill, runs=runs, taches=taches, rounds=rounds, duree_s=elapsed,
-        commit=_commit_court(), integrite=integrite, hypotheses=hypotheses,
+        resultats=results,
+        appels=calls,
+        libelles=labels,
+        ordre=ordre,
+        modele=modele,
+        skill=skill,
+        runs=runs,
+        taches=taches,
+        rounds=rounds,
+        duree_s=elapsed,
+        commit=_commit_court(),
+        integrite=integrite,
+        hypotheses=hypotheses,
         ecarts=[m for m in mesures if isinstance(m, tuple) and len(m) == 6],
     )
     md, js = ecrire(rapport, args.rapport)
@@ -1499,12 +1952,17 @@ def _ecrire_rapport_du_bench(
     bases = [e for e in mesures if isinstance(e, tuple) and e[3] is None]
     for gauche, droite, question, *_ in bases:
         print(f"    non mesurable ici (bras sans donnees) : {question}")
-    besoin = _essais(_mean(results["S1b"]), _mean(results["S2"])) \
-        if results.get("S1b") and results.get("S2") else 0
+    besoin = (
+        _essais(_mean(results["S1b"]), _mean(results["S2"]))
+        if results.get("S1b") and results.get("S2")
+        else 0
+    )
     if besoin > 0:
         par_tache = max(1, len(results["S0"]) // max(1, runs))
-        print(f"    pour trancher l'ecart de verification : ~{besoin} essai(s) par bras, "
-              f"soit --runs {math.ceil(besoin / par_tache)} sur ce jeu de {par_tache} tache(s)")
+        print(
+            f"    pour trancher l'ecart de verification : ~{besoin} essai(s) par bras, "
+            f"soit --runs {math.ceil(besoin / par_tache)} sur ce jeu de {par_tache} tache(s)"
+        )
     print()
 
 
@@ -1554,7 +2012,10 @@ def _racine_du_document(chemin: Path) -> Path:
     try:
         proc = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=10, cwd=chemin.parent,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=chemin.parent,
             check=False,  # un dossier hors depot n'est pas une erreur
         )
     except Exception:
@@ -1596,7 +2057,7 @@ def _rapport_prose(chemin: Path, racine: Path | None, *, titre: str) -> int:
     Le 3 existe parce que confondre « document muet » et « document fautif » obligeait
     a choisir entre deux mauvaises reponses : soit un document sans matiere passait
     pour un quitus, soit il etait signale comme un defaut. Aucune des deux n'est vraie.
-    
+
 
     `jio claims` et `jio audit <document>` appellent cette fonction : deux entrees,
     une seule doctrine. Deux implementations auraient fini par diverger sur le seul
@@ -1618,18 +2079,24 @@ def _rapport_prose(chemin: Path, racine: Path | None, *, titre: str) -> int:
         print()
         return 3
     for verification in rapport.verifications:
-        marque = "ok " if verification.ok else ("KO " if verification.bloquant else "!  ")
+        marque = (
+            "ok " if verification.ok else ("KO " if verification.bloquant else "!  ")
+        )
         print(f"    [{marque}] {verification.message}")
     if rapport.ignorees or rapport.non_evaluees:
         print()
         if rapport.ignorees:
-            print(f"    [!!] LIMITE DE VOLUME : {rapport.ignorees} affirmation(s) au-dela "
-                  "de la limite declaree n'ont PAS ete verifiees. Ce rapport est "
-                  "PARTIEL — il ne dit rien de ces affirmations-la.")
+            print(
+                f"    [!!] LIMITE DE VOLUME : {rapport.ignorees} affirmation(s) au-dela "
+                "de la limite declaree n'ont PAS ete verifiees. Ce rapport est "
+                "PARTIEL — il ne dit rien de ces affirmations-la."
+            )
         if rapport.non_evaluees:
-            print(f"    [!!] {rapport.non_evaluees} calcul(s) trop long(s) pour etre "
-                  "evalue(s) : NI verifies, ni accuses. Evaluer une partie des termes "
-                  "et la comparer au total inventerait un refus.")
+            print(
+                f"    [!!] {rapport.non_evaluees} calcul(s) trop long(s) pour etre "
+                "evalue(s) : NI verifies, ni accuses. Evaluer une partie des termes "
+                "et la comparer au total inventerait un refus."
+            )
     print()
     print(f"  BILAN : {rapport.resume()}")
     if not rapport.conforme:
@@ -1676,7 +2143,9 @@ def cmd_claims(args: argparse.Namespace) -> int:
                 continue
             if rapport.refutees:
                 refutes += 1
-                print(f"    [KO] {chemin.name} : {rapport.refutees} affirmation(s) refutee(s)")
+                print(
+                    f"    [KO] {chemin.name} : {rapport.refutees} affirmation(s) refutee(s)"
+                )
                 for verification in rapport.bloquantes[:4]:
                     print(f"         · {verification.message[:130]}")
             else:
@@ -1686,11 +2155,15 @@ def cmd_claims(args: argparse.Namespace) -> int:
                 print(f"    [ok] {chemin.name} : {detail}")
         print()
         if refutes:
-            print(f"  {refutes} document(s) refute(s) : corriger, ou retirer l'affirmation.")
+            print(
+                f"  {refutes} document(s) refute(s) : corriger, ou retirer l'affirmation."
+            )
             print("  (`jio claims <fichier>` pour le detail complet.)")
             print()
             return 1
-        print("  Aucun fait refute. Le hook ne bloque QUE sur une refutation : un document")
+        print(
+            "  Aucun fait refute. Le hook ne bloque QUE sur une refutation : un document"
+        )
         print("  sans matiere prouvable n'est ni un succes ni un echec.")
         print()
         return 0
@@ -1709,7 +2182,9 @@ def cmd_claims(args: argparse.Namespace) -> int:
     # Un document refute ne doit pas etre noye par un document muet.
     codes: list[int] = []
     for chemin in fichiers:
-        codes.append(_rapport_prose(chemin, racine, titre=f"AFFIRMATIONS VERIFIABLES · {chemin}"))
+        codes.append(
+            _rapport_prose(chemin, racine, titre=f"AFFIRMATIONS VERIFIABLES · {chemin}")
+        )
     if 1 in codes:
         return 1
     return 3 if 3 in codes else 0
@@ -1730,7 +2205,9 @@ def cmd_providers(args: argparse.Namespace) -> int:
     print()
     providers = list(from_env())
     if not providers:
-        print("    aucun. Installez un CLI (opencode, hermes, claude, codex, gemini, aider)")
+        print(
+            "    aucun. Installez un CLI (opencode, hermes, claude, codex, gemini, aider)"
+        )
         print("    ou definissez une variable d'environnement d'API. Sans cela :")
         print("      jio bench                     (mesure du harness, sans cle)")
         print("      jio run ... --simulate --task sum_even --no-oracle")
@@ -1742,8 +2219,12 @@ def cmd_providers(args: argparse.Namespace) -> int:
     print()
 
     if not getattr(args, "prove", False):
-        print("  Pour PROUVER qu'ils repondent vraiment — et qu'ils savent traduire les")
-        print("  regles en temoins executables — relancez avec :  jio providers --prove")
+        print(
+            "  Pour PROUVER qu'ils repondent vraiment — et qu'ils savent traduire les"
+        )
+        print(
+            "  regles en temoins executables — relancez avec :  jio providers --prove"
+        )
         print()
         return 0
 
@@ -1767,22 +2248,58 @@ def cmd_providers(args: argparse.Namespace) -> int:
             for regle, raison in list(sonde.temoignage.aveux.items())[:2]:
                 print(f"             {regle} -> AVEU : {raison[:100]}")
             for regle, motif in list(sonde.temoignage.refuses.items())[:2]:
-                print(f"             {regle} -> REFUSE par les garde-fous : {motif[:100]}")
+                print(
+                    f"             {regle} -> REFUSE par les garde-fous : {motif[:100]}"
+                )
         if sonde.erreur:
             print(f"             erreur : {sonde.erreur[:200]}")
     print()
-    print(f"  BILAN : {vivants}/{len(providers)} repondent, "
-          f"{capables}/{len(providers)} savent traduire les regles en temoins.")
+    print(
+        f"  BILAN : {vivants}/{len(providers)} repondent, "
+        f"{capables}/{len(providers)} savent traduire les regles en temoins."
+    )
     if capables:
         print("    -> jio peut PROUVER sans oracle avec ceux-la : les regles de la")
         print("       mission deviennent des tests executables, et un temoin que tous")
         print("       les candidats echouent ne condamne personne.")
     else:
         print("    -> sans traduction des regles, la preuve reste impossible hors banc")
-        print("       d'essai : jio s'abstiendra (c'est la sortie honnete). Fournissez des")
+        print(
+            "       d'essai : jio s'abstiendra (c'est la sortie honnete). Fournissez des"
+        )
         print("       oracles (--task) ou des exemples `>>>` dans le code a livrer.")
     print()
     return 0 if vivants else 1
+
+
+def _activer_unanimite(engine: Engine) -> None:
+    """La politique zéro-réserve exige l'accord unanime du panel indépendant."""
+    engine.consensus.threshold = 1.0
+
+
+def _abstention_sans_reserve(report: MissionReport, journal: Journal) -> MissionReport:
+    """En politique stricte, une livraison assortie d'une reserve devient une abstention."""
+    if report.status is not MissionStatus.DELIVERED_WITH_RESERVATION:
+        return report
+    raison = (
+        "POLITIQUE ZERO-RESERVE : des limites ou incertitudes sont signalees ; "
+        "JIO refuse de presenter ce resultat comme une livraison. "
+        + report.abstention_reason
+    )
+    journal.append(
+        "strict_proof_abstention",
+        {
+            "from": report.status.value,
+            "to": MissionStatus.ABSTAINED.value,
+            "reason": raison,
+        },
+    )
+    return _replace(
+        report,
+        status=MissionStatus.ABSTAINED,
+        abstention_reason=raison,
+        journal_digest=journal.head,
+    )
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -1798,31 +2315,41 @@ def cmd_run(args: argparse.Namespace) -> int:
             tache_prose = PROSE_BY_ID.get(args.task)
             if tache_prose is None:
                 print(f"  tache de prose inconnue : {args.task}", file=sys.stderr)
-                print("  disponibles : " + ", ".join(t.id for t in PROSE_TASKS),
-                      file=sys.stderr)
+                print(
+                    "  disponibles : " + ", ".join(t.id for t in PROSE_TASKS),
+                    file=sys.stderr,
+                )
                 return 2
         elif args.simulate:
             tache_prose = PROSE_TASKS[0]
-    task = TASKS_BY_ID.get(args.task) if getattr(args, "task", "") and not prose else None
+    task = (
+        TASKS_BY_ID.get(args.task) if getattr(args, "task", "") and not prose else None
+    )
 
     if prose and args.simulate and tache_prose is None:  # pragma: no cover - garde
-        print("  mode prose simule : aucune tache de document disponible.", file=sys.stderr)
+        print(
+            "  mode prose simule : aucune tache de document disponible.",
+            file=sys.stderr,
+        )
         return 2
     if not getattr(args, "objective", "") and not task and not args.simulate:
         # Sans tache du banc et sans simulation, il n'y a rien a faire : on le dit
         # au lieu de partir avec un objectif vide et d'abstenir pour une mauvaise
         # raison.
-        print("  objectif requis : jio run \"<objectif>\"", file=sys.stderr)
-        print("  en simulation, une tache du banc le fournit : jio run --simulate "
-              "--task sum_even", file=sys.stderr)
+        print('  objectif requis : jio run "<objectif>"', file=sys.stderr)
+        print(
+            "  en simulation, une tache du banc le fournit : jio run --simulate "
+            "--task sum_even",
+            file=sys.stderr,
+        )
         return 2
 
     if args.simulate and not task and not prose:
         print(
             "  Mode simulation : aucun CLI ni cle d'API requis. La generation a besoin\n"
             "  d'une tache du banc pour que le modele SIMULE ait du code a rendre :\n"
-            "    jio run \"<objectif>\" --simulate --task sum_even\n"
-            "    jio run \"<objectif>\" --simulate --task sum_even --no-oracle\n"
+            '    jio run "<objectif>" --simulate --task sum_even\n'
+            '    jio run "<objectif>" --simulate --task sum_even --no-oracle\n'
             "  Taches disponibles : " + ", ".join(t.id for t in TASKS) + "\n"
             "  Sans --task, la simulation ne peut rien generer : elle le dit au lieu\n"
             "  d'inventer une reponse.\n"
@@ -1844,25 +2371,35 @@ def cmd_run(args: argparse.Namespace) -> int:
         objectif_pour_la_porte = task.objective
     else:
         objectif_pour_la_porte = args.objective
-    from .clarify import analyser as _analyser, formater as _formater_clarify
+    from .clarify import analyser as _analyser
+    from .clarify import formater as _formater_clarify
 
     analyse = _analyser(
         objectif_pour_la_porte,
-        contexte=(Path("README.md").read_text(encoding="utf-8", errors="replace")[:50_000]
-                  if Path("README.md").is_file() else ""),
+        contexte=(
+            Path("README.md").read_text(encoding="utf-8", errors="replace")[:50_000]
+            if Path("README.md").is_file()
+            else ""
+        ),
         mode="strict" if getattr(args, "strict", False) else "assume",
     )
     if analyse.bloquant:
         print(_formater_clarify(analyse))
         print()
-        print("  MISSION ARRETEE (--strict) : reponds aux questions ci-dessus, puis relance.")
-        print("  Sans reponse, les defauts proposes sont ce que je ferais — dis-le si c'est bon.")
+        print(
+            "  MISSION ARRETEE (--strict) : reponds aux questions ci-dessus, puis relance."
+        )
+        print(
+            "  Sans reponse, les defauts proposes sont ce que je ferais — dis-le si c'est bon."
+        )
         return 3
     if analyse.questions and getattr(args, "strict", False) is False:
         print("  HYPOTHESES DECLAREES (l'objectif laissait ces points ouverts) :")
         for question in analyse.questions:
             print(f"    - {question.signal} : {question.defaut}")
-        print("  Reponds a une seule d'entre elles pour que je l'enleve de cette liste.")
+        print(
+            "  Reponds a une seule d'entre elles pour que je l'enleve de cette liste."
+        )
         print()
 
     # Meme syntaxe que le banc : `--provider cli:opencode`, `openai:<modele>`, `simule`.
@@ -1882,8 +2419,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             # `--provider simule` sans `--simulate` n'aurait aucun sens : la simulation
             # a besoin d'une tache du banc pour generer quelque chose, et c'est
             # `--simulate` qui le dit. On refuse au lieu d'inventer.
-            print("  `--provider simule` a besoin de `--simulate` (et d'une `--task`).",
-                  file=sys.stderr)
+            print(
+                "  `--provider simule` a besoin de `--simulate` (et d'une `--task`).",
+                file=sys.stderr,
+            )
             return 2
         args.simulate = False
 
@@ -1891,22 +2430,35 @@ def cmd_run(args: argparse.Namespace) -> int:
         from .bench.prose import prose_bank
 
         engine = _simulated_engine(
-            None, seed=0, journal_path=journal_path, max_rounds=args.rounds,
-            alpha=args.alpha, min_panel=args.min_panel,
-            famille="prose", banque=prose_bank(tache_prose), racine=Path.cwd(),
+            None,
+            seed=0,
+            journal_path=journal_path,
+            max_rounds=args.rounds,
+            alpha=args.alpha,
+            min_panel=args.min_panel,
+            famille="prose",
+            banque=prose_bank(tache_prose),
+            racine=Path.cwd(),
             competences=not getattr(args, "sans_competences", False),
         )
     elif prose:
         engine = _real_engine(
-            journal_path=journal_path, max_rounds=args.rounds,
-            min_panel=args.min_panel, famille="prose", racine=Path.cwd(),
+            journal_path=journal_path,
+            max_rounds=args.rounds,
+            min_panel=args.min_panel,
+            famille="prose",
+            racine=Path.cwd(),
             fournisseurs=modele_liste,
             competences=not getattr(args, "sans_competences", False),
         )
     elif args.simulate:
         engine = _simulated_engine(
-            task, seed=0, journal_path=journal_path, max_rounds=args.rounds,
-            alpha=args.alpha, min_panel=args.min_panel,
+            task,
+            seed=0,
+            journal_path=journal_path,
+            max_rounds=args.rounds,
+            alpha=args.alpha,
+            min_panel=args.min_panel,
             # --no-oracle : la mission ne fournit AUCUN test, comme une mission
             # reelle. Le modele simule traduit les regles en temoins, et la preuve
             # doit tenir toute seule.
@@ -1915,7 +2467,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
     else:
         engine = _real_engine(
-            journal_path=journal_path, max_rounds=args.rounds, min_panel=args.min_panel,
+            journal_path=journal_path,
+            max_rounds=args.rounds,
+            min_panel=args.min_panel,
             fournisseurs=modele_liste,
             competences=not getattr(args, "sans_competences", False),
         )
@@ -1948,10 +2502,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     work = WorkItem(
         objective=(task.objective if task else objective),
         entrypoint=(task.entrypoint if task else args.entrypoint or ""),
-        checks=(dict(task.checks) if task and not getattr(args, "no_oracle", False) else {}),
+        checks=(
+            dict(task.checks) if task and not getattr(args, "no_oracle", False) else {}
+        ),
         spec=(task.spec() if task else spec_statique),
     )
+    if getattr(args, "zero_reserve", False):
+        _activer_unanimite(engine)
     report = engine.run(mission, work)
+    if getattr(args, "zero_reserve", False):
+        report = _abstention_sans_reserve(report, engine.journal)
     # Les avertissements du journal sont affiches APRES l'execution : c'est
     # l'ecriture qui revele l'etat du fichier (reprise d'une chaine, mise en
     # quarantaine d'un journal falsifie). Les annoncer avant l'ecriture serait
@@ -2022,7 +2582,9 @@ def cmd_audit(args: argparse.Namespace) -> int:
             for lim in spec.under_specified:
                 print(f"    [limite] {lim}")
             print()
-            print("  VERDICT : INDETERMINE — declarer un succes ici serait un mensonge.")
+            print(
+                "  VERDICT : INDETERMINE — declarer un succes ici serait un mensonge."
+            )
             print()
             return 2
 
@@ -2061,7 +2623,9 @@ def cmd_audit(args: argparse.Namespace) -> int:
     if reservations:
         print("  RESERVES (suspect, non prouve) :")
         for w in reservations:
-            print(f"    - {w.rule_id} : {(w.stderr or '').strip().splitlines()[-1][:100]}")
+            print(
+                f"    - {w.rule_id} : {(w.stderr or '').strip().splitlines()[-1][:100]}"
+            )
         print()
     if spec.under_specified:
         print("  LIMITES DECLAREES (ce qui n'a PAS ete prouve) :")
@@ -2073,10 +2637,14 @@ def cmd_audit(args: argparse.Namespace) -> int:
     if notes:
         print()
     if not res.passed:
-        print("  VERDICT : NON CONFORME — livrer en l'etat serait une erreur silencieuse.")
+        print(
+            "  VERDICT : NON CONFORME — livrer en l'etat serait une erreur silencieuse."
+        )
         print()
         return 1
-    print("  VERDICT : CONFORME sur les regles verifiables (et seulement sur celles-la).")
+    print(
+        "  VERDICT : CONFORME sur les regles verifiables (et seulement sur celles-la)."
+    )
     print()
     return 0
 
@@ -2131,8 +2699,10 @@ def cmd_sync(args: argparse.Namespace) -> int:
         print(f"      {marque:11} {decision.chemin} — {decision.detail}")
     ecrits = sum(1 for d in decisions if d.ecrit)
     preserves = [d for d in decisions if d.action == "preserve"]
-    print(f"    => {ecrits} ecrit(s), {len(decisions) - ecrits - len(preserves)} deja a jour, "
-          f"{len(preserves)} preserve(s)")
+    print(
+        f"    => {ecrits} ecrit(s), {len(decisions) - ecrits - len(preserves)} deja a jour, "
+        f"{len(preserves)} preserve(s)"
+    )
 
     print()
     print("    serveur MCP")
@@ -2162,8 +2732,12 @@ def _brancher_mcp(args: argparse.Namespace) -> int:
             cible = fichier or "(fragment a coller)"
             print(f"    {nom:<12} {description:<44} {cible}")
         print()
-        print("    `jio artifacts --mcp <dialecte>` ecrit le fichier s'il n'existe PAS, et")
-        print("    affiche le fragment sinon. Ce depot ne modifie jamais votre configuration.")
+        print(
+            "    `jio artifacts --mcp <dialecte>` ecrit le fichier s'il n'existe PAS, et"
+        )
+        print(
+            "    affiche le fragment sinon. Ce depot ne modifie jamais votre configuration."
+        )
         print()
         if args.dry_run:
             from .artifacts.wiring import fragments
@@ -2206,13 +2780,27 @@ def _budget_contexte(args: argparse.Namespace) -> int:
     # Les agents et les competences se chargent a la demande (revelation progressive) :
     # les confondre ferait croire a un cout qui n'existe pas.
     demarrage = {
-        chemin: texte for chemin, texte in tous.items()
-        if chemin in {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursor/rules/jio.mdc",
-                      ".github/copilot-instructions.md"}
+        chemin: texte
+        for chemin, texte in tous.items()
+        if chemin
+        in {
+            "AGENTS.md",
+            "CLAUDE.md",
+            "GEMINI.md",
+            ".cursor/rules/jio.mdc",
+            ".github/copilot-instructions.md",
+        }
     }
-    skills = {c: x for c, x in tous.items() if "/skills/" in c and c.endswith("SKILL.md")}
-    agents = {c: x for c, x in tous.items() if c.startswith(".opencode/agents/")
-              and c.endswith(".md") and not c.endswith("README.md")}
+    skills = {
+        c: x for c, x in tous.items() if "/skills/" in c and c.endswith("SKILL.md")
+    }
+    agents = {
+        c: x
+        for c, x in tous.items()
+        if c.startswith(".opencode/agents/")
+        and c.endswith(".md")
+        and not c.endswith("README.md")
+    }
     # Meme regle pour ce qui se charge a la demande : c'est le fichier du disque qui sera lu.
     etat_skills = sur_disque(Path.cwd(), skills)
     skills = etat_skills.fichiers
@@ -2241,25 +2829,31 @@ def _budget_contexte(args: argparse.Namespace) -> int:
         plus_leger = min(m.jetons for m in demarrage_mesures)
         plus_lourd = max(m.jetons for m in demarrage_mesures)
         print()
-        print(f"    Cote d'une session REELLE : ~{plus_leger} a {plus_lourd} jetons selon "
-              "l'outil, pas la somme.")
+        print(
+            f"    Cote d'une session REELLE : ~{plus_leger} a {plus_lourd} jetons selon "
+            "l'outil, pas la somme."
+        )
     print()
-    for lignes in resume(mesurer_depuis(Path.cwd(), skills), "DISPONIBLE A LA DEMANDE — competences"):
+    for lignes in resume(
+        mesurer_depuis(Path.cwd(), skills), "DISPONIBLE A LA DEMANDE — competences"
+    ):
         print(lignes)
     print()
-    for lignes in resume(mesurer_depuis(Path.cwd(), agents), "DISPONIBLE A LA DEMANDE — agents"):
+    for lignes in resume(
+        mesurer_depuis(Path.cwd(), agents), "DISPONIBLE A LA DEMANDE — agents"
+    ):
         print(lignes)
     print()
 
     # Le VERDICT porte sur les memes fichiers que l'affichage : ceux du disque. Le calculer sur
     # le manifeste disait « aucun fichier ne depasse » d'un `.cursor/rules/jio.mdc` edite a la
     # main qui en faisait 152 lignes — vu ici meme, en verifiant la correction.
-    tous_mesures = mesurer_depuis(
-        Path.cwd(), {**tous, **demarrage, **skills, **agents}
-    )
+    tous_mesures = mesurer_depuis(Path.cwd(), {**tous, **demarrage, **skills, **agents})
     for ligne in verdict(
         tous_mesures,
-        est_competence=lambda chemin: "/skills/" in chemin and chemin.endswith("SKILL.md"),
+        est_competence=lambda chemin: (
+            "/skills/" in chemin and chemin.endswith("SKILL.md")
+        ),
     ):
         print(ligne)
     print()
@@ -2274,45 +2868,72 @@ def _budget_contexte(args: argparse.Namespace) -> int:
     bas = sum(m.jetons_min for m in mesures_skills)
     haut = sum(m.jetons_max for m in mesures_skills)
     caracteres = sum(len(texte) for texte in skills.values())
-    print(f"    Bibliotheque de competences : ~{total_skills} jetons "
-          f"({bas} a {haut} selon la langue) · {caracteres} caracteres "
-          f"· seuil {SEUILS['bibliotheque_jetons']} jetons")
+    print(
+        f"    Bibliotheque de competences : ~{total_skills} jetons "
+        f"({bas} a {haut} selon la langue) · {caracteres} caracteres "
+        f"· seuil {SEUILS['bibliotheque_jetons']} jetons"
+    )
     # Un seuil qu'on approche sans le voir est un seuil qu'on depasse par surprise. La marge
     # est donc dite dans les deux sens : « encore X de disponible » ou « il reste X ».
     palier = int(0.8 * SEUILS["bibliotheque_jetons"])
     if bas < palier:
-        print(f"      marge : {palier - bas} jetons avant 80 % du seuil, sur la borne BASSE")
+        print(
+            f"      marge : {palier - bas} jetons avant 80 % du seuil, sur la borne BASSE"
+        )
     else:
-        print("      ATTENTION : la bibliotheque approche le seuil — chaque competence ajoutee "
-              "coute, et le routeur existe pour que vous n'ayez PAS a tout charger.")
-    print("    Contexte injecte au demarrage : un seul fichier par outil (voir ci-dessus)")
+        print(
+            "      ATTENTION : la bibliotheque approche le seuil — chaque competence ajoutee "
+            "coute, et le routeur existe pour que vous n'ayez PAS a tout charger."
+        )
+    print(
+        "    Contexte injecte au demarrage : un seul fichier par outil (voir ci-dessus)"
+    )
     print()
-    print("    Lecture : les jetons sont un INTERVALLE (3,2 a 4,4 caracteres par jeton "
-          "selon")
-    print("    la langue et le code) — un tokenizer reel est une dependance, et la mesure")
-    print("    varie d'un modele a l'autre. Ce qu'on peut dire, on le dit ; le reste est")
+    print(
+        "    Lecture : les jetons sont un INTERVALLE (3,2 a 4,4 caracteres par jeton "
+        "selon"
+    )
+    print(
+        "    la langue et le code) — un tokenizer reel est une dependance, et la mesure"
+    )
+    print(
+        "    varie d'un modele a l'autre. Ce qu'on peut dire, on le dit ; le reste est"
+    )
     print("    declare comme incertain.")
     print()
     # CE QUI A ETE MESURE, et pas suppose : le fichier du disque, ou celui que jio ecrira.
     # Sans cette declaration, l'utilisateur croirait lire la taille de ses fichiers alors
     # qu'il lit celle de la doctrine.
-    divergents = tuple(sorted(set(etat.divergents) | set(etat_skills.divergents)
-                              | set(etat_agents.divergents)))
+    divergents = tuple(
+        sorted(
+            set(etat.divergents)
+            | set(etat_skills.divergents)
+            | set(etat_agents.divergents)
+        )
+    )
     absents = tuple(sorted(set(etat.absents) | set(etat_skills.absents)))
     if divergents:
-        print("    MESURE SUR VOS FICHIERS (ils diffèrent de la doctrine, et c'est EUX que")
-        print("    vos outils chargent). `jio artifacts --write` les mettre a jour, ou les")
+        print(
+            "    MESURE SUR VOS FICHIERS (ils diffèrent de la doctrine, et c'est EUX que"
+        )
+        print(
+            "    vos outils chargent). `jio artifacts --write` les mettre a jour, ou les"
+        )
         print("    PRESERVERA s'ils ne portent pas la marque de jio — comparez-les :")
         for chemin in divergents[:4]:
             cible = Path.cwd() / chemin
             sur_disque_lignes = len(cible.read_text(encoding="utf-8").splitlines())
             doctrine_lignes = len(tous[chemin].splitlines())
-            print(f"      {chemin} : {sur_disque_lignes} ligne(s) ici, "
-                  f"{doctrine_lignes} dans la doctrine")
+            print(
+                f"      {chemin} : {sur_disque_lignes} ligne(s) ici, "
+                f"{doctrine_lignes} dans la doctrine"
+            )
         print()
     if absents:
-        print(f"    {len(absents)} fichier(s) pas encore ecrit(s) : la mesure porte sur ce que "
-              "`jio artifacts --write` ecrira.")
+        print(
+            f"    {len(absents)} fichier(s) pas encore ecrit(s) : la mesure porte sur ce que "
+            "`jio artifacts --write` ecrira."
+        )
         print()
     return 0
 
@@ -2324,8 +2945,8 @@ def _hermes_installer(racine: Path, *, desinstaller: bool, lier: bool) -> int:
     demande explicitement l'installation — ne rien faire parce qu'un dossier n'existe pas encore
     serait une obedience litterale au lieu d'un service.
     """
-    from .artifacts.install_hermes import REGISTRE, desinstaller as retirer
-    from .artifacts.install_hermes import dossier_hermes, installer
+    from .artifacts.install_hermes import REGISTRE, dossier_hermes, installer
+    from .artifacts.install_hermes import desinstaller as retirer
 
     print(BANNER)
     cible = dossier_hermes()
@@ -2384,21 +3005,35 @@ def _auditer_artefacts() -> int:
     print("  AUDIT DES INSTRUCTIONS  ·  ce qui sera execute par un agent")
     print()
     for risque in dangereux:
-        print(f"    [RISQUE]      {risque.artefact} ligne {risque.ligne} : {risque.nature}")
+        print(
+            f"    [RISQUE]      {risque.artefact} ligne {risque.ligne} : {risque.nature}"
+        )
         print(f"                  {risque.extrait}")
     for garde in gardes:
-        print(f"    [garde]       {garde.artefact} ligne {garde.ligne} : {garde.nature}")
+        print(
+            f"    [garde]       {garde.artefact} ligne {garde.ligne} : {garde.nature}"
+        )
         print(f"                  {garde.extrait}")
     print()
     if dangereux:
-        print(f"    {len(dangereux)} motif(s) a instruire. Une competence sera EXECUTEE par un")
-        print("    agent qui peut ecrire : ce qui y est ordonne compte autant que ce qui y est")
+        print(
+            f"    {len(dangereux)} motif(s) a instruire. Une competence sera EXECUTEE par un"
+        )
+        print(
+            "    agent qui peut ecrire : ce qui y est ordonne compte autant que ce qui y est"
+        )
         print("    explique. Corriger, ou justifier dans le texte.")
         print()
         return 1
-    print(f"    aucun motif dangereux · {len(gardes)} mise(s) en garde (comptees, pas condamnees)")
-    print("    -> les interdictions et les explications sont reconnues comme telles : un")
-    print("       controle qui accuse les fichiers qui le protegent se fait desactiver.")
+    print(
+        f"    aucun motif dangereux · {len(gardes)} mise(s) en garde (comptees, pas condamnees)"
+    )
+    print(
+        "    -> les interdictions et les explications sont reconnues comme telles : un"
+    )
+    print(
+        "       controle qui accuse les fichiers qui le protegent se fait desactiver."
+    )
     print()
     return 0
 
@@ -2412,8 +3047,11 @@ def cmd_artifacts(args: argparse.Namespace) -> int:
     if getattr(args, "audit", False):
         return _auditer_artefacts()
     if getattr(args, "install_hermes", False) or getattr(args, "desinstaller", False):
-        return _hermes_installer(Path(args.root), desinstaller=bool(
-            getattr(args, "desinstaller", False)), lier=bool(getattr(args, "lier", False)))
+        return _hermes_installer(
+            Path(args.root),
+            desinstaller=bool(getattr(args, "desinstaller", False)),
+            lier=bool(getattr(args, "lier", False)),
+        )
     from .artifacts import TARGETS, manifest
     from .verify.coherence import manifeste_attendu
 
@@ -2425,21 +3063,28 @@ def cmd_artifacts(args: argparse.Namespace) -> int:
         # apres `jio artifacts --write`, le portail declarait `.mcp.json` et `opencode.json`
         # « divergents », et la commande qu'il recommandait etait celle-la meme.
         canonique = manifest(targets)
-        files = {rel: texte for rel, texte in manifeste_attendu(Path(args.root)).items()
-                 if rel in canonique}
+        files = {
+            rel: texte
+            for rel, texte in manifeste_attendu(Path(args.root)).items()
+            if rel in canonique
+        }
     except ValueError as exc:
         print(f"  {exc}", file=sys.stderr)
         return 2
 
     print()
-    print(f"  ARTEFACTS NATIFS  ·  {len(files)} fichier(s)  ·  cibles : {', '.join(targets)}")
+    print(
+        f"  ARTEFACTS NATIFS  ·  {len(files)} fichier(s)  ·  cibles : {', '.join(targets)}"
+    )
     print()
     for rel in sorted(files):
         print(f"    {rel}")
     print()
 
     if not args.write:
-        print("  mode simulation : rien n'a ete ecrit. Ajoutez --write pour creer les fichiers.")
+        print(
+            "  mode simulation : rien n'a ete ecrit. Ajoutez --write pour creer les fichiers."
+        )
         print()
         return 0
 
@@ -2456,18 +3101,24 @@ def cmd_artifacts(args: argparse.Namespace) -> int:
     print(f"  {len(ecrits)} fichier(s) ecrit(s){detail} sous {root.resolve()}")
     for decision in preserves:
         print(f"    PRESERVE : {decision.chemin} — {decision.detail}")
-    avertis = [d for d in decisions if d.action == "remplace" and "modifiee" in d.detail]
+    avertis = [
+        d for d in decisions if d.action == "remplace" and "modifiee" in d.detail
+    ]
     for decision in avertis:
         print(f"    ATTENTION : {decision.chemin} — {decision.detail}")
     print()
     if preserves:
         # Un fichier NON ecrit n'est pas un succes : un appelant qui enchaine doit pouvoir
         # s'en apercevoir (meme regle que le hook `jio claims`).
-        print("  Des fichiers ont ete PRESERVES : ils ne portent pas la marque de jio, donc")
+        print(
+            "  Des fichiers ont ete PRESERVES : ils ne portent pas la marque de jio, donc"
+        )
         print("  ils sont a vous. Leur version jio est ecrite a cote (suffixe .jio).")
         print()
     print("  Une seule doctrine, tous les dialectes : pour modifier le contenu,")
-    print("  editez jio/artifacts/doctrine.py ou definitions.py, jamais les fichiers generes.")
+    print(
+        "  editez jio/artifacts/doctrine.py ou definitions.py, jamais les fichiers generes."
+    )
     print()
     return 1 if preserves else 0
 
@@ -2485,8 +3136,10 @@ def cmd_trust(args: argparse.Namespace) -> int:
         print(f"  classe   : {klass}")
         print()
         print(f"  bras recommande : {arm.name}")
-        print(f"    candidats/tour {arm.candidates}  ·  tours {arm.rounds}"
-              f"  ·  panel {arm.panel_size}  ·  alpha {arm.alpha}  ·  cout {arm.cost}")
+        print(
+            f"    candidats/tour {arm.candidates}  ·  tours {arm.rounds}"
+            f"  ·  panel {arm.panel_size}  ·  alpha {arm.alpha}  ·  cout {arm.cost}"
+        )
         print(f"    budget d'appels maximum : {arm.budget_calls}")
         print()
     print(router.report())
@@ -2530,18 +3183,28 @@ def cmd_memory(args: argparse.Namespace) -> int:
         # controle, pas un detail.
         ok, cassee = memory.verify()
         if ok and not memory.journal.notices:
-            print(f"  integrite : chaine valide ({memory.size} evenement(s), tete {memory.head})")
+            print(
+                f"  integrite : chaine valide ({memory.size} evenement(s), tete {memory.head})"
+            )
             return 0
         for notice in memory.journal.notices:
             print(f"  INTEGRITE : {notice}", file=sys.stderr)
         if not ok:
-            print(f"  INTEGRITE : CHAINE CASSEE @ {cassee} — le fichier a ete reecrit hors de JIO.",
-                  file=sys.stderr)
-        print("  La chaine est la preuve que rien n'a ete modifie en silence : une rupture ne se",
-              file=sys.stderr)
-        print("  repare pas, elle s'inspecte. Le fichier refuse est CONSERVE (suffixe",
-              file=sys.stderr)
-        print("  `.corrompu-<horodatage>`) : comparez-le, puis decidez.", file=sys.stderr)
+            print(
+                f"  INTEGRITE : CHAINE CASSEE @ {cassee} — le fichier a ete reecrit hors de JIO.",
+                file=sys.stderr,
+            )
+        print(
+            "  La chaine est la preuve que rien n'a ete modifie en silence : une rupture ne se",
+            file=sys.stderr,
+        )
+        print(
+            "  repare pas, elle s'inspecte. Le fichier refuse est CONSERVE (suffixe",
+            file=sys.stderr,
+        )
+        print(
+            "  `.corrompu-<horodatage>`) : comparez-le, puis decidez.", file=sys.stderr
+        )
         return 1
     if args.recall:
         found = memory.recall(args.recall)
@@ -2549,7 +3212,9 @@ def cmd_memory(args: argparse.Namespace) -> int:
         print()
         if not found:
             print("    aucun souvenir pertinent.")
-            print("    Une memoire vide est un etat legitime : le systeme n'invente pas")
+            print(
+                "    Une memoire vide est un etat legitime : le systeme n'invente pas"
+            )
             print("    de mises en garde qu'il n'a pas payees.")
             print()
             return 0
@@ -2597,80 +3262,127 @@ def cmd_learn(args: argparse.Namespace) -> int:
     from .learn.experiment import run_abc
 
     print()
-    print(f"  AUTO-AMELIORATION  ·  competence simulee {args.skill}  ·  {args.runs} tirage(s) "
-          f"par tache  ·  {args.rounds} tours")
+    print(
+        f"  AUTO-AMELIORATION  ·  competence simulee {args.skill}  ·  {args.runs} tirage(s) "
+        f"par tache  ·  {args.rounds} tours"
+    )
     print("  Memoire vive sur disque (usage reel) ; memes graines dans les trois bras.")
     print()
     res = run_abc(skill=args.skill, runs=args.runs, rounds=args.rounds)
 
-    print(f"    {'tache':<16} {'A froid':>8} {'B temoin':>9} {'C chaud':>8}   effet isole")
+    print(
+        f"    {'tache':<16} {'A froid':>8} {'B temoin':>9} {'C chaud':>8}   effet isole"
+    )
     print(f"    {'-' * 16} {'-' * 8} {'-' * 9} {'-' * 8}   {'-' * 11}")
     for tid, (cold, control, warm) in sorted(res.per_task.items()):
         delta = warm - control
         mark = "  <-- gain" if delta > 0 else ("  <-- PERTE" if delta < 0 else "")
-        print(f"    {tid:<16} {cold:>8} {control:>9} {warm:>8}"
-              f"   {delta:>+11d}{mark}")
+        print(f"    {tid:<16} {cold:>8} {control:>9} {warm:>8}   {delta:>+11d}{mark}")
     print()
-    print(f"    A  froid  (sans memoire)             {res.cold_success}/{res.total}"
-          f"  ({res.cold_rate:.1%})")
-    print(f"    B  temoin (memoire, effet desactive) {res.control_success}/{res.total}"
-          f"  ({res.control_rate:.1%})")
-    print(f"    C  chaud  (memoire, effet actif)     {res.warm_success}/{res.total}"
-          f"  ({res.warm_rate:.1%})")
+    print(
+        f"    A  froid  (sans memoire)             {res.cold_success}/{res.total}"
+        f"  ({res.cold_rate:.1%})"
+    )
+    print(
+        f"    B  temoin (memoire, effet desactive) {res.control_success}/{res.total}"
+        f"  ({res.control_rate:.1%})"
+    )
+    print(
+        f"    C  chaud  (memoire, effet actif)     {res.warm_success}/{res.total}"
+        f"  ({res.warm_rate:.1%})"
+    )
     print()
     print("  ISOLATION DE L'EFFET")
-    ecart_ab, (bas_ab, haut_ab), tranche_ab = res.intervalle(res.cold_success, res.control_success)
-    ecart_bc, (bas_bc, haut_bc), tranche_bc = res.intervalle(res.control_success, res.warm_success)
-    print(f"    A -> B  artefact de loterie de graine : {res.lottery_artifact * 100:+.1f} points"
-          f"  IC95 [{bas_ab:+.1f} ; {haut_ab:+.1f}]")
+    _ecart_ab, (bas_ab, haut_ab), tranche_ab = res.intervalle(
+        res.cold_success, res.control_success
+    )
+    _ecart_bc, (bas_bc, haut_bc), tranche_bc = res.intervalle(
+        res.control_success, res.warm_success
+    )
+    print(
+        f"    A -> B  artefact de loterie de graine : {res.lottery_artifact * 100:+.1f} points"
+        f"  IC95 [{bas_ab:+.1f} ; {haut_ab:+.1f}]"
+    )
     print("            (le prompt change, la probabilite non : attendu ~0)")
-    print(f"    B -> C  gain ATTRIBUABLE a la memoire : {res.isolated_gain * 100:+.1f} points"
-          f"  IC95 [{bas_bc:+.1f} ; {haut_bc:+.1f}]")
-    print("            (prompts identiques, seule la probabilite differe : causalement propre)")
+    print(
+        f"    B -> C  gain ATTRIBUABLE a la memoire : {res.isolated_gain * 100:+.1f} points"
+        f"  IC95 [{bas_bc:+.1f} ; {haut_bc:+.1f}]"
+    )
+    print(
+        "            (prompts identiques, seule la probabilite differe : causalement propre)"
+    )
     # Un ecart sans intervalle se lit comme un resultat. Ici, avec un `total` de quelques
     # dizaines d'essais, l'immense majorite des ecarts sont INDETERMINES — et c'est une
     # information sur le banc, pas sur la memoire.
     if not tranche_bc:
         besoin = res.budget_de_mesure()
-        print("    -> l'intervalle du gain attribuable CONTIENT zero : INDETERMINE a cet")
+        print(
+            "    -> l'intervalle du gain attribuable CONTIENT zero : INDETERMINE a cet"
+        )
         print(f"       echantillon ({res.total} essai(s) par bras).")
         if besoin:
-            print(f"       Pour demontrer {res.isolated_gain * 100:+.1f} points : environ "
-                  f"{besoin} essai(s) par bras.")
+            print(
+                f"       Pour demontrer {res.isolated_gain * 100:+.1f} points : environ "
+                f"{besoin} essai(s) par bras."
+            )
         else:
             print("       Aucun nombre d'essais ne demontrera un effet nul.")
     else:
         print("    -> l'intervalle du gain attribuable EXCLUT zero : effet demontre.")
     if tranche_ab:
-        print("    ATTENTION : l'artefact de loterie est lui aussi significatif — le banc")
-        print("    est trop petit pour attribuer l'effet a la memoire plutot qu'a la graine.")
+        print(
+            "    ATTENTION : l'artefact de loterie est lui aussi significatif — le banc"
+        )
+        print(
+            "    est trop petit pour attribuer l'effet a la memoire plutot qu'a la graine."
+        )
     print()
-    print(f"    echecs memorises : {res.recorded}   ·   missions ou un souvenir a ete rappele : "
-          f"{res.missions_with_recall}")
+    print(
+        f"    echecs memorises : {res.recorded}   ·   missions ou un souvenir a ete rappele : "
+        f"{res.missions_with_recall}"
+    )
     print()
     quantum = 100.0 / res.total if res.total else 0.0
     print(f"  RESOLUTION : un quantum = 1 mission = {quantum:.1f} points.")
-    print(f"    Toute difference inferieure a {quantum:.1f} points n'est pas mesurable ici ;")
-    print("    c'est la raison pour laquelle le temoin A -> B est affiche : il montre le")
+    print(
+        f"    Toute difference inferieure a {quantum:.1f} points n'est pas mesurable ici ;"
+    )
+    print(
+        "    c'est la raison pour laquelle le temoin A -> B est affiche : il montre le"
+    )
     print("    plancher de bruit reel, pas un bruit suppose.")
     print()
     if res.isolated_gain <= 0.0:
         print("  DIAGNOSTIC : gain attribuable NON MESURABLE dans ce regime.")
-        print("    Ce n'est pas un echec de la mesure, c'est une conclusion sur l'architecture.")
-        print("    La reprise est deja assuree par deux mecanismes qui ne dependent pas de")
-        print("    la memoire : la LARGEUR DE TIRAGE (best-of-N) et la VERIFICATION, qui")
+        print(
+            "    Ce n'est pas un echec de la mesure, c'est une conclusion sur l'architecture."
+        )
+        print(
+            "    La reprise est deja assuree par deux mecanismes qui ne dependent pas de"
+        )
+        print(
+            "    la memoire : la LARGEUR DE TIRAGE (best-of-N) et la VERIFICATION, qui"
+        )
         print("    SELECTIONNE le bon candidat parmi ceux produits. Quand ces deux-la")
         print("    suffisent, la memoire n'a rien a ajouter : son effet est un gain")
         print("    relatif par tentative, noye dans le nombre de tentatives.")
         print("    Ou la memoire devrait payer : la ou la verification NE VOIT PAS")
-        print("    l'erreur (affirmations non verifiables, choix de conception,"
-              " plausibilite).")
-        print("    Ce banc ne peut pas representer ce regime : il est bati sur des oracles")
+        print(
+            "    l'erreur (affirmations non verifiables, choix de conception,"
+            " plausibilite)."
+        )
+        print(
+            "    Ce banc ne peut pas representer ce regime : il est bati sur des oracles"
+        )
         print("    executables. L'affirmer sans le mesurer serait exactement ce que ce")
         print("    projet refuse.")
     else:
-        print(f"  RESULTAT : gain attribuable de {res.isolated_gain * 100:+.1f} points, a")
-        print("    tirages identiques entre B et C. C'est un effet reel de la mecanique.")
+        print(
+            f"  RESULTAT : gain attribuable de {res.isolated_gain * 100:+.1f} points, a"
+        )
+        print(
+            "    tirages identiques entre B et C. C'est un effet reel de la mecanique."
+        )
     print()
     print("  CE QUE CE CHIFFRE EST, ET CE QU'IL N'EST PAS")
     print("    - c'est la mesure de la MECANIQUE : memoriser, rappeler, injecter.")
@@ -2699,11 +3411,20 @@ def _apprendre_le_gain(args: argparse.Namespace) -> float:
     ce que le protocole peut conclure. La calibration A/B dirait, sur un vrai modele, quel
     gain une reprise apres echec produit — c'est ce que fait l'option `--calibrer-gain`.
     """
-    if getattr(args, "calibrer_gain", False) and float(getattr(args, "gain", 0.20)) == 0.20:
+    if (
+        getattr(args, "calibrer_gain", False)
+        and float(getattr(args, "gain", 0.20)) == 0.20
+    ):
         print("  [CALIBRATION] --calibrer-gain demande : le gain d'avertissement sera")
-        print("    MESURE par le protocole A/B au lieu d'etre declare. Non implemente a ce")
-        print("    jour : le protocole multi-cycles refuse de tourner avec une modelisation")
-        print("    non calibree plutot que de publier un chiffre dont la borne est supposee.")
+        print(
+            "    MESURE par le protocole A/B au lieu d'etre declare. Non implemente a ce"
+        )
+        print(
+            "    jour : le protocole multi-cycles refuse de tourner avec une modelisation"
+        )
+        print(
+            "    non calibree plutot que de publier un chiffre dont la borne est supposee."
+        )
         return -1.0
     return float(getattr(args, "gain", 0.20))
 
@@ -2721,21 +3442,29 @@ def _learn_cycles(args: argparse.Namespace) -> int:
     missions = args.cycles * 3 * len(TASKS) * max(args.runs, 1)
     print()
     print("  AUTO-AMELIORATION MULTI-CYCLES  ·  trois bras apparies par cycle")
-    print(f"    competence simulee {args.skill}  ·  {args.cycles} cycles  ·  {args.runs} "
-          f"tirage(s) par tache  ·  {args.rounds} tours  ·  {len(TASKS)} taches")
+    print(
+        f"    competence simulee {args.skill}  ·  {args.cycles} cycles  ·  {args.runs} "
+        f"tirage(s) par tache  ·  {args.rounds} tours  ·  {len(TASKS)} taches"
+    )
     # Le cout par mission est un DEBIT MESURE (2,3 s/mission, 3 bras, 2 cœurs), pas une
     # estimation d'intention : la version precedente annoncait 1,1 s et sous-estimait la
     # duree reelle d'un facteur deux — une duree annoncee sert a decider, elle doit etre vraie.
     secondes = missions * _SECONDES_PAR_MISSION
-    print(f"    cout annonce : {missions} mission(s) x {_SECONDES_PAR_MISSION} s/mission "
-          f"mesure = ~{secondes / 60:.0f} min sur 2 cœurs")
+    print(
+        f"    cout annonce : {missions} mission(s) x {_SECONDES_PAR_MISSION} s/mission "
+        f"mesure = ~{secondes / 60:.0f} min sur 2 cœurs"
+    )
     if missions > args.plafond_missions:
         print()
-        print(f"  [INDETERMINE] {missions} missions depassent le plafond de "
-              f"{args.plafond_missions} : ce n'est pas une mesure impossible, c'est une")
+        print(
+            f"  [INDETERMINE] {missions} missions depassent le plafond de "
+            f"{args.plafond_missions} : ce n'est pas une mesure impossible, c'est une"
+        )
         print(f"    mesure qui prendrait ~{secondes / 60:.0f} min sur cette machine.")
-        print(f"    Reduire --cycles ou --runs, ou assumer le cout avec "
-              f"`--plafond-missions {missions}`.")
+        print(
+            f"    Reduire --cycles ou --runs, ou assumer le cout avec "
+            f"`--plafond-missions {missions}`."
+        )
         print("    Le protocole ne se degrade PAS en silence : il refuse plutot que de")
         print("    rendre un chiffre qu'il n'a pas les moyens de rendre.")
         return 2
@@ -2743,8 +3472,12 @@ def _learn_cycles(args: argparse.Namespace) -> int:
 
     debut = time.monotonic()
     print("    Par mission : CHAUD (memoire, avertissement actif) -> TEMOIN (memoire")
-    print("    presente, avertissement desactive) -> FROID (aucune memoire). Memes taches,")
-    print("    memes graines, MEME bras : le temoin separe l'effet de la memoire du bruit.")
+    print(
+        "    presente, avertissement desactive) -> FROID (aucune memoire). Memes taches,"
+    )
+    print(
+        "    memes graines, MEME bras : le temoin separe l'effet de la memoire du bruit."
+    )
     print()
     gain = _apprendre_le_gain(args)
     if gain < 0.0:
@@ -2768,24 +3501,44 @@ def _learn_cycles(args: argparse.Namespace) -> int:
             # sans qu'une seule preuve soit ajoutee, et l'intervalle se resserrerait autour de
             # rien. C'est le piege le plus dangereux de tout ce protocole.
             seed_base = 1000 * deja
-            print(f"    CUMUL : {deja} cycle(s) deja mesure(s) dans {chemin.name} ; cette")
-            print(f"    execution utilise des graines DISTINCTES (bloc {seed_base}) — rejouer les")
-            print("    memes graines doublerait le compte sans ajouter une seule preuve.")
+            print(
+                f"    CUMUL : {deja} cycle(s) deja mesure(s) dans {chemin.name} ; cette"
+            )
+            print(
+                f"    execution utilise des graines DISTINCTES (bloc {seed_base}) — rejouer les"
+            )
+            print(
+                "    memes graines doublerait le compte sans ajouter une seule preuve."
+            )
             print()
         try:
-            cumul = Cumul(chemin, skill=args.skill, runs=args.runs, rounds=args.rounds,
-                          gain=gain, seed_base=seed_base)
+            cumul = Cumul(
+                chemin,
+                skill=args.skill,
+                runs=args.runs,
+                rounds=args.rounds,
+                gain=gain,
+                seed_base=seed_base,
+            )
         except ValueError as erreur:
             print(f"  [PROBLEME] {erreur}")
             return 1
-        print("    Chaque cycle est ECRIT des qu'il est mesure : une coupure ne perd que le")
-        print(f"    cycle en cours (fichier {chemin}). Le cumul est VERROUILLE pendant la mesure :")
+        print(
+            "    Chaque cycle est ECRIT des qu'il est mesure : une coupure ne perd que le"
+        )
+        print(
+            f"    cycle en cours (fichier {chemin}). Le cumul est VERROUILLE pendant la mesure :"
+        )
         print("    deux mesures simultanees rejoueraient les memes graines.")
         print()
     try:
         res = run_cycles(
-            skill=args.skill, runs=args.runs, cycles=args.cycles, rounds=args.rounds,
-            warning_gain=gain, seed_base=seed_base,
+            skill=args.skill,
+            runs=args.runs,
+            cycles=args.cycles,
+            rounds=args.rounds,
+            warning_gain=gain,
+            seed_base=seed_base,
             sur_cycle=cumul.ajouter if cumul is not None else None,
         )
     finally:
@@ -2805,11 +3558,15 @@ def _learn_cycles(args: argparse.Namespace) -> int:
         print(f"  CUMUL : {len(res.cycles)} cycle(s) au total dans {chemin}")
         if res.replications_independantes:
             blocs = ", ".join(str(b) for b in res.blocs_de_graines)
-            print(f"  REPLICATIONS INDEPENDANTES : {res.replications_independantes} "
-                  f"(blocs de graines : {blocs})")
+            print(
+                f"  REPLICATIONS INDEPENDANTES : {res.replications_independantes} "
+                f"(blocs de graines : {blocs})"
+            )
             if res.replications_independantes < len(res.replications):
-                print("    ATTENTION : deux executions ont utilise le MEME bloc de graines — "
-                      "elles ne comptent que pour une.")
+                print(
+                    "    ATTENTION : deux executions ont utilise le MEME bloc de graines — "
+                    "elles ne comptent que pour une."
+                )
         print()
     _afficher_le_rapport_cycles(res, debit=debit)
     return 0
@@ -2817,49 +3574,75 @@ def _learn_cycles(args: argparse.Namespace) -> int:
 
 def _afficher_le_rapport_cycles(res: object, *, debit: float) -> None:
     """L'affichage du protocole multi-cycles. Sorti de la commande pour etre lisible."""
-    print(f"    {'cycle':>5} {'memoire':>8} {'rappels':>7} {'jetons':>6} "
-          f"{'froid':>9} {'temoin':>9} {'chaud':>9} {'artef':>6} {'ecart':>7}")
-    print(f"    {'-' * 5} {'-' * 8} {'-' * 7} {'-' * 6} {'-' * 9} {'-' * 9} {'-' * 9} "
-          f"{'-' * 6} {'-' * 7}")
+    print(
+        f"    {'cycle':>5} {'memoire':>8} {'rappels':>7} {'jetons':>6} "
+        f"{'froid':>9} {'temoin':>9} {'chaud':>9} {'artef':>6} {'ecart':>7}"
+    )
+    print(
+        f"    {'-' * 5} {'-' * 8} {'-' * 7} {'-' * 6} {'-' * 9} {'-' * 9} {'-' * 9} "
+        f"{'-' * 6} {'-' * 7}"
+    )
     for cycle in res.cycles:
         print(cycle.ligne())
     print()
-    print(f"  MEMOIRE ACCUMULEE : {res.memo_final} souvenir(s) apres {len(res.cycles)} cycle(s)")
-    print(f"  BRUIT DE FOND (froid -> temoin, sans effet de memoire) : "
-          f"{res.artefact_max} reussite(s) au pire cycle")
+    print(
+        f"  MEMOIRE ACCUMULEE : {res.memo_final} souvenir(s) apres {len(res.cycles)} cycle(s)"
+    )
+    print(
+        f"  BRUIT DE FOND (froid -> temoin, sans effet de memoire) : "
+        f"{res.artefact_max} reussite(s) au pire cycle"
+    )
     armes = sum(c.avertis for c in res.cycles)
     total = sum(c.appels for c in res.cycles)
-    print(f"  PORTEE DU LEVIER : {armes}/{total} appel(s) de generation avertis "
-          f"({res.portee:.1%}) — c'est ce qui borne tout effet possible de la memoire.")
+    print(
+        f"  PORTEE DU LEVIER : {armes}/{total} appel(s) de generation avertis "
+        f"({res.portee:.1%}) — c'est ce qui borne tout effet possible de la memoire."
+    )
     b, c = res.paires
     bas, haut = res.intervalle_apparie
-    print(f"  TEST APPARIE (McNemar exact, le plan experimental) : la memoire fait REUSSIR "
-          f"seule {b} fois, ECHOUER seule {c} fois — p = {res.p_valeur_appariee:.4f}")
-    print(f"    IC95 de la difference (paires) : [{bas:+.3f} ; {haut:+.3f}]"
-          + ("   -> zéro EXCLU" if res.tranche_apparie else "   -> contient zéro"))
+    print(
+        f"  TEST APPARIE (McNemar exact, le plan experimental) : la memoire fait REUSSIR "
+        f"seule {b} fois, ECHOUER seule {c} fois — p = {res.p_valeur_appariee:.4f}"
+    )
+    print(
+        f"    IC95 de la difference (paires) : [{bas:+.3f} ; {haut:+.3f}]"
+        + ("   -> zéro EXCLU" if res.tranche_apparie else "   -> contient zéro")
+    )
     blocs = res.effet_par_bloc()
     if len(blocs) > 1:
-        print("  REPLICATIONS INDEPENDANTES (un cumul est une somme de tirages, pas une "
-              "moyenne) :")
+        print(
+            "  REPLICATIONS INDEPENDANTES (un cumul est une somme de tirages, pas une "
+            "moyenne) :"
+        )
         for bloc, ecart, b, c in blocs:
-            print(f"    bloc de graines {bloc:>5} : {ecart:+d} reussite(s) "
-                  f"({b} contre {c} dissociation(s))")
+            print(
+                f"    bloc de graines {bloc:>5} : {ecart:+d} reussite(s) "
+                f"({b} contre {c} dissociation(s))"
+            )
     requis = res.essais_requis()
     if requis:
         # 3 bras par paire mesuree : c'est le cout reel du protocole, pas une estimation.
         minutes = requis * 3 / debit / 60.0 if debit else 0.0
-        print(f"  PAIRES REQUISES POUR DEMONTRER LA DISSOCIATION : ~{requis}, soit "
-              f"~{minutes:.0f} min ici au debit mesure ({debit:.2f} essai/s).")
-        print("    (Mesure a 95 % de confiance et 80 % de puissance, formule du banc ; "
-              "c'est un budget, pas un verdict.)")
+        print(
+            f"  PAIRES REQUISES POUR DEMONTRER LA DISSOCIATION : ~{requis}, soit "
+            f"~{minutes:.0f} min ici au debit mesure ({debit:.2f} essai/s)."
+        )
+        print(
+            "    (Mesure a 95 % de confiance et 80 % de puissance, formule du banc ; "
+            "c'est un budget, pas un verdict.)"
+        )
     print(f"  DEBIT MESURE : {debit:.2f} essai(s)/s sur cette machine.")
     if res.bras:
         print("  ROUTAGE (le bandit, mesure sur tout l'historique) :")
         for nom, tirages, recompense in res.bras:
-            print(f"    {nom:<10} {tirages:>3} tirage(s)   recompense moyenne {recompense:+.3f}")
+            print(
+                f"    {nom:<10} {tirages:>3} tirage(s)   recompense moyenne {recompense:+.3f}"
+            )
     if res.meilleur_bras:
-        print(f"    concentration sur le meilleur bras ({res.meilleur_bras}) : "
-              f"{res.concentration:.0%}   ·   regret mesure : {res.regret:.2f}")
+        print(
+            f"    concentration sur le meilleur bras ({res.meilleur_bras}) : "
+            f"{res.concentration:.0%}   ·   regret mesure : {res.regret:.2f}"
+        )
     print()
     print(f"  VERDICT : {res.verdict()}")
     print()
@@ -2868,10 +3651,16 @@ def _afficher_le_rapport_cycles(res: object, *, debit: float) -> None:
     print()
     print("  CE QUE CE PROTOCOLE NE DIT PAS")
     print("    - le modele est SIMULE : ce n'est pas une mesure de modele reel.")
-    print("    - l'effet d'un souvenir injecte est une MODELISATION declaree (gain relatif).")
+    print(
+        "    - l'effet d'un souvenir injecte est une MODELISATION declaree (gain relatif)."
+    )
     print("    - un plateau ici ne condamne pas la memoire : il dit qu'a ce niveau de")
-    print("      difficulte la VERIFICATION suffisait deja. Le banc ne represente pas le")
-    print("      regime ou la verification ne voit pas l'erreur (plausibilite, conception).")
+    print(
+        "      difficulte la VERIFICATION suffisait deja. Le banc ne represente pas le"
+    )
+    print(
+        "      regime ou la verification ne voit pas l'erreur (plausibilite, conception)."
+    )
     print()
 
 
@@ -2905,7 +3694,9 @@ def _classify_failure(stderr: str, exit_code: int) -> str:
     # de commande, saisie clavier — echoue en bac a sable ferme. `EOFError` (stdin
     # ferme), `SystemExit` (argparse sans arguments) et `KeyboardInterrupt` ne disent
     # rien sur la correction du code : c'est notre facon de mesurer qui est en cause.
-    if any(marque in text for marque in ("EOFError", "SystemExit", "KeyboardInterrupt")):
+    if any(
+        marque in text for marque in ("EOFError", "SystemExit", "KeyboardInterrupt")
+    ):
         return "environment"
     if "[RESERVE]" in text:
         return "reserve"
@@ -2929,12 +3720,34 @@ def _classify_failure(stderr: str, exit_code: int) -> str:
 #: dependances, des caches et des artefacts de construction. Le nom du dossier est
 #: compare SOUS la racine balayee, jamais au-dessus : on peut donc auditer un paquet
 #: installe en le nommant directement.
-DOSSIERS_IGNORES = frozenset({
-    ".git", ".hg", ".svn", ".venv", "venv", ".tox", ".nox", "env",
-    "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".pytype",
-    "node_modules", "site-packages", "dist-packages", "build", "dist",
-    ".eggs", ".idea", ".vscode", "vendor", "third_party", ".direnv",
-})
+DOSSIERS_IGNORES = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        ".tox",
+        ".nox",
+        "env",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".pytype",
+        "node_modules",
+        "site-packages",
+        "dist-packages",
+        "build",
+        "dist",
+        ".eggs",
+        ".idea",
+        ".vscode",
+        "vendor",
+        "third_party",
+        ".direnv",
+    }
+)
 
 
 #: Marqueur par lequel un fichier DECLARE contenir une faute VOLONTAIRE.
@@ -2959,6 +3772,11 @@ def _est_ignore(chemin: Path, racine: Path) -> bool:
         relatif = chemin.relative_to(racine)
     except ValueError:
         return False
+    # La forge persiste des fiches Markdown contenant volontairement les extraits
+    # des constats (y compris les fausses commandes/calculs qu'elle doit réparer).
+    # Ces preuves restent auditées dans report.json et ne sont pas du contenu source.
+    if relatif.parts[:2] == (".jio", "improve"):
+        return True
     for partie in relatif.parts[:-1]:
         if partie in DOSSIERS_IGNORES or partie.endswith(".egg-info"):
             return True
@@ -2982,9 +3800,16 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     files = sorted(root.rglob("*.py")) if root.is_dir() else [root]
     if args.exclude_tests:
-        files = [f for f in files
-                 if not (f.name.startswith("test_") or f.name == "conftest.py"
-                         or "/tests/" in str(f) or "/test/" in str(f))]
+        files = [
+            f
+            for f in files
+            if not (
+                f.name.startswith("test_")
+                or f.name == "conftest.py"
+                or "/tests/" in str(f)
+                or "/test/" in str(f)
+            )
+        ]
 
     # On IGNORE les dossiers qui ne contiennent pas le code du projet (mesure :
     # sans ce filtre, `jio scan .` sur ce depot lisait 1363 fichiers — l'environnement
@@ -2995,8 +3820,15 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if root.is_dir() and not getattr(args, "tout", False):
         gardes = [f for f in files if not _est_ignore(f, root)]
         if len(gardes) != len(files):
-            sous = {p.parts[len(root.parts)] for p in files
-                    if _est_ignore(p, root) and len(p.parts) > len(root.parts)}
+            sous = set()
+            for path in files:
+                if not _est_ignore(path, root) or len(path.parts) <= len(root.parts):
+                    continue
+                relatif = path.relative_to(root)
+                if relatif.parts[:2] == (".jio", "improve"):
+                    sous.add(".jio/improve")
+                else:
+                    sous.add(path.parts[len(root.parts)])
             ignores = sorted(sous)
         files = gardes
 
@@ -3007,11 +3839,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
     # passage d'oublier une moitie du projet.
     documents = (
         sorted(
-            d for suffixe in (".md", ".markdown", ".rst")
+            d
+            for suffixe in (".md", ".markdown", ".rst")
             for d in root.rglob(f"*{suffixe}")
             if not getattr(args, "tout", False) and not _est_ignore(d, root)
         )
-        if root.is_dir() else []
+        if root.is_dir()
+        else []
     )
 
     # LA PROSE DE JIO N'EST PAS CELLE DU PROJET. Mesure faite sur un projet ETRANGER, apres
@@ -3036,13 +3870,18 @@ def cmd_scan(args: argparse.Namespace) -> int:
     # c'est exactement le genre de « correction » qui rend un outil aveugle en le rendant
     # silencieux. Le filtre ne sert qu'a un projet qui N'EST PAS jio.
     proscrits: list[Path] = []
-    if (root.is_dir() and not getattr(args, "tout", False)
-            and not (root / "jio" / "__init__.py").is_file()):
+    if (
+        root.is_dir()
+        and not getattr(args, "tout", False)
+        and not (root / "jio" / "__init__.py").is_file()
+    ):
         gardes_documents = []
         for document in documents:
             marque = False
             try:
-                marque = _porte_la_marque(document.read_text(encoding="utf-8", errors="replace"))
+                marque = _porte_la_marque(
+                    document.read_text(encoding="utf-8", errors="replace")
+                )
             except OSError:
                 pass
             if marque or est_un_document_de_jio(document, root):
@@ -3052,8 +3891,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
         documents = gardes_documents
 
     prover = ExecutableProver(sandbox=Sandbox(timeout=args.timeout))
-    problems: list[tuple[Path, str, str]] = []    # fichier, regle, preuve
-    environment: list[tuple[Path, str, str]] = []  # verification impossible : pas un defaut
+    problems: list[tuple[Path, str, str]] = []  # fichier, regle, preuve
+    environment: list[
+        tuple[Path, str, str]
+    ] = []  # verification impossible : pas un defaut
     reserves: list[tuple[Path, str, str]] = []
     partial: dict[Path, list[str]] = {}
     unverifiable: list[Path] = []
@@ -3076,14 +3917,15 @@ def cmd_scan(args: argparse.Namespace) -> int:
             continue
         try:
             derived = derive(source, path=path)
-        except Exception as exc:                    # un fichier hostile ne casse pas le scan
+        except Exception as exc:  # un fichier hostile ne casse pas le scan
             problems.append((path, "SCAN", f"analyse impossible : {exc}"[:120]))
             continue
         if not derived.verifiable:
             # Un fichier qui ne compile pas n'est PAS « non verifiable » : c'est un
             # defaut, et le plus grave qui soit puisqu'il empeche tout le reste.
-            broken = next((u for u in derived.spec.under_specified
-                           if "ne compile pas" in u), "")
+            broken = next(
+                (u for u in derived.spec.under_specified if "ne compile pas" in u), ""
+            )
             if broken:
                 problems.append((path, "SYNTAXE", broken[:160]))
             else:
@@ -3092,8 +3934,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
         with_rules += 1
         try:
             res = prover.prove(
-                source, derived.spec, hidden_checks=derived.checks,
-                entrypoint=derived.entrypoint, preamble=derived.preamble,
+                source,
+                derived.spec,
+                hidden_checks=derived.checks,
+                entrypoint=derived.entrypoint,
+                preamble=derived.preamble,
                 # Le vrai chemin : le fichier audite recoit son propre `__file__`, donc un
                 # test qui situe ses donnees par rapport a lui-meme les trouve. Sans cela
                 # il cherchait sous /tmp et le scan concluait « non testable ».
@@ -3117,18 +3962,25 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 # exemples qui supposent un contexte (fixture de test), exemples
                 # d'illustration sans sortie attendue. On le SIGNALE, on ne condamne
                 # pas.
-                reserves.append((path, w.rule_id, message.replace("[RESERVE]", "").strip()[:120]))
+                reserves.append(
+                    (path, w.rule_id, message.replace("[RESERVE]", "").strip()[:120])
+                )
             else:
                 problems.append((path, w.rule_id, message))
         for w in res.reservations:
-            lines = [x.strip() for x in (w.stderr or w.stdout or "").splitlines() if x.strip()]
-            reserves.append((path, w.rule_id, (lines[-1] if lines else "non tranche")[:120]))
+            lines = [
+                x.strip()
+                for x in (w.stderr or w.stdout or "").splitlines()
+                if x.strip()
+            ]
+            reserves.append(
+                (path, w.rule_id, (lines[-1] if lines else "non tranche")[:120])
+            )
         # Une limite declaree n'est pas un defaut : c'est la liste de ce que ces
         # regles-la ne savent pas juger (parametres non annotes, fonctions hors
         # audit, hasard hors des fonctions auditees). La taire serait presenter un
         # audit partiel comme un audit complet.
-        limits = [u for u in derived.spec.under_specified
-                  if "ne compile pas" not in u]
+        limits = [u for u in derived.spec.under_specified if "ne compile pas" not in u]
         if limits:
             partial.setdefault(path, []).extend(limits)
 
@@ -3147,19 +3999,31 @@ def cmd_scan(args: argparse.Namespace) -> int:
         if _corpus_volontaire(texte):
             corpus_volontaire.append(document)
             continue
-        rapport = verifier_la_prose(texte, racine=root if root.is_dir() else root.parent)
+        rapport = verifier_la_prose(
+            texte, racine=root if root.is_dir() else root.parent
+        )
         if not rapport.verifications:
             unverifiable.append(document)
             continue
         with_rules += 1
         checked += rapport.verifiees + rapport.refutees
         for verification in rapport.bloquantes:
-            problems.append((document, verification.affirmation.genre.value.upper(),
-                             verification.message[:200]))
+            problems.append(
+                (
+                    document,
+                    verification.affirmation.genre.value.upper(),
+                    verification.message[:200],
+                )
+            )
         for verification in rapport.verifications:
             if not verification.ok and not verification.bloquant:
-                reserves.append((document, verification.affirmation.genre.value.upper(),
-                                 verification.message[:120]))
+                reserves.append(
+                    (
+                        document,
+                        verification.affirmation.genre.value.upper(),
+                        verification.message[:120],
+                    )
+                )
 
     # --- coherence des imports internes (aucune execution, deterministe) ----- #
     import_problems: list[tuple[Path, str, str]] = []
@@ -3172,7 +4036,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 import_problems.append((prob.path, "IMPORT", prob.message))
 
         except Exception as exc:  # une analyse qui echoue ne doit pas tuer le scan
-            import_problems.append((root, "IMPORT", f"analyse impossible : {exc}"[:120]))
+            import_problems.append(
+                (root, "IMPORT", f"analyse impossible : {exc}"[:120])
+            )
     problems.extend(import_problems)
 
     # --- analyseurs standards du metier ------------------------------------- #
@@ -3186,14 +4052,19 @@ def cmd_scan(args: argparse.Namespace) -> int:
         from .verify.linters import analyse as linter_analyse
 
         report = linter_analyse(
-            files, root=root if root.is_dir() else root.parent,
+            files,
+            root=root if root.is_dir() else root.parent,
             timeout=max(args.timeout * 10, 120),
             prefer=str_env("JIO_LINTERS", "auto"),
         )
         linter_tool, linter_note = report.tool, report.note
         broken = {path for path, rule, _ in problems if rule == "SYNTAXE"}
         for finding in report.findings:
-            target = finding.path if (root / finding.path).exists() else root.parent / finding.path
+            target = (
+                finding.path
+                if (root / finding.path).exists()
+                else root.parent / finding.path
+            )
             if finding.path in broken or target in broken:
                 continue  # deja signale comme incompilable : pas de doublon
             cible = target if target.exists() else finding.path
@@ -3211,20 +4082,25 @@ def cmd_scan(args: argparse.Namespace) -> int:
             )
 
     print()
-    print(f"  SCAN  {root}  ·  {len(files)} fichier(s) Python  ·  "
-          f"{len(documents)} document(s)  ·  {checked} verification(s)")
+    print(
+        f"  SCAN  {root}  ·  {len(files)} fichier(s) Python  ·  "
+        f"{len(documents)} document(s)  ·  {checked} verification(s)"
+    )
     if ignores:
-        print(f"  dossiers ignores : {', '.join(ignores)}"
-              "   (--tout pour les inclure)")
+        print(f"  dossiers ignores : {', '.join(ignores)}   (--tout pour les inclure)")
     if corpus_volontaire:
-        print(f"  corpus de fautes VOLONTAIRES : {len(corpus_volontaire)} fichier(s) "
-              f"exclu(s) sur leur propre declaration ({MARQUEUR_CORPUS})")
+        print(
+            f"  corpus de fautes VOLONTAIRES : {len(corpus_volontaire)} fichier(s) "
+            f"exclu(s) sur leur propre declaration ({MARQUEUR_CORPUS})"
+        )
     if proscrits:
         # Ce qui est ecarte est DIT : un balayage qui se tairait sur ce qu'il n'a pas regarde
         # serait le silence que ce projet refuse. Et la raison est donnee, pour que l'utilisateur
         # qui veut vraiment auditer nos documents puisse le faire (`--tout` les remet dedans).
-        print(f"  document(s) de jio hors du champ : {len(proscrits)} "
-              "(ils citent les chemins de jio, pas ceux de ce projet) — `--tout` pour les inclure")
+        print(
+            f"  document(s) de jio hors du champ : {len(proscrits)} "
+            "(ils citent les chemins de jio, pas ceux de ce projet) — `--tout` pour les inclure"
+        )
     print()
     # --- les DEPENDANCES du projet : un rouge qui attend son heure ---------------- #
     # Un test qui importe un paquet non declare passe chez celui qui l'a installe un jour
@@ -3254,41 +4130,59 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print()
 
     if environment:
-        print(f"  {len(environment)} FICHIER(S) NON TESTABLE(S) ICI — ce n'est PAS un defaut :")
+        print(
+            f"  {len(environment)} FICHIER(S) NON TESTABLE(S) ICI — ce n'est PAS un defaut :"
+        )
         for path, rule, detail in environment[:6]:
             print(f"    {path.name} [{rule}] {detail[:100]}")
         if len(environment) > 6:
             print(f"    ... et {len(environment) - 6} autre(s)")
-        print("    cause : l'environnement est incomplet (dependance generee, paquet non")
-        print("    installe). Installer le projet puis relancer donnerait un vrai verdict.")
+        print(
+            "    cause : l'environnement est incomplet (dependance generee, paquet non"
+        )
+        print(
+            "    installe). Installer le projet puis relancer donnerait un vrai verdict."
+        )
         print()
 
     if reserves:
-        print(f"  {len(reserves)} RESERVE(S) (suspect, non prouve — jamais un verdict) :")
+        print(
+            f"  {len(reserves)} RESERVE(S) (suspect, non prouve — jamais un verdict) :"
+        )
         for path, rule, why in reserves[:10]:
             print(f"    {path.name} [{rule}] {why}")
         if len(reserves) > 10:
             print(f"    ... et {len(reserves) - 10} autre(s)")
-        print("    une reserve n'est pas une accusation : c'est ce que ces regles-la ne")
+        print(
+            "    une reserve n'est pas une accusation : c'est ce que ces regles-la ne"
+        )
         print("    savent pas trancher. Elle ne fait jamais echouer le scan.")
         print()
 
     if partial:
         if args.verbose:
-            print(f"  {len(partial)} FICHIER(S) A AUDIT PARTIEL — ce qui reste NON verifie :")
+            print(
+                f"  {len(partial)} FICHIER(S) A AUDIT PARTIEL — ce qui reste NON verifie :"
+            )
             for path in list(partial)[:8]:
                 print(f"    {path.name}")
                 for limit in partial[path][:5]:
                     print(f"        · {limit[:150]}")
             if len(partial) > 8:
-                print(f"    ... et {len(partial) - 8} autre(s) — jio scan -v pour tout voir")
+                print(
+                    f"    ... et {len(partial) - 8} autre(s) — jio scan -v pour tout voir"
+                )
         else:
             worst = sorted(partial.items(), key=lambda kv: -len(kv[1]))[:3]
             print(f"  {len(partial)} fichier(s) a audit PARTIEL (limites declarees) :")
             for path, limits in worst:
                 print(f"    {path.name} : {limits[0][:110]}")
-            print("    relancer avec -v pour la liste complete. Un audit partiel n'est pas")
-            print("    un audit complet : ces limites sont declarees, jamais presumees.")
+            print(
+                "    relancer avec -v pour la liste complete. Un audit partiel n'est pas"
+            )
+            print(
+                "    un audit complet : ces limites sont declarees, jamais presumees."
+            )
         print()
 
     if unverifiable and args.verbose:
@@ -3317,27 +4211,43 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 break
 
     if linter_tool:
-        print(f"    analyseurs standards : {linter_tool} (regles de vrais bugs, sans style)")
+        print(
+            f"    analyseurs standards : {linter_tool} (regles de vrais bugs, sans style)"
+        )
     elif linter_note:
         print(f"    analyseurs standards : {linter_note}")
-    print(f"    {with_rules} fichier(s) verifiable(s) · {len(unverifiable)} sans regle"
-          f" · {len(environment)} non testable(s) ici · {len(reserves)} reserve(s)"
-          f" · {len(partial)} a audit partiel")
+    print(
+        f"    {with_rules} fichier(s) verifiable(s) · {len(unverifiable)} sans regle"
+        f" · {len(environment)} non testable(s) ici · {len(reserves)} reserve(s)"
+        f" · {len(partial)} a audit partiel"
+    )
     if dependances:
-        print(f"    {len(dependances)} dependance(s) de test NON declaree(s) — un clone neuf")
+        print(
+            f"    {len(dependances)} dependance(s) de test NON declaree(s) — un clone neuf"
+        )
     if remembered:
-        print(f"    {remembered} probleme(s) memorise(s) : la prochaine execution saura quoi")
+        print(
+            f"    {remembered} probleme(s) memorise(s) : la prochaine execution saura quoi"
+        )
         print(f"    eviter, et pourquoi. Consulter : jio memory --state {args.state}")
-    print("    Lecture du resultat : code 0 = rien trouve ; code 1 = au moins un defaut")
+    print(
+        "    Lecture du resultat : code 0 = rien trouve ; code 1 = au moins un defaut"
+    )
     print("    reel avec sa preuve. Un fichier sans regle executable n'est PAS un")
-    print("    fichier correct : c'est un fichier que ces regles-la ne savent pas juger.")
+    print(
+        "    fichier correct : c'est un fichier que ces regles-la ne savent pas juger."
+    )
 
     if dependances:
         print(f"  {len(dependances)} DEPENDANCE(S) DES TESTS NON DECLAREE(S) :")
         for detail in dependances:
             print(f"    {detail}")
-        print("    un test qui importe un paquet non declare passe sur la machine ou il est")
-        print("    installe, et echoue sur un clone neuf. Declarer dans `pyproject.toml`")
+        print(
+            "    un test qui importe un paquet non declare passe sur la machine ou il est"
+        )
+        print(
+            "    installe, et echoue sur un clone neuf. Declarer dans `pyproject.toml`"
+        )
         print("    (dependances ou extras) ou installer explicitement dans la CI.")
         print()
 
@@ -3351,14 +4261,20 @@ def cmd_scan(args: argparse.Namespace) -> int:
     # impossible). Le mode normal les montre ; le mode strict refuse de les laisser passer.
     if getattr(args, "strict", False):
         print()
-        print("  MODE STRICT — les reserves et les fichiers non testables font echouer.")
+        print(
+            "  MODE STRICT — les reserves et les fichiers non testables font echouer."
+        )
         bloquants = len(reserves) + len(environment)
         if bloquants == 0:
             print("    -> 0 reserve, 0 non testable : la porte est franchie.")
         else:
-            print(f"    -> {len(reserves)} reserve(s) et {len(environment)} fichier(s) non "
-                  "testable(s) : a instruire.")
-            print("       Une reserve n'est pas une accusation, mais elle n'est pas un quitus")
+            print(
+                f"    -> {len(reserves)} reserve(s) et {len(environment)} fichier(s) non "
+                "testable(s) : a instruire."
+            )
+            print(
+                "       Une reserve n'est pas une accusation, mais elle n'est pas un quitus"
+            )
             print("       non plus : en CI, elle doit etre levee ou declaree.")
         print()
         return 1 if (problems or reserves or environment) else 0
@@ -3367,7 +4283,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
-    from .mcp_server import TOOLS, main as mcp_main
+    from .mcp_server import TOOLS
+    from .mcp_server import main as mcp_main
 
     if getattr(args, "prove", None) is not None:
         from .artifacts.wiring import _COMMANDE, prouver_branchement
@@ -3380,7 +4297,9 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         commande = tuple(args.prove.split()) if args.prove else _COMMANDE
         print(prouver_branchement(commande))
         print()
-        print("  Une configuration correcte qui ne branche RIEN est le defaut que cette")
+        print(
+            "  Une configuration correcte qui ne branche RIEN est le defaut que cette"
+        )
         print("  sonde existe pour attraper : `python3` peut exister sans `jio`.")
         print()
         return 0
@@ -3405,11 +4324,17 @@ def _outils_mcp(tools: Sequence[Mapping[str, object]], *, interactif: bool) -> N
     print("  SERVEUR MCP JIO  ·  transport stdio, JSON-RPC 2.0, zero dependance")
     print()
     if interactif:
-        print("  Cette commande demarre un SERVEUR : elle parle JSON-RPC 2.0 sur son entree")
-        print("  standard et sur sa sortie standard. Lancee dans un terminal, elle n'aurait")
+        print(
+            "  Cette commande demarre un SERVEUR : elle parle JSON-RPC 2.0 sur son entree"
+        )
+        print(
+            "  standard et sur sa sortie standard. Lancee dans un terminal, elle n'aurait"
+        )
         print("  rien a repondre — donc elle montre a la place ce qu'elle sert.")
         print()
-        print("  Pour l'interroger : `jio mcp --prove` demarre le serveur et compte les outils")
+        print(
+            "  Pour l'interroger : `jio mcp --prove` demarre le serveur et compte les outils"
+        )
         print(f"  qu'il rend vraiment, par la commande `{' '.join(_COMMANDE)}`.")
         print()
     for tool in tools:
@@ -3418,7 +4343,9 @@ def _outils_mcp(tools: Sequence[Mapping[str, object]], *, interactif: bool) -> N
     print("  Configuration : `jio artifacts --mcp <dialecte>` pour opencode, Hermes,")
     print("  Codex, Claude Code ou Cursor ; `jio artifacts --target mcp --write` pour")
     print("  `.mcp.json` (dialecte de Claude Code, lu aussi par Cursor).")
-    print("  Preuve du cablage : `jio mcp --prove`. Securite : chemins confines a JIO_ROOT.")
+    print(
+        "  Preuve du cablage : `jio mcp --prove`. Securite : chemins confines a JIO_ROOT."
+    )
     print()
 
 
@@ -3431,8 +4358,10 @@ def cmd_trace(args: argparse.Namespace) -> int:
     plus recent au plus ancien, et on dit clairement quoi faire s'il n'y en a pas.
     """
     explicite = bool(args.journal)
-    path = Path(args.journal) if explicite else Path(
-        str_env("JIO_JOURNAL", ".jio/journal.jsonl")
+    path = (
+        Path(args.journal)
+        if explicite
+        else Path(str_env("JIO_JOURNAL", ".jio/journal.jsonl"))
     )
     if explicite and not path.is_file():
         # DEFAUT MESURE, corrige ici : `jio trace /tmp/inexistant.jsonl` cherchait un AUTRE
@@ -3447,12 +4376,18 @@ def cmd_trace(args: argparse.Namespace) -> int:
             reverse=True,
         )
         if candidats:
-            print(f"  Journal(x) disponible(s) ici : {', '.join(str(c) for c in candidats[:3])}")
-            print("  Relancez avec un de ces chemins si c'est celui que vous voulez verifier.")
+            print(
+                f"  Journal(x) disponible(s) ici : {', '.join(str(c) for c in candidats[:3])}"
+            )
+            print(
+                "  Relancez avec un de ces chemins si c'est celui que vous voulez verifier."
+            )
         else:
             print("  Aucun journal dans ce depot : rien n'a encore ete execute.")
             print("  Un journal se cree a la premiere mission :")
-            print("      jio run \"corriger la somme des pairs\" --task sum_even --simulate")
+            print(
+                '      jio run "corriger la somme des pairs" --task sum_even --simulate'
+            )
         print()
         from .core.codes import ACTION, INDETERMINE
 
@@ -3470,7 +4405,9 @@ def cmd_trace(args: argparse.Namespace) -> int:
             print()
             print("  Aucun journal pour l'instant : rien n'a encore ete execute.")
             print("  Un journal se cree a la premiere mission :")
-            print("      jio run \"corriger la somme des pairs\" --task sum_even --simulate")
+            print(
+                '      jio run "corriger la somme des pairs" --task sum_even --simulate'
+            )
             print("  Chaque evenement est chaine par hachage : rejouer ne peut pas")
             print("  mentir, et `jio trace` verifie cette chaine.")
             print()
@@ -3484,7 +4421,9 @@ def cmd_trace(args: argparse.Namespace) -> int:
         # « propre » ne veut rien dire. On le dit, au lieu de rendre un quitus sur du vide.
         print()
         print(f"  {path} est vide : il n'y a rien a verifier.")
-        print("  Un journal vide n'est pas un journal intact — c'est un journal absent.")
+        print(
+            "  Un journal vide n'est pas un journal intact — c'est un journal absent."
+        )
         print()
         from .core.codes import ACTION, INDETERMINE
 
@@ -3496,7 +4435,9 @@ def cmd_trace(args: argparse.Namespace) -> int:
 
     print()
     print(f"  JOURNAL  {path}")
-    print(f"  {summary['events']} evenements  ·  chaine {'INTEGRE' if ok else f'CASSEE @ {bad}'}")
+    print(
+        f"  {summary['events']} evenements  ·  chaine {'INTEGRE' if ok else f'CASSEE @ {bad}'}"
+    )
     print(f"  tete : {journal.head}")
     print()
     for ev in journal:
@@ -3517,17 +4458,27 @@ def cmd_trace(args: argparse.Namespace) -> int:
     for entree in mondes:
         marque = "  (etat actuel)" if entree["sceau"] == courant["sceau"] else ""
         revision = f"  revision {entree['revision'][:9]}" if entree["revision"] else ""
-        print(f"    sceau {entree['sceau'][:12] or '(absent)'}{revision}"
-              f"  ·  {len(entree['evenements'])} evenement(s){marque}")
+        print(
+            f"    sceau {entree['sceau'][:12] or '(absent)'}{revision}"
+            f"  ·  {len(entree['evenements'])} evenement(s){marque}"
+        )
     if len(mondes) > 1:
         print()
-        print("    ATTENTION : le monde a change PENDANT cette mission. Une conclusion peut")
-        print("    s'appuyer sur des observations faites sur deux etats differents — il faut")
+        print(
+            "    ATTENTION : le monde a change PENDANT cette mission. Une conclusion peut"
+        )
+        print(
+            "    s'appuyer sur des observations faites sur deux etats differents — il faut"
+        )
         print("    la relire avant de l'utiliser comme preuve.")
     elif mondes and courant["sceau"] and mondes[0]["sceau"] != courant["sceau"]:
         print()
-        print("    Ces preuves portent sur un etat ANTERIEUR du depot : le contenu a change")
-        print("    depuis. Elles restent valides pour ce qu'elles decrivent, pas pour l'etat")
+        print(
+            "    Ces preuves portent sur un etat ANTERIEUR du depot : le contenu a change"
+        )
+        print(
+            "    depuis. Elles restent valides pour ce qu'elles decrivent, pas pour l'etat"
+        )
         print("    actuel. Pour comparer a coup sur : `jio doctor` puis `jio recover`.")
     print()
 
@@ -3602,18 +4553,67 @@ def build_parser() -> argparse.ArgumentParser:
     doc = sub.add_parser("doctor", help="etat du systeme")
     doc.set_defaults(func=cmd_doctor)
     doc.add_argument(
-        "--root", default=".", metavar="CHEMIN",
+        "--root",
+        default=".",
+        metavar="CHEMIN",
         help="depot a diagnostiquer (defaut : le dossier courant)",
     )
     sub.add_parser("tasks", help="liste le banc d'essai").set_defaults(func=cmd_tasks)
-    p_rec = sub.add_parser(
-        "recover", help="restaure l'historique d'un depot reinitialise, sans rien detruire"
+    perf = sub.add_parser(
+        "perf", help="mesure le coût local du runner de vérification (sans modèle)"
     )
-    p_rec.add_argument("--root", default=".", help="racine du depot (defaut : dossier courant)")
-    p_rec.add_argument("--remote", default="origin", help="depot distant (defaut : origin)")
-    p_rec.add_argument("--branch", default="", help="branche a recuperer (defaut : la courante)")
+    perf.add_argument(
+        "--runs", type=int, default=5, help="répétitions par charge (1–100)"
+    )
+    perf.add_argument("--json", action="store_true", help="rapport JSON")
+    perf.set_defaults(func=cmd_perf)
+    har = sub.add_parser(
+        "harness", help="audite la preparation d'un depot pour les agents IA"
+    )
+    har.add_argument("--root", default=".", help="depot a inspecter")
+    har.add_argument(
+        "--json", action="store_true", help="rapport JSON exploitable en CI"
+    )
+    har.add_argument(
+        "--strict",
+        action="store_true",
+        help="code non nul en presence d'avertissements",
+    )
+    har.add_argument(
+        "--instruction-budget",
+        type=int,
+        default=150,
+        help="budget de lignes conseille par fichier d'instructions",
+    )
+    har.add_argument(
+        "--run-checks",
+        action="store_true",
+        help="execute les commandes de test reconnues (le code du depot sera execute ; pas une sandbox de securite)",
+    )
+    har.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="delai par commande de test, en secondes (1-900)",
+    )
+    har.set_defaults(func=cmd_harness)
+    p_rec = sub.add_parser(
+        "recover",
+        help="restaure l'historique d'un depot reinitialise, sans rien detruire",
+    )
     p_rec.add_argument(
-        "--dry-run", dest="dry_run", action="store_true",
+        "--root", default=".", help="racine du depot (defaut : dossier courant)"
+    )
+    p_rec.add_argument(
+        "--remote", default="origin", help="depot distant (defaut : origin)"
+    )
+    p_rec.add_argument(
+        "--branch", default="", help="branche a recuperer (defaut : la courante)"
+    )
+    p_rec.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
         help="montrer ce qui serait fait, sans rien faire",
     )
     p_rec.set_defaults(func=cmd_recover)
@@ -3622,10 +4622,15 @@ def build_parser() -> argparse.ArgumentParser:
         "chiffres",
         help="verifier (et reparer) les chiffres annonces dans la documentation",
     )
-    p_chiffres.add_argument("fichiers", nargs="*", help="fichiers a verifier (defaut : README.md)")
-    p_chiffres.add_argument("--root", default=".", help="racine (defaut : dossier courant)")
     p_chiffres.add_argument(
-        "--appliquer", action="store_true",
+        "fichiers", nargs="*", help="fichiers a verifier (defaut : README.md)"
+    )
+    p_chiffres.add_argument(
+        "--root", default=".", help="racine (defaut : dossier courant)"
+    )
+    p_chiffres.add_argument(
+        "--appliquer",
+        action="store_true",
         help="ecrire les valeurs mesurees (une sauvegarde .avant-jio est creee)",
     )
     p_chiffres.set_defaults(func=cmd_chiffres)
@@ -3640,20 +4645,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--mcp", default=None, help="ne brancher qu'un seul outil (defaut : tous)"
     )
     p_sync.add_argument(
-        "--dry-run", dest="dry_run", action="store_true",
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
         help="montrer ce qui serait ecrit, sans rien ecrire",
     )
     p_sync.set_defaults(func=cmd_sync)
 
     sub.add_parser("version", help="version").set_defaults(
-        func=lambda a: (print(f"jio {__version__}") or 0)
+        func=lambda a: print(f"jio {__version__}") or 0
     )
 
     b = sub.add_parser("bench", help="mesure le gain du harness (S0 -> S3)")
-    b.add_argument("--skill", type=float, default=0.35, help="competence du modele simule")
+    b.add_argument(
+        "--skill", type=float, default=0.35, help="competence du modele simule"
+    )
     b.add_argument("--runs", type=int, default=5, help="nombre de tirages par tache")
     b.add_argument(
-        "--provider", default="simule",
+        "--provider",
+        default="simule",
         help=(
             "QUEL modele mesure. `simule` (defaut, sans cle), `cli:opencode`, `cli:hermes`, "
             "`cli:claude`, `cli:codex`, `cli:gemini`, `cli:<autre>` (avec "
@@ -3661,19 +4671,37 @@ def build_parser() -> argparse.ArgumentParser:
             "indisponible ARRETE la mesure : aucun repli silencieux."
         ),
     )
-    b.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
-                   help="tours de boucle maximum")
-    b.add_argument("--taches", type=int, default=0, dest="taches",
-                   help="limite le banc aux N premieres taches (0 = toutes). Un premier tour "
-                        "court sert a voir si le dispositif tourne, pas a mesurer un gain")
-    b.add_argument("--sans-oracle-reel", action="store_true", dest="sans_oracle_reel",
-                   help="n'execute PAS le bras « aucun oracle » avec votre modele (il coute "
-                        "un moteur complet de plus par tirage ; c'est pourtant le cas de "
-                        "toute mission reelle)")
-    b.add_argument("--prose", action="store_true",
-                   help="mesure le harness sur des DOCUMENTS (rapports) au lieu de code")
     b.add_argument(
-        "--rapport", default="", metavar="CHEMIN.md",
+        "--rounds",
+        type=int,
+        default=int_env("JIO_MAX_ROUNDS", 4),
+        help="tours de boucle maximum",
+    )
+    b.add_argument(
+        "--taches",
+        type=int,
+        default=0,
+        dest="taches",
+        help="limite le banc aux N premieres taches (0 = toutes). Un premier tour "
+        "court sert a voir si le dispositif tourne, pas a mesurer un gain",
+    )
+    b.add_argument(
+        "--sans-oracle-reel",
+        action="store_true",
+        dest="sans_oracle_reel",
+        help="n'execute PAS le bras « aucun oracle » avec votre modele (il coute "
+        "un moteur complet de plus par tirage ; c'est pourtant le cas de "
+        "toute mission reelle)",
+    )
+    b.add_argument(
+        "--prose",
+        action="store_true",
+        help="mesure le harness sur des DOCUMENTS (rapports) au lieu de code",
+    )
+    b.add_argument(
+        "--rapport",
+        default="",
+        metavar="CHEMIN.md",
         help=(
             "ECRIT le resultat de la mesure a cet emplacement (Markdown + JSON a cote). "
             "Un chiffre qui ne vit que dans un terminal ne se compare pas : le rapport date, "
@@ -3684,9 +4712,11 @@ def build_parser() -> argparse.ArgumentParser:
     b.set_defaults(func=cmd_bench)
 
     cl = sub.add_parser(
-        "claims", help="verifie les affirmations d'un document (calculs, code, chemins)")
+        "claims", help="verifie les affirmations d'un document (calculs, code, chemins)"
+    )
     cl.add_argument(
-        "fichier", nargs="+",
+        "fichier",
+        nargs="+",
         help="document(s) a verifier (.md, .rst, .txt, ...) — pre-commit en passe plusieurs",
     )
     cl.add_argument("--racine", default="", help="racine des chemins cites")
@@ -3699,16 +4729,20 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     cl.set_defaults(func=cmd_claims)
-    cl.epilog = ("codes de sortie : 0 conforme · 1 affirmation refutee · "
-                 "3 rien a verifier (ni succes, ni echec)")
+    cl.epilog = (
+        "codes de sortie : 0 conforme · 1 affirmation refutee · "
+        "3 rien a verifier (ni succes, ni echec)"
+    )
 
     prov = sub.add_parser(
-        "providers", help="liste les fournisseurs, et les SONDE avec --prove")
+        "providers", help="liste les fournisseurs, et les SONDE avec --prove"
+    )
     prov.add_argument(
-        "--prove", action="store_true",
+        "--prove",
+        action="store_true",
         help="envoie une requete reelle a chaque fournisseur et mesure sa capacite a "
-             "traduire les regles en temoins executables (sans quoi la preuve est "
-             "impossible hors banc d'essai)",
+        "traduire les regles en temoins executables (sans quoi la preuve est "
+        "impossible hors banc d'essai)",
     )
     prov.set_defaults(func=cmd_providers)
 
@@ -3718,15 +4752,25 @@ def build_parser() -> argparse.ArgumentParser:
     # commandes que la documentation proposait elle-meme. Le refus reste explicite,
     # plus bas, quand rien ne peut fournir l'objectif.
     r.add_argument("objective", nargs="?", default="", help="objectif de la mission")
-    r.add_argument("--prose", action="store_true",
-                   help="mission de DOCUMENT : la preuve porte sur les affirmations "
-                        "verifiables du texte (calculs, blocs de code, chemins cites)")
-    r.add_argument("--entrypoint", default="", help="nom de la fonction attendue")
-    r.add_argument("--simulate", action="store_true",
-                   help="modele simule deterministe : aucune cle API requise")
-    r.add_argument("--task", default="", help="id de tache du banc (oracles + specification)")
     r.add_argument(
-        "--provider", action="append", default=[],
+        "--prose",
+        action="store_true",
+        help="mission de DOCUMENT : la preuve porte sur les affirmations "
+        "verifiables du texte (calculs, blocs de code, chemins cites)",
+    )
+    r.add_argument("--entrypoint", default="", help="nom de la fonction attendue")
+    r.add_argument(
+        "--simulate",
+        action="store_true",
+        help="modele simule deterministe : aucune cle API requise",
+    )
+    r.add_argument(
+        "--task", default="", help="id de tache du banc (oracles + specification)"
+    )
+    r.add_argument(
+        "--provider",
+        action="append",
+        default=[],
         help=(
             "QUEL modele travaille : `cli:opencode`, `cli:hermes`, `cli:<autre>` (avec "
             "JIO_CLI_<AUTRE>_ARGV) ou `openai:<modele>`. REPETABLE : nommer DEUX modeles "
@@ -3735,83 +4779,145 @@ def build_parser() -> argparse.ArgumentParser:
             "indisponible ARRETE la mission."
         ),
     )
-    r.add_argument("--state", default=str_env("JIO_STATE", ".jio"),
-                   help="dossier d'etat (memoire + routeur)")
-    r.add_argument("--min-panel", dest="min_panel", type=int,
-                   default=int_env("JIO_MIN_PANEL", 3),
-                   help="taille minimale du panel pour conclure (defaut 3 : n >= 3f+1). "
-                        "En dessous, aucune livraison complete n'est possible — le "
-                        "systeme le dit au lieu de bruler des appels.")
-    r.add_argument("--no-learn", dest="no_learn", action="store_true",
-                   help="desactiver memoire et routeur pour cette execution")
+    r.add_argument(
+        "--state",
+        default=str_env("JIO_STATE", ".jio"),
+        help="dossier d'etat (memoire + routeur)",
+    )
+    r.add_argument(
+        "--min-panel",
+        dest="min_panel",
+        type=int,
+        default=int_env("JIO_MIN_PANEL", 3),
+        help="taille minimale du panel pour conclure (defaut 3 : n >= 3f+1). "
+        "En dessous, aucune livraison complete n'est possible — le "
+        "systeme le dit au lieu de bruler des appels.",
+    )
+    r.add_argument(
+        "--no-learn",
+        dest="no_learn",
+        action="store_true",
+        help="desactiver memoire et routeur pour cette execution",
+    )
     r.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 5))
     r.add_argument(
-        "--sans-competences", action="store_true",
+        "--sans-competences",
+        action="store_true",
         help="ne PAS charger les procedures du depot dans le prompt de mission. Par defaut, le "
-             "routeur en injecte jusqu'a 3 (budget 1500 jetons), choisies pour CET objectif, et "
-             "le journal dit lesquelles ; ce drapeau mesure ce qu'elles apportent",
+        "routeur en injecte jusqu'a 3 (budget 1500 jetons), choisies pour CET objectif, et "
+        "le journal dit lesquelles ; ce drapeau mesure ce qu'elles apportent",
     )
-    r.add_argument("--alpha", type=float, default=float_env("JIO_ALPHA", 0.05),
-                   help="risque d'erreur accepte")
+    r.add_argument(
+        "--alpha",
+        type=float,
+        default=float_env("JIO_ALPHA", 0.05),
+        help="risque d'erreur accepte",
+    )
     r.add_argument("--journal", default=str_env("JIO_JOURNAL", ".jio/journal.jsonl"))
     r.add_argument("--json", default="", help="ecrit le rapport JSON a ce chemin")
     r.add_argument(
-        "--no-oracle", dest="no_oracle", action="store_true",
+        "--no-oracle",
+        dest="no_oracle",
+        action="store_true",
         help="retirer les tests fournis par la mission et PROUVER a partir des seules "
-             "regles, traduites en temoins executables — exactement ce qu'une mission "
-             "reelle impose. Un temoin ecrit par un modele ne peut jamais, a lui seul, "
-             "faire rejeter un candidat ; une regle non prouvee interdit la mention "
-             "« livre sans reserve ».",
+        "regles, traduites en temoins executables — exactement ce qu'une mission "
+        "reelle impose. Un temoin ecrit par un modele ne peut jamais, a lui seul, "
+        "faire rejeter un candidat ; une regle non prouvee interdit la mention "
+        "« livre sans reserve ».",
     )
     r.add_argument(
-        "--strict", action="store_true",
+        "--strict",
+        action="store_true",
         help="refuse de commencer si la porte de clarification a des questions sans reponse "
-             "(code 3) : c'est le mode a utiliser quand une IA doit DEMANDER avant d'agir",
+        "(code 3) : c'est le mode a utiliser quand une IA doit DEMANDER avant d'agir",
+    )
+    r.add_argument(
+        "--zero-reserve",
+        action="store_true",
+        help="politique ultra-prudente : convertit toute livraison avec reserve en abstention. "
+        "Cela ne prouve pas l'infaillibilite ; cela refuse les resultats que JIO sait deja incertains.",
     )
     r.add_argument("-v", "--verbose", action="store_true")
     r.set_defaults(func=cmd_run)
 
     a = sub.add_parser("audit", help="audite un artefact contre une specification")
-    a.add_argument("--racine", default="",
-                   help="document : racine ou chercher les chemins cites")
+    a.add_argument(
+        "--racine", default="", help="document : racine ou chercher les chemins cites"
+    )
     a.add_argument("file")
     a.add_argument("--task", default="", help="id de tache du banc pour les oracles")
-    a.add_argument("--entrypoint", default="", help="fonction a auditer (sinon la premiere)")
+    a.add_argument(
+        "--entrypoint", default="", help="fonction a auditer (sinon la premiere)"
+    )
     a.set_defaults(func=cmd_audit)
 
-    sc = sub.add_parser("scan", help="audite un projet entier et n'affiche que les problemes")
+    sc = sub.add_parser(
+        "scan", help="audite un projet entier et n'affiche que les problemes"
+    )
     sc.add_argument(
         "--strict",
         action="store_true",
         help="echoue aussi sur les RESERVES et les fichiers non testables (mode CI)",
     )
-    sc.add_argument("--tout", action="store_true",
-                    help="balayer AUSSI les dossiers habituellement ignores "
-                         "(environnements virtuels, caches, dependances)")
+    sc.add_argument(
+        "--tout",
+        action="store_true",
+        help="balayer AUSSI les dossiers habituellement ignores "
+        "(environnements virtuels, caches, dependances)",
+    )
     sc.add_argument("path", help="fichier ou repertoire")
-    sc.add_argument("--exclude-tests", action="store_true",
-                    help="ignorer test_*.py, conftest.py et les dossiers tests/")
-    sc.add_argument("--timeout", type=int, default=int_env("JIO_SCAN_TIMEOUT", 20),
-                    help="timeout par verification (s)")
-    sc.add_argument("-v", "--verbose", action="store_true",
-                    help="lister aussi les fichiers non verifiables")
-    sc.add_argument("--no-imports", dest="check_imports", action="store_false",
-                    help="ne pas verifier la coherence des imports internes")
-    sc.add_argument("--no-linters", dest="check_linters", action="store_false",
-                    help="ne pas utiliser les analyseurs standards (ruff/flake8/pyflakes)")
-    sc.add_argument("--state", default=str_env("JIO_STATE", ".jio"),
-                    help="dossier d'etat (memoire des echecs)")
-    sc.add_argument("--no-learn", dest="no_learn", action="store_true",
-                    help="ne rien memoriser")
+    sc.add_argument(
+        "--exclude-tests",
+        action="store_true",
+        help="ignorer test_*.py, conftest.py et les dossiers tests/",
+    )
+    sc.add_argument(
+        "--timeout",
+        type=int,
+        default=int_env("JIO_SCAN_TIMEOUT", 20),
+        help="timeout par verification (s)",
+    )
+    sc.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="lister aussi les fichiers non verifiables",
+    )
+    sc.add_argument(
+        "--no-imports",
+        dest="check_imports",
+        action="store_false",
+        help="ne pas verifier la coherence des imports internes",
+    )
+    sc.add_argument(
+        "--no-linters",
+        dest="check_linters",
+        action="store_false",
+        help="ne pas utiliser les analyseurs standards (ruff/flake8/pyflakes)",
+    )
+    sc.add_argument(
+        "--state",
+        default=str_env("JIO_STATE", ".jio"),
+        help="dossier d'etat (memoire des echecs)",
+    )
+    sc.add_argument(
+        "--no-learn", dest="no_learn", action="store_true", help="ne rien memoriser"
+    )
     sc.set_defaults(func=cmd_scan, check_imports=True, check_linters=True)
 
     t = sub.add_parser("trace", help="rejoue et verifie un journal")
-    t.add_argument("journal", nargs="?", default="",
-                   help="chemin du journal (defaut : le plus recent trouve)")
+    t.add_argument(
+        "journal",
+        nargs="?",
+        default="",
+        help="chemin du journal (defaut : le plus recent trouve)",
+    )
     t.add_argument("--kind", default="", help="filtre par type d'evenement")
     t.set_defaults(func=cmd_trace)
 
-    ar = sub.add_parser("artifacts", help="genere les artefacts natifs de tous les outils")
+    ar = sub.add_parser(
+        "artifacts", help="genere les artefacts natifs de tous les outils"
+    )
     ar.add_argument("--root", default=".", help="repertoire de destination")
     ar.add_argument(
         "--target",
@@ -3822,7 +4928,9 @@ def build_parser() -> argparse.ArgumentParser:
             "opencode-mcp, hermes-mcp"
         ),
     )
-    ar.add_argument("--write", action="store_true", help="ecrit reellement les fichiers")
+    ar.add_argument(
+        "--write", action="store_true", help="ecrit reellement les fichiers"
+    )
     # Ce que la configuration COUTE, en jetons de contexte. Un fichier trop long est
     # survole par le modele : il occupe la fenetre sans rien apporter.
     ar.add_argument(
@@ -3840,7 +4948,9 @@ def build_parser() -> argparse.ArgumentParser:
     # L'INSTALLATION chez Hermes, accessible hors de `jio start` — et surtout desinstallable :
     # une installation dont on ne peut pas revenir est une prise d'otage.
     ar.add_argument(
-        "--install-hermes", dest="install_hermes", action="store_true",
+        "--install-hermes",
+        dest="install_hermes",
+        action="store_true",
         help=(
             "installe les competences dans ~/.hermes/skills (copie enregistree ; un fichier a "
             "vous n'est JAMAIS ecrase). `jio start` le fait deja : cette option sert a le "
@@ -3848,11 +4958,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     ar.add_argument(
-        "--desinstaller", dest="desinstaller", action="store_true",
+        "--desinstaller",
+        dest="desinstaller",
+        action="store_true",
         help="retire de ~/.hermes/skills ce que jio y a installe — et rien d'autre",
     )
     ar.add_argument(
-        "--lier", dest="lier", action="store_true",
+        "--lier",
+        dest="lier",
+        action="store_true",
         help=(
             "avec --install-hermes : poser des LIENS au lieu de copies (synchronisation "
             "permanente). Attention : editer la copie ecrit alors dans le fichier du projet."
@@ -3890,7 +5004,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mc.set_defaults(func=cmd_mcp)
 
-    tr = sub.add_parser("trust", help="routeur de confiance : combien de verification depenser")
+    tr = sub.add_parser(
+        "trust", help="routeur de confiance : combien de verification depenser"
+    )
     tr.add_argument("objective", nargs="?", default="", help="objectif a router")
     tr.add_argument("--state", default=".jio/trust.json", help="etat persistant")
     tr.set_defaults(func=cmd_trust)
@@ -3902,55 +5018,125 @@ def build_parser() -> argparse.ArgumentParser:
     # commande : un utilisateur qui voulait VERIFIER la chaine — et obtenir un code de sortie
     # exploitable en CI — tombait sur `error: unrecognized arguments: --integrity`, code 2,
     # apres avoir lu que l'integrite etait quelque chose que l'outil savait dire.
-    me.add_argument("--integrity", action="store_true",
-                    help="verifie la chaine d'integrite et sort en 1 si elle est cassee "
-                         "(pour un pre-commit ou une CI)")
+    me.add_argument(
+        "--integrity",
+        action="store_true",
+        help="verifie la chaine d'integrite et sort en 1 si elle est cassee "
+        "(pour un pre-commit ou une CI)",
+    )
     me.add_argument("--add", action="store_true", help="enregistre un echec")
     me.add_argument("--objective", default="", help="objectif concerne")
     me.add_argument("--symptom", default="", help="ce qui a ete observe")
     me.add_argument("--cause", default="", help="cause reelle")
     me.add_argument("--wrong-fix", default="", help="piste tentee sans succes")
     me.add_argument("--fix", default="", help="correctif retenu")
-    me.add_argument("--guard", default="", help="controle qui echoue si l'erreur revient (obligatoire)")
+    me.add_argument(
+        "--guard",
+        default="",
+        help="controle qui echoue si l'erreur revient (obligatoire)",
+    )
     me.set_defaults(func=cmd_memory)
 
+    im = sub.add_parser(
+        "improve",
+        help="s'audite puis crée des agents spécialisés à partir des problèmes observés",
+    )
+    im.add_argument("--root", default=".", help="racine du dépôt à améliorer")
+    im.add_argument(
+        "--timeout", type=int, default=60, help="timeout par contrôle (s; défaut 60)"
+    )
+    im.add_argument(
+        "--max-agents",
+        type=int,
+        default=50,
+        help="plafond des agents générés, de 1 à 50",
+    )
+    im.add_argument(
+        "--skip-tests",
+        action="store_true",
+        help="ne lance pas la suite pytest complète",
+    )
+    im.add_argument(
+        "--scan",
+        action="store_true",
+        help="ajoute le scan strict (plus lent, réserves incluses)",
+    )
+    im.set_defaults(func=cmd_improve)
+
+    ev = sub.add_parser(
+        "evolve", help="compare deux ameliorations sur un holdout avant toute promotion"
+    )
+    ev_sub = ev.add_subparsers(dest="evolve_action", required=True)
+    ev_compare = ev_sub.add_parser(
+        "compare", help="comparaison appariée avec garde-fous anti-regression"
+    )
+    ev_compare.add_argument(
+        "--baseline", required=True, help="rapport JSON de la variante de reference"
+    )
+    ev_compare.add_argument(
+        "--candidate", required=True, help="rapport JSON de la variante candidate"
+    )
+    ev_compare.add_argument(
+        "--alpha",
+        type=float,
+        default=0.05,
+        help="risque statistique autorise (defaut 0.05)",
+    )
+    ev_compare.set_defaults(func=cmd_evolve_compare)
+
     le = sub.add_parser("learn", help="mesure le gain de l'auto-amelioration (A/B)")
-    le.add_argument("--skill", type=float, default=0.20, help="competence du modele simule")
-    le.add_argument("--runs", type=int, default=3, help="tirages par tache et par phase")
-    le.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
-                    help="tours de boucle maximum")
     le.add_argument(
-        "--cumul", default="",
+        "--skill", type=float, default=0.20, help="competence du modele simule"
+    )
+    le.add_argument(
+        "--runs", type=int, default=3, help="tirages par tache et par phase"
+    )
+    le.add_argument(
+        "--rounds",
+        type=int,
+        default=int_env("JIO_MAX_ROUNDS", 4),
+        help="tours de boucle maximum",
+    )
+    le.add_argument(
+        "--cumul",
+        default="",
         help="fichier ou EMPILER les cycles mesures (JSONL). Chaque execution est une "
-             "replication independante : les graines sont decalees pour ne jamais rejouer "
-             "la meme, et le rapport affiche est le CUMUL. Une mesure longue survit ainsi a "
-             "une coupure, et la resolution s'accumule execution apres execution.",
+        "replication independante : les graines sont decalees pour ne jamais rejouer "
+        "la meme, et le rapport affiche est le CUMUL. Une mesure longue survit ainsi a "
+        "une coupure, et la resolution s'accumule execution apres execution.",
     )
     le.add_argument(
-        "--gain", type=float, default=0.20,
+        "--gain",
+        type=float,
+        default=0.20,
         help="gain RELATIF declare par avertissement (modelisation, defaut 0.20). Le "
-             "protocole mesure l'effet d'un mecanisme DECLARE : le regler haut sert de "
-             "CONTROLE POSITIF — un instrument qui ne detecte jamais un signal connu ne "
-             "peut pas etre cru quand il n'en detecte aucun.",
+        "protocole mesure l'effet d'un mecanisme DECLARE : le regler haut sert de "
+        "CONTROLE POSITIF — un instrument qui ne detecte jamais un signal connu ne "
+        "peut pas etre cru quand il n'en detecte aucun.",
     )
     le.add_argument(
-        "--calibrer-gain", action="store_true",
+        "--calibrer-gain",
+        action="store_true",
         help="mesurer le gain d'avertissement par le protocole A/B au lieu de le declarer "
-             "(refuse de tourner tant que ce n'est pas implemente : une modelisation non "
-             "calibree borne toutes les conclusions du protocole)",
+        "(refuse de tourner tant que ce n'est pas implemente : une modelisation non "
+        "calibree borne toutes les conclusions du protocole)",
     )
     le.add_argument(
-        "--plafond-missions", type=int, default=200,
+        "--plafond-missions",
+        type=int,
+        default=200,
         help="nombre de missions au-dela duquel le protocole multi-cycles REFUSE de "
-             "mesurer (defaut 200). Ce n'est pas une limite technique : c'est un garde-fou "
-             "de duree. Le relever est un choix, et il s'assume explicitement.",
+        "mesurer (defaut 200). Ce n'est pas une limite technique : c'est un garde-fou "
+        "de duree. Le relever est un choix, et il s'assume explicitement.",
     )
     le.add_argument(
-        "--cycles", type=int, default=0,
+        "--cycles",
+        type=int,
+        default=0,
         help="0 = comparaison A/B (defaut). N > 0 = protocole MULTI-CYCLES : la memoire "
-             "s'accumule pendant N cycles et chaque cycle compare froid/chaud a bras "
-             "IDENTIQUE (la seule variable restante est le souvenir). Cout : "
-             "N x 2 x taches x runs missions — refus au-dela de 200 missions.",
+        "s'accumule pendant N cycles et chaque cycle compare froid/chaud a bras "
+        "IDENTIQUE (la seule variable restante est le souvenir). Cout : "
+        "N x 2 x taches x runs missions — refus au-dela de 200 missions.",
     )
     le.set_defaults(func=cmd_learn)
 
@@ -3958,15 +5144,30 @@ def build_parser() -> argparse.ArgumentParser:
         "mutants",
         help="score de mutation de NOTRE suite : quelle ligne du depot aucun test ne protege ?",
     )
-    mu.add_argument("--budget", type=int, default=2,
-                    help="mutants par fichier (defaut 2 : le but est de mesurer, pas d'epuiser)")
-    mu.add_argument("--plafond-tests", type=int, default=6,
-                    help="fichiers de test lances par mutant (heuristique declaree)")
-    mu.add_argument("--tout", dest="tous_les_tests", action="store_true",
-                    help="lancer la suite ENTIERE pour chaque mutant (lent, exact)")
+    mu.add_argument(
+        "--budget",
+        type=int,
+        default=2,
+        help="mutants par fichier (defaut 2 : le but est de mesurer, pas d'epuiser)",
+    )
+    mu.add_argument(
+        "--plafond-tests",
+        type=int,
+        default=6,
+        help="fichiers de test lances par mutant (heuristique declaree)",
+    )
+    mu.add_argument(
+        "--tout",
+        dest="tous_les_tests",
+        action="store_true",
+        help="lancer la suite ENTIERE pour chaque mutant (lent, exact)",
+    )
     mu.add_argument("--timeout", type=int, default=300, help="timeout par mutant (s)")
-    mu.add_argument("--fichiers", default="",
-                    help="liste de fichiers separes par des virgules (defaut : tout jio/)")
+    mu.add_argument(
+        "--fichiers",
+        default="",
+        help="liste de fichiers separes par des virgules (defaut : tout jio/)",
+    )
     mu.add_argument("--root", default=".", help="racine du depot a muter")
     mu.set_defaults(func=cmd_mutants)
 
@@ -3974,55 +5175,98 @@ def build_parser() -> argparse.ArgumentParser:
         "ablation",
         help="enleve une brique du harness et mesure ce qui change (apparie)",
     )
-    ab.add_argument("--missions", type=int, default=10,
-                    help="CIBLE de missions par bras (defaut 10), reparties sur les taches "
-                         "du banc : le rapport dit le nombre EXACT qu'il a mesure")
-    ab.add_argument("--levers", default="",
-                    help="leviers a mesurer, separes par des virgules (defaut : tous). "
-                         "`--levers liste` affiche les noms et ce que « sans » veut dire.")
-    ab.add_argument("--taches", default="",
-                    help="taches du banc, separees par des virgules (defaut : les cinq "
-                         "archives). `--taches liste` les affiche. `mean_partial` est la "
-                         "tache a SPECIFICATION PARTIELLE : la seule ou deux implementations "
-                         "legitimes divergent, donc la seule qui exerce le differentiel.")
-    ab.add_argument("--skill", type=float, default=0.35, help="competence du modele simule")
-    ab.add_argument("--rounds", type=int, default=int_env("JIO_MAX_ROUNDS", 4),
-                    help="tours de boucle maximum")
-    ab.add_argument("--sans-oracle", dest="sans_oracle", action="store_true",
-                    help="retire les oracles de la mission : les regles doivent alors etre "
-                         "TRADUITES en temoins (c'est la que le levier « temoins » compte)")
     ab.add_argument(
-        "--fidelite", type=float, default=1.0,
-        help="fidelite de la TRADUCTION des regles en temoins (defaut 1.0 : parfaite). "
-             "En dessous de 1, le modele simule contrefait une part des temoins — c'est le "
-             "regime REEL d'une mission sans oracle, ou les tests sont ecrits par le modele "
-             "et pas donnes. Plusieurs leviers (mutation, red-team, consensus, porte) ne "
-             "peuvent payer que la : avec des temoins parfaits, il n'y a rien a rattraper.",
+        "--missions",
+        type=int,
+        default=10,
+        help="CIBLE de missions par bras (defaut 10), reparties sur les taches "
+        "du banc : le rapport dit le nombre EXACT qu'il a mesure",
     )
-    ab.add_argument("--calibree", dest="calibree", action="store_true",
-                    help="calibre la porte sur les candidats du banc (score = fraction de "
-                         "checks passes, verite connue). C'est la reponse mesuree au cout "
-                         "de la porte en regime correle : ajuster le seuil au lieu de le "
-                         "croire. La borne conforme reste en vigueur")
-    ab.add_argument("--correlee", dest="correlee", action="store_true",
-                    help="panel CORRELE (biais partage : le cas « meme modele partout »). "
-                         "C'est le regime ou la porte a quelque chose a filtrer : la "
-                         "confiance du panel approche le seuil, et la retirer change ce "
-                         "qui est livre")
-    ab.add_argument("--json", action="store_true", help="rapport lisible par une machine")
+    ab.add_argument(
+        "--levers",
+        default="",
+        help="leviers a mesurer, separes par des virgules (defaut : tous). "
+        "`--levers liste` affiche les noms et ce que « sans » veut dire.",
+    )
+    ab.add_argument(
+        "--taches",
+        default="",
+        help="taches du banc, separees par des virgules (defaut : les cinq "
+        "archives). `--taches liste` les affiche. `mean_partial` est la "
+        "tache a SPECIFICATION PARTIELLE : la seule ou deux implementations "
+        "legitimes divergent, donc la seule qui exerce le differentiel.",
+    )
+    ab.add_argument(
+        "--skill", type=float, default=0.35, help="competence du modele simule"
+    )
+    ab.add_argument(
+        "--rounds",
+        type=int,
+        default=int_env("JIO_MAX_ROUNDS", 4),
+        help="tours de boucle maximum",
+    )
+    ab.add_argument(
+        "--sans-oracle",
+        dest="sans_oracle",
+        action="store_true",
+        help="retire les oracles de la mission : les regles doivent alors etre "
+        "TRADUITES en temoins (c'est la que le levier « temoins » compte)",
+    )
+    ab.add_argument(
+        "--fidelite",
+        type=float,
+        default=1.0,
+        help="fidelite de la TRADUCTION des regles en temoins (defaut 1.0 : parfaite). "
+        "En dessous de 1, le modele simule contrefait une part des temoins — c'est le "
+        "regime REEL d'une mission sans oracle, ou les tests sont ecrits par le modele "
+        "et pas donnes. Plusieurs leviers (mutation, red-team, consensus, porte) ne "
+        "peuvent payer que la : avec des temoins parfaits, il n'y a rien a rattraper.",
+    )
+    ab.add_argument(
+        "--calibree",
+        dest="calibree",
+        action="store_true",
+        help="calibre la porte sur les candidats du banc (score = fraction de "
+        "checks passes, verite connue). C'est la reponse mesuree au cout "
+        "de la porte en regime correle : ajuster le seuil au lieu de le "
+        "croire. La borne conforme reste en vigueur",
+    )
+    ab.add_argument(
+        "--correlee",
+        dest="correlee",
+        action="store_true",
+        help="panel CORRELE (biais partage : le cas « meme modele partout »). "
+        "C'est le regime ou la porte a quelque chose a filtrer : la "
+        "confiance du panel approche le seuil, et la retirer change ce "
+        "qui est livre",
+    )
+    ab.add_argument(
+        "--json", action="store_true", help="rapport lisible par une machine"
+    )
     ab.set_defaults(func=cmd_ablation)
 
     st = sub.add_parser(
         "start",
         help="INTEGRE JIO dans tes outils en une commande : detecte, ecrit, cable, prouve",
     )
-    st.add_argument("--root", default=".", help="racine du projet a equiper (defaut : ici)")
-    st.add_argument("--dry-run", action="store_true",
-                    help="montre ce qui serait fait, sans rien ecrire")
-    st.add_argument("--sans-mcp", dest="sans_mcp", action="store_true",
-                    help="n'ecrit pas les fichiers de cablage MCP (artefacts seuls)")
     st.add_argument(
-        "--sans-hermes", dest="sans_hermes", action="store_true",
+        "--root", default=".", help="racine du projet a equiper (defaut : ici)"
+    )
+    st.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="montre ce qui serait fait, sans rien ecrire",
+    )
+    st.add_argument(
+        "--sans-mcp",
+        dest="sans_mcp",
+        action="store_true",
+        help="n'ecrit pas les fichiers de cablage MCP (artefacts seuls)",
+    )
+    st.add_argument(
+        "--sans-hermes",
+        dest="sans_hermes",
+        action="store_true",
         help=(
             "n'installe PAS les competences dans ~/.hermes/skills. Par defaut `jio start` les y "
             "installe (par LIEN, pour qu'une mise a jour du depot les mette a jour), sans jamais "
@@ -4037,33 +5281,53 @@ def build_parser() -> argparse.ArgumentParser:
     )
     au.add_argument("objective", nargs="?", default="", help="l'objectif global")
     au.add_argument(
-        "--cible", default=None,
+        "--cible",
+        default=None,
         help="cible du plan (chemin, module). Defaut : le chemin mentionne dans "
-             "l'objectif s'il existe, sinon '.' — la cible 'jio' n'existe que dans ce depot",
+        "l'objectif s'il existe, sinon '.' — la cible 'jio' n'existe que dans ce depot",
     )
-    au.add_argument("--entrypoint", default="", help="fonction attendue, si le plan en a besoin")
     au.add_argument(
-        "--budget", type=int, default=6,
+        "--entrypoint", default="", help="fonction attendue, si le plan en a besoin"
+    )
+    au.add_argument(
+        "--budget",
+        type=int,
+        default=6,
         help="nombre maximum d'etapes executees (defaut 6) : au-dela, le reste est declare "
-             "NON TENTE au lieu d'etre fait en silence",
+        "NON TENTE au lieu d'etre fait en silence",
     )
     au.add_argument(
-        "--plan", default="", metavar="FICHIER",
+        "--plan",
+        default="",
+        metavar="FICHIER",
         help="plan JSON a executer. Sans ce fichier, un plan de REFERENCE deterministe est "
-             "utilise et ANNONCE comme tel (le modele reel fournirait le sien)",
+        "utilise et ANNONCE comme tel (le modele reel fournirait le sien)",
     )
-    au.add_argument("--strict", action="store_true",
-                    help="refuse de commencer si la porte de clarification a des questions")
-    au.add_argument("--etat", default=".jio/plan.json", help="ou enregistrer l'etat du plan")
-    au.add_argument("--root", default=".",
-                    help="racine du projet (les preuves s'executent LA, l'etat y est ecrit) : "
-                         "une IA peut travailler sur un depot qu'elle n'a pas ouvert comme "
-                         "repertoire courant")
-    au.add_argument("--reprendre", action="store_true",
-                    help="reprend le plan enregistre dans --etat : les etapes deja PROUVEES sont "
-                         "sautees SI la revision git n'a pas bouge ; sinon le plan est rejoue "
-                         "ENTIER, parce qu'une preuve obtenue dans un autre monde ne vaut rien")
-    au.add_argument("--json", action="store_true", help="resultat lisible par une machine")
+    au.add_argument(
+        "--strict",
+        action="store_true",
+        help="refuse de commencer si la porte de clarification a des questions",
+    )
+    au.add_argument(
+        "--etat", default=".jio/plan.json", help="ou enregistrer l'etat du plan"
+    )
+    au.add_argument(
+        "--root",
+        default=".",
+        help="racine du projet (les preuves s'executent LA, l'etat y est ecrit) : "
+        "une IA peut travailler sur un depot qu'elle n'a pas ouvert comme "
+        "repertoire courant",
+    )
+    au.add_argument(
+        "--reprendre",
+        action="store_true",
+        help="reprend le plan enregistre dans --etat : les etapes deja PROUVEES sont "
+        "sautees SI la revision git n'a pas bouge ; sinon le plan est rejoue "
+        "ENTIER, parce qu'une preuve obtenue dans un autre monde ne vaut rien",
+    )
+    au.add_argument(
+        "--json", action="store_true", help="resultat lisible par une machine"
+    )
     au.set_defaults(func=cmd_auto)
 
     cl = sub.add_parser(
@@ -4071,27 +5335,45 @@ def build_parser() -> argparse.ArgumentParser:
         help="pose les questions ESSENTIELLES avant de travailler (ou dit qu'il n'y en a pas)",
     )
     cl.add_argument("objective", nargs="?", default="", help="l'objectif, tel qu'ecrit")
-    cl.add_argument("--contexte", default="",
-                    help="fichier dont le contenu peut fournir ce qui manque (README, "
-                         "AGENTS.md) : un objectif court dans un projet documente n'est "
-                         "pas ambigu")
-    cl.add_argument("--strict", action="store_true",
-                    help="code de sortie 3 si des questions restent sans reponse (a utiliser "
-                         "quand une IA doit DEMANDER avant d'agir)")
-    cl.add_argument("--json", action="store_true", help="analyse lisible par une machine")
     cl.add_argument(
-        "--controle", dest="controle", action="store_true",
+        "--contexte",
+        default="",
+        help="fichier dont le contenu peut fournir ce qui manque (README, "
+        "AGENTS.md) : un objectif court dans un projet documente n'est "
+        "pas ambigu",
+    )
+    cl.add_argument(
+        "--strict",
+        action="store_true",
+        help="code de sortie 3 si des questions restent sans reponse (a utiliser "
+        "quand une IA doit DEMANDER avant d'agir)",
+    )
+    cl.add_argument(
+        "--json", action="store_true", help="analyse lisible par une machine"
+    )
+    cl.add_argument(
+        "--controle",
+        dest="controle",
+        action="store_true",
         help="passer a la porte le jeu de CONTROLE : des objectifs d'un AUTRE projet "
-             "(aucun chemin de ce depot) — le banc seul ne peut pas dire si la porte "
-             "generalise hors de ce depot",
+        "(aucun chemin de ce depot) — le banc seul ne peut pas dire si la porte "
+        "generalise hors de ce depot",
     )
     cl.add_argument(
-        "--mesure", "--bench", dest="mesure", action="store_true",
+        "--mesure",
+        "--bench",
+        dest="mesure",
+        action="store_true",
         help="mesure la porte sur le banc d'objectifs REELS annote a la main "
-             "(`jio/bench/objectifs.py`) : precision, rappel, et chaque erreur en clair",
+        "(`jio/bench/objectifs.py`) : precision, rappel, et chaque erreur en clair",
     )
-    cl.add_argument("--max", type=int, default=MAX_QUESTIONS, dest="maximum",
-                    help=f"nombre maximum de questions (defaut {MAX_QUESTIONS})")
+    cl.add_argument(
+        "--max",
+        type=int,
+        default=MAX_QUESTIONS,
+        dest="maximum",
+        help=f"nombre maximum de questions (defaut {MAX_QUESTIONS})",
+    )
     cl.set_defaults(func=cmd_clarify)
 
     pr = sub.add_parser(
@@ -4099,63 +5381,113 @@ def build_parser() -> argparse.ArgumentParser:
         help="genere le corps de la PR a partir des COMMITS (rapport reconstruit, jamais recopie)",
     )
     pr.add_argument("--root", default=".", help="depot a resumer")
-    pr.add_argument("--depuis", default="", help="ref de base (defaut : la branche par defaut du "
-                                                 "depot, puis main, puis master, puis la racine)")
-    pr.add_argument("--sortie", default="", help="fichier a ecrire (defaut : la sortie standard, "
-                                                 "aucune ecriture)")
-    pr.add_argument("--limite", type=int, default=0,
-                    help="longueur maximale en caracteres (0 = sans limite). Au-dela, le rapport "
-                         "garde la LISTE complete des commits et le DETAIL des plus recents, et "
-                         "DECLARE ce qu'il a omis. GitHub limite un corps de PR a 65536")
-    pr.add_argument("--complet", default="",
-                    help="fichier ou ecrire AUSSI le rapport non tronque (facultatif : il se "
-                         "regenere par `jio pr` sans option)")
+    pr.add_argument(
+        "--depuis",
+        default="",
+        help="ref de base (defaut : la branche par defaut du "
+        "depot, puis main, puis master, puis la racine)",
+    )
+    pr.add_argument(
+        "--sortie",
+        default="",
+        help="fichier a ecrire (defaut : la sortie standard, aucune ecriture)",
+    )
+    pr.add_argument(
+        "--limite",
+        type=int,
+        default=0,
+        help="longueur maximale en caracteres (0 = sans limite). Au-dela, le rapport "
+        "garde la LISTE complete des commits et le DETAIL des plus recents, et "
+        "DECLARE ce qu'il a omis. GitHub limite un corps de PR a 65536",
+    )
+    pr.add_argument(
+        "--complet",
+        default="",
+        help="fichier ou ecrire AUSSI le rapport non tronque (facultatif : il se "
+        "regenere par `jio pr` sans option)",
+    )
     pr.set_defaults(func=cmd_pr)
 
     sk = sub.add_parser(
         "skills",
         help="QUELLES competences charger pour cet objectif, et pourquoi — la question qui rend "
-             "la bibliotheque utile sans la charger en entier",
+        "la bibliotheque utile sans la charger en entier",
     )
-    sk.add_argument("objectif", nargs="*", help="l'objectif, en une phrase (entre guillemets)")
-    sk.add_argument("--maximum", type=int, default=3, help="nombre de competences a charger (3)")
-    sk.add_argument("--banc", action="store_true",
-                    help="passer le banc annote au routeur et a ses temoins (mesure, pas avis)")
-    sk.add_argument("--seuil", type=int, default=-1,
-                    help="nombre de concepts de domaine en dessous duquel ne rien charger "
-                         "(defaut : la valeur mesuree). 0 = ne jamais s'abstenir, -1 = defaut")
-    sk.add_argument("--controle", action="store_true",
-                    help="passer au routeur les QUATRE jeux de CONTROLE : des objectifs jamais "
-                         "vus, ecrits AVANT les retouches des fiches — l'ecart avec le banc est "
-                         "la generalisation reelle")
-    sk.add_argument("--detail", action="store_true",
-                    help="avec --controle : afficher aussi chaque cas et chaque echec. A "
-                         "n'ouvrir qu'APRES une retouche : lire les echecs d'un jeu qu'on n'a "
-                         "pas encore utilise le transforme en jeu de reglage")
-    sk.add_argument("--seuil-balaye", action="store_true",
-                    help="le seuil contre ses consequences : rappel et abstentions justes")
-    sk.add_argument("--nom", default="",
-                    help="charger UNE competence par son nom (le texte complet), sans passer par "
-                         "le classement : c'est la sortie de secours quand le routeur s'abstient "
-                         "et que l'agent a reconnu la procedure dans l'inventaire tier 0")
-    sk.add_argument("--json", action="store_true", help="verdict lisible par une machine")
+    sk.add_argument(
+        "objectif", nargs="*", help="l'objectif, en une phrase (entre guillemets)"
+    )
+    sk.add_argument(
+        "--maximum", type=int, default=3, help="nombre de competences a charger (3)"
+    )
+    sk.add_argument(
+        "--banc",
+        action="store_true",
+        help="passer le banc annote au routeur et a ses temoins (mesure, pas avis)",
+    )
+    sk.add_argument(
+        "--seuil",
+        type=int,
+        default=-1,
+        help="nombre de concepts de domaine en dessous duquel ne rien charger "
+        "(defaut : la valeur mesuree). 0 = ne jamais s'abstenir, -1 = defaut",
+    )
+    sk.add_argument(
+        "--controle",
+        action="store_true",
+        help="passer au routeur les QUATRE jeux de CONTROLE : des objectifs jamais "
+        "vus, ecrits AVANT les retouches des fiches — l'ecart avec le banc est "
+        "la generalisation reelle",
+    )
+    sk.add_argument(
+        "--detail",
+        action="store_true",
+        help="avec --controle : afficher aussi chaque cas et chaque echec. A "
+        "n'ouvrir qu'APRES une retouche : lire les echecs d'un jeu qu'on n'a "
+        "pas encore utilise le transforme en jeu de reglage",
+    )
+    sk.add_argument(
+        "--seuil-balaye",
+        action="store_true",
+        help="le seuil contre ses consequences : rappel et abstentions justes",
+    )
+    sk.add_argument(
+        "--nom",
+        default="",
+        help="charger UNE competence par son nom (le texte complet), sans passer par "
+        "le classement : c'est la sortie de secours quand le routeur s'abstient "
+        "et que l'agent a reconnu la procedure dans l'inventaire tier 0",
+    )
+    sk.add_argument(
+        "--json", action="store_true", help="verdict lisible par une machine"
+    )
     sk.set_defaults(func=cmd_skills)
 
     so = sub.add_parser(
         "sorties",
         help="les exemples de sortie declares dans les documents sont-ils ENCORE la sortie "
-             "reelle des outils ?",
+        "reelle des outils ?",
     )
     so.add_argument("--root", default=".", help="racine du depot (.)")
-    so.add_argument("--document", default="",
-                    help="un seul document (defaut : les documents du depot)")
-    so.add_argument("--appliquer", action="store_true",
-                    help="reecrire les blocs `sortie-exacte` perimes, avec sauvegarde "
-                         "`.avant-jio`. Les extraits ne sont JAMAIS reecrits : choisir les "
-                         "lignes a montrer demanderait de deviner l'intention")
-    so.add_argument("--liste", action="store_true",
-                    help="ce que chaque document promet, sans rien executer")
-    so.add_argument("--json", action="store_true", help="verdict lisible par une machine")
+    so.add_argument(
+        "--document",
+        default="",
+        help="un seul document (defaut : les documents du depot)",
+    )
+    so.add_argument(
+        "--appliquer",
+        action="store_true",
+        help="reecrire les blocs `sortie-exacte` perimes, avec sauvegarde "
+        "`.avant-jio`. Les extraits ne sont JAMAIS reecrits : choisir les "
+        "lignes a montrer demanderait de deviner l'intention",
+    )
+    so.add_argument(
+        "--liste",
+        action="store_true",
+        help="ce que chaque document promet, sans rien executer",
+    )
+    so.add_argument(
+        "--json", action="store_true", help="verdict lisible par une machine"
+    )
     so.set_defaults(func=cmd_sorties)
 
     co = sub.add_parser(
@@ -4164,13 +5496,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     co.add_argument("--root", default=".", help="racine du depot a controler")
     co.add_argument(
-        "--reparer", action="store_true",
+        "--reparer",
+        action="store_true",
         help="repare ce qui est MECANIQUE (artefacts generes, valeurs mesurees), puis repasse la "
-             "porte. Ne touche JAMAIS a ce qui demanderait d'inventer : un document faux, une "
-             "competence dangereuse, une commande inexistante, un journal casse (une piece a "
-             "conviction ne se lave pas)",
+        "porte. Ne touche JAMAIS a ce qui demanderait d'inventer : un document faux, une "
+        "competence dangereuse, une commande inexistante, un journal casse (une piece a "
+        "conviction ne se lave pas)",
     )
-    co.add_argument("--json", action="store_true", help="verdict lisible par une machine")
+    co.add_argument(
+        "--json", action="store_true", help="verdict lisible par une machine"
+    )
     co.set_defaults(func=cmd_coherence)
 
     en = sub.add_parser(
@@ -4178,18 +5513,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="L'ENTREPRISE : les verifications du depot distribuees a 66 postes, en parallele",
     )
     en.add_argument("--root", default=".", help="racine du depot a verifier")
-    en.add_argument("--liste", action="store_true",
-                    help="affiche le roster (postes, mandats) et le catalogue du moment")
-    en.add_argument("--seulement", default="",
-                    help="ne garde que les missions dont l'id commence par l'un de ces "
-                         "prefixes, separes par des virgules (ex : coherence,mesure)")
-    en.add_argument("--sans", default="",
-                    help="retire les missions dont l'id commence par l'un de ces prefixes "
-                         "(ex : --sans tests pour une passe rapide)")
-    en.add_argument("--ouvriers", type=int, default=None,
-                    help="borne de parallelisme (defaut : 2x coeurs, plafonne a 6 — la "
-                         "borne reelle de CETTE machine, declaree dans le rapport)")
-    en.add_argument("--json", action="store_true", help="rapport lisible par une machine")
+    en.add_argument(
+        "--liste",
+        action="store_true",
+        help="affiche le roster (postes, mandats) et le catalogue du moment",
+    )
+    en.add_argument(
+        "--seulement",
+        default="",
+        help="ne garde que les missions dont l'id commence par l'un de ces "
+        "prefixes, separes par des virgules (ex : coherence,mesure)",
+    )
+    en.add_argument(
+        "--sans",
+        default="",
+        help="retire les missions dont l'id commence par l'un de ces prefixes "
+        "(ex : --sans tests pour une passe rapide)",
+    )
+    en.add_argument(
+        "--ouvriers",
+        type=int,
+        default=None,
+        help="borne de parallelisme (defaut : 2x coeurs, plafonne a 6 — la "
+        "borne reelle de CETTE machine, declaree dans le rapport)",
+    )
+    en.add_argument(
+        "--json", action="store_true", help="rapport lisible par une machine"
+    )
     en.set_defaults(func=cmd_entreprise)
 
     return p
@@ -4280,9 +5630,12 @@ def _points_de_calibration(pool: list) -> list:
                     passes += 1
                 except Exception:
                     pass
-            points.append(Calibration(
-                score=passes / max(1, len(tache.checks)), correct=verite,
-            ))
+            points.append(
+                Calibration(
+                    score=passes / max(1, len(tache.checks)),
+                    correct=verite,
+                )
+            )
     return points
 
 
@@ -4338,10 +5691,14 @@ def cmd_ablation(args: argparse.Namespace) -> int:
         return 0
     if demandees.strip():
         connues = {ta.id: ta for ta in [*TASKS, *TACHES_PARTIELLES]}
-        inconnues = [i for i in (x.strip() for x in demandees.split(",")) if i not in connues]
+        inconnues = [
+            i for i in (x.strip() for x in demandees.split(",")) if i not in connues
+        ]
         if inconnues:
-            print(f"  tache(s) inconnue(s) : {', '.join(inconnues)} (--taches liste)",
-                  file=sys.stderr)
+            print(
+                f"  tache(s) inconnue(s) : {', '.join(inconnues)} (--taches liste)",
+                file=sys.stderr,
+            )
             return 2
         pool = [connues[i.strip()] for i in demandees.split(",") if i.strip()]
     else:
@@ -4366,7 +5723,9 @@ def cmd_ablation(args: argparse.Namespace) -> int:
             # tests absents : sans elle, le moteur ne peut que s'abstenir et on mesurerait
             # l'absence d'oracle au lieu de l'apport du levier.
             traducteur=(
-                TraducteurSimule(taches=TASKS, fidelite=fidelite) if args.sans_oracle else None
+                TraducteurSimule(taches=TASKS, fidelite=fidelite)
+                if args.sans_oracle
+                else None
             ),
             # Une tache partielle n'est pas dans la bank par defaut : sans son entree,
             # le simulateur rendrait une reponse vide (no_task) et on mesurerait le
@@ -4398,7 +5757,11 @@ def cmd_ablation(args: argparse.Namespace) -> int:
         appliquer(moteur, ablations)
         debut = time.monotonic()
         rapport = moteur.run(
-            Mission(objective=tache.objective, id=f"{tache.id}-{graine}", max_rounds=args.rounds),
+            Mission(
+                objective=tache.objective,
+                id=f"{tache.id}-{graine}",
+                max_rounds=args.rounds,
+            ),
             WorkItem(
                 objective=tache.objective,
                 entrypoint=tache.entrypoint,
@@ -4451,23 +5814,32 @@ def cmd_ablation(args: argparse.Namespace) -> int:
         regime_calibration = ""
 
     print(BANNER)
-    print(f"  Ablation du harness  ·  competence simulee {args.skill:.2f}  ·  "
-          f"{taches * graines} mission(s) par bras  ·  {len(noms) if noms else len(LEVIERS)} levier(s)"
-          + ("  ·  SANS ORACLE" if args.sans_oracle else ""))
+    print(
+        f"  Ablation du harness  ·  competence simulee {args.skill:.2f}  ·  "
+        f"{taches * graines} mission(s) par bras  ·  {len(noms) if noms else len(LEVIERS)} levier(s)"
+        + ("  ·  SANS ORACLE" if args.sans_oracle else "")
+    )
     if args.sans_oracle and fidelite < 1.0:
         # Un chiffre de mesure sans son REGIME est un chiffre qu'on ne peut pas comparer :
         # « 3 leviers prouves » ne veut rien dire si l'on ignore avec QUELS temoins.
-        print(f"  Temoins traduits par le modele simule, fidelite {fidelite:.0%} : une part "
-              f"des tests est CONTREFaite, comme dans une mission reelle ou personne ne "
-              f"fournit les tests.")
+        print(
+            f"  Temoins traduits par le modele simule, fidelite {fidelite:.0%} : une part "
+            f"des tests est CONTREFaite, comme dans une mission reelle ou personne ne "
+            f"fournit les tests."
+        )
     if regime_calibration:
         print(f"  {regime_calibration}")
-    print("  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle.")
+    print(
+        "  Aucune cle API requise : les reponses sont simulees, la VERIFICATION est reelle."
+    )
     print()
     racine_etat = Path(tempfile.mkdtemp(prefix="jio-ablation-etat-"))
     try:
         rapport = mesurer(
-            executer, taches=taches, graines=graines, leviers=noms,
+            executer,
+            taches=taches,
+            graines=graines,
+            leviers=noms,
             # Le progres va sur la sortie d'erreur, avec le temps ecoule : il sert a DECIDER s'il
             # faut attendre ou interrompre. Sans lui, la commande est indistinguable d'un blocage.
             avancer=_Progression(
@@ -4487,15 +5859,21 @@ def cmd_ablation(args: argparse.Namespace) -> int:
     prouves = len(rapport.prouves)
     non_distingues = len(rapport.non_distingues)
     couts = len(rapport.couts)
-    print(f"    {prouves} levier(s) prouve(s) par l'ablation  ·  "
-          f"{couts} au cout mesure (le retrait AMELIORE)  ·  "
-          f"{non_distingues} non distingue(s)  ·  "
-          f"{rapport.silencieuses} erreur(s) silencieuse(s) du moteur complet")
+    print(
+        f"    {prouves} levier(s) prouve(s) par l'ablation  ·  "
+        f"{couts} au cout mesure (le retrait AMELIORE)  ·  "
+        f"{non_distingues} non distingue(s)  ·  "
+        f"{rapport.silencieuses} erreur(s) silencieuse(s) du moteur complet"
+    )
     if rapport.silencieuses:
-        print("    -> le moteur COMPLET a livre une erreur sans reserve : c'est un defaut")
+        print(
+            "    -> le moteur COMPLET a livre une erreur sans reserve : c'est un defaut"
+        )
         print("       du harness, pas du levier. A corriger avant toute autre mesure.")
         return 1
-    print("    -> le moteur complet n'a livre aucune erreur sans reserve sur ces missions.")
+    print(
+        "    -> le moteur complet n'a livre aucune erreur sans reserve sur ces missions."
+    )
     return 0
 
 
@@ -4543,13 +5921,19 @@ def cmd_mutants(args: argparse.Namespace) -> int:
     # erreur de SELECTION ferait passer un probleme d'outil pour un probleme de code — et
     # l'utilisateur corrigerait le mauvais.
     if rapport.confirmes:
-        print(f"    -> {len(rapport.confirmes)} ligne(s) du depot sans preuve. Chacune demande")
+        print(
+            f"    -> {len(rapport.confirmes)} ligne(s) du depot sans preuve. Chacune demande"
+        )
         print("       soit un test, soit une raison ECRITE de ne pas en avoir.")
         return 1
     if rapport.apparents:
-        print(f"    -> aucune ligne sans preuve : les {len(rapport.apparents)} survivant(s) "
-              "apparent(s) viennent")
-        print("       de la SELECTION de tests, pas du code. Relancer avec `--tout` les confirme.")
+        print(
+            f"    -> aucune ligne sans preuve : les {len(rapport.apparents)} survivant(s) "
+            "apparent(s) viennent"
+        )
+        print(
+            "       de la SELECTION de tests, pas du code. Relancer avec `--tout` les confirme."
+        )
         return 0
     print("    -> la suite attrape chaque mutation mesuree : les affirmations du depot")
     print("       sont tenues par des tests qui savent echouer.")
@@ -4573,8 +5957,10 @@ def cmd_pr(args: argparse.Namespace) -> int:
         corps = construire(racine, depuis=depuis, limite=limite, complet=complet)
     except GitAbsent as exc:
         print(f"  corps de la PR impossible : {exc}", file=sys.stderr)
-        print("  Ce rapport resume des COMMITS : sans depot git, il n'y a rien a resumer.",
-              file=sys.stderr)
+        print(
+            "  Ce rapport resume des COMMITS : sans depot git, il n'y a rien a resumer.",
+            file=sys.stderr,
+        )
         return 1
 
     sortie = (getattr(args, "sortie", "") or "").strip()
@@ -4593,8 +5979,10 @@ def cmd_pr(args: argparse.Namespace) -> int:
     sauvegarde, ecrit = ecrire(sortie, corps)
     chemin = Path(sortie)
     if not ecrit:
-        print(f"  {chemin} — inchange, rien n'a ete reecrit "
-              f"({len(corps)} octets, identiques)")
+        print(
+            f"  {chemin} — inchange, rien n'a ete reecrit "
+            f"({len(corps)} octets, identiques)"
+        )
         return 0
     print(f"  {chemin} — {len(corps)} octet(s) ecrit(s)")
     if sauvegarde is not None:
@@ -4632,13 +6020,21 @@ def cmd_skills(args: argparse.Namespace) -> int:
         print()
         print("  LE SEUIL D'ABSTENTION CONTRE SES CONSEQUENCES")
         print()
-        print(f"    {'concepts':>9}  {'equilibre':>9}  {'abstention juste':>16}  {'rappel':>7}")
+        print(
+            f"    {'concepts':>9}  {'equilibre':>9}  {'abstention juste':>16}  {'rappel':>7}"
+        )
         for seuil, equilibre, negatifs, rappel in balayer_seuils(maximum=args.maximum):
             marque = "  <- retenu" if seuil == SEUIL_CONCEPTS else ""
-            print(f"    {seuil:>9}  {equilibre:>9.3f}  {negatifs:>10}/{len([o for o in BANC if not o.positif]):<5}  {rappel:>6}%{marque}")
+            print(
+                f"    {seuil:>9}  {equilibre:>9.3f}  {negatifs:>10}/{len([o for o in BANC if not o.positif]):<5}  {rappel:>6}%{marque}"
+            )
         print()
-        print("  Le seuil porte sur le nombre de CONCEPTS de domaine que l'objectif met en jeu,")
-        print("  jamais sur un score : un score BM25 n'a pas d'unite, donc pas de seuil honnete.")
+        print(
+            "  Le seuil porte sur le nombre de CONCEPTS de domaine que l'objectif met en jeu,"
+        )
+        print(
+            "  jamais sur un score : un score BM25 n'a pas d'unite, donc pas de seuil honnete."
+        )
         print()
         return 0
 
@@ -4650,9 +6046,15 @@ def cmd_skills(args: argparse.Namespace) -> int:
         print()
         print(resume_tous())
         print()
-        print("  Un jeu qu'on a lu n'est plus aveugle : chacun a servi UNE fois, et les deux")
-        print("  derniers (C, D) sont pre-enregistres AVANT la prochaine retouche. Le detail")
-        print("  n'est affiche que si l'on demande `--detail` : consulter les echecs d'un jeu")
+        print(
+            "  Un jeu qu'on a lu n'est plus aveugle : chacun a servi UNE fois, et les deux"
+        )
+        print(
+            "  derniers (C, D) sont pre-enregistres AVANT la prochaine retouche. Le detail"
+        )
+        print(
+            "  n'est affiche que si l'on demande `--detail` : consulter les echecs d'un jeu"
+        )
         print("  qu'on n'a pas encore utilise le transforme en jeu de reglage.")
         print()
         if getattr(args, "detail", False):
@@ -4668,7 +6070,9 @@ def cmd_skills(args: argparse.Namespace) -> int:
                 for objectif in jeu.hors_sujet:
                     obtenu = choisir(objectif, maximum=args.maximum)
                     if obtenu:
-                        print(f"    [RATE] [hors sujet] {objectif[:58]} -> {obtenu[0].nom}")
+                        print(
+                            f"    [RATE] [hors sujet] {objectif[:58]} -> {obtenu[0].nom}"
+                        )
                 print()
         return 0
 
@@ -4682,23 +6086,40 @@ def cmd_skills(args: argparse.Namespace) -> int:
             print(f"    [{marque}] {nom:<20} equilibre {equilibre:.3f}")
             print(f"             {resume}")
         print()
-        print(f"    banc : {len(BANC)} objectifs, "
-              f"{len([o for o in BANC if o.positif])} pertinents / "
-              f"{len([o for o in BANC if not o.positif])} hors sujet")
+        print(
+            f"    banc : {len(BANC)} objectifs, "
+            f"{len([o for o in BANC if o.positif])} pertinents / "
+            f"{len([o for o in BANC if not o.positif])} hors sujet"
+        )
         for erreur in rapport.erreurs:
             print(f"      {erreur}")
         print()
-        print("  Le banc est la LIMITE de l'affirmation, pas sa preuve : il a ete ecrit par la")
-        print("  personne qui a ecrit le routeur. Ce qui vaut ici est l'ECART aux temoins —")
-        print("  `alphabetique` dit ce que vaut un choix qui ne regarde pas l'objectif, et")
-        print("  `mots-cles bruts` ce que BM25, la saturation et la ponderation apportent.")
+        print(
+            "  Le banc est la LIMITE de l'affirmation, pas sa preuve : il a ete ecrit par la"
+        )
+        print(
+            "  personne qui a ecrit le routeur. Ce qui vaut ici est l'ECART aux temoins —"
+        )
+        print(
+            "  `alphabetique` dit ce que vaut un choix qui ne regarde pas l'objectif, et"
+        )
+        print(
+            "  `mots-cles bruts` ce que BM25, la saturation et la ponderation apportent."
+        )
         print()
         from .skills.controle import mesurer_tous
+
         ctrl = mesurer_tous()
-        print(f"  ET SUR {int(ctrl['cas'])} OBJECTIFS JAMAIS VUS, EN QUATRE JEUX "
-              f"(`jio skills --controle`) : {ctrl['premier_choix']:.0%} de premier choix juste.")
-        print("  L'ecart avec le banc est la generalisation reelle du routeur : le banc seul ne")
-        print("  peut pas la montrer, et quatre jeux ecrits avant les retouches disent en plus")
+        print(
+            f"  ET SUR {ctrl['cas']} OBJECTIFS JAMAIS VUS, EN QUATRE JEUX "
+            f"(`jio skills --controle`) : {ctrl['premier_choix']:.0%} de premier choix juste."
+        )
+        print(
+            "  L'ecart avec le banc est la generalisation reelle du routeur : le banc seul ne"
+        )
+        print(
+            "  peut pas la montrer, et quatre jeux ecrits avant les retouches disent en plus"
+        )
         print("  si le gain a servi PARTOUT ou seulement la ou son auteur regardait.")
         print()
         return 0
@@ -4710,18 +6131,30 @@ def cmd_skills(args: argparse.Namespace) -> int:
     objectif = " ".join(getattr(args, "objectif", []) or []).strip()
     if not objectif:
         print()
-        print("  usage : jio skills \"<objectif en une phrase>\"")
+        print('  usage : jio skills "<objectif en une phrase>"')
         print("          jio skills --banc            (la mesure sur le banc annote)")
-        print("          jio skills --controle        (des objectifs JAMAIS VUS : le banc ne")
-        print("                                        peut pas mesurer la generalisation)")
-        print("          jio skills --seuil-balaye    (le seuil d'abstention et ses consequences)")
+        print(
+            "          jio skills --controle        (des objectifs JAMAIS VUS : le banc ne"
+        )
+        print(
+            "                                        peut pas mesurer la generalisation)"
+        )
+        print(
+            "          jio skills --seuil-balaye    (le seuil d'abstention et ses consequences)"
+        )
         print()
         catalogue = catalogue_du_depot()
         fiches = sum(d.cout_jetons for d in catalogue.documents)
-        corps = sum(1 for d in catalogue.documents)  # le nombre, pour la phrase ci-dessous
+        corps = sum(
+            1 for d in catalogue.documents
+        )  # le nombre, pour la phrase ci-dessous
         print(f"  {corps} competences disponibles.")
-        print(f"  Les ENUMERER (fiche tier 0) coute {fiches} jetons ; charger leurs CORPS en coute")
-        print(f"  environ 6424. Le routeur en charge {args.maximum} au plus, et dit pourquoi.")
+        print(
+            f"  Les ENUMERER (fiche tier 0) coute {fiches} jetons ; charger leurs CORPS en coute"
+        )
+        print(
+            f"  environ 6424. Le routeur en charge {args.maximum} au plus, et dit pourquoi."
+        )
         print()
         return 0
 
@@ -4731,44 +6164,61 @@ def cmd_skills(args: argparse.Namespace) -> int:
     if getattr(args, "json", False):
         import json
 
-        _charge_utile(json.dumps(
-            {
-                "objectif": objectif,
-                "seuil_concepts": seuil,
-                "choix": [
-                    {"nom": c.nom, "categorie": c.categorie, "score": c.score,
-                     "raisons": list(c.raisons), "cout_jetons": c.cout_jetons}
-                    for c in choix
-                ],
-                "cout_jetons": cout(choix),
-                # Une abstention n'est pas une absence de reponse : c'est « aucune procedure ne
-                # s'impose », et l'appelant automatise recoit l'inventaire pour decider lui-meme.
-                # Sans cela, un agent qui interroge le routeur ne saurait meme pas que des
-                # procedures existent : il travaille sans, et le harness ne sert a rien.
-                #
-                # `proches` est la liste CLASSEE, et elle n'est pas une decision : quand la porte
-                # se ferme, son premier element est le bon dans 42 % des cas mesures (contre 8 %
-                # au hasard) — assez pour aider, pas assez pour trancher a la place de l'agent.
-                #
-                # `proximite` n'est remplie que pour les elements AJOUTES par le classement
-                # semantique (voir `router.proches`) : `null` veut dire « pas mesuree », jamais
-                # « nulle », et l'echelle n'est pas celle de `score` — BM25F n'a pas d'unite,
-                # le cosinus va de -1 a 1. Les melanger dans un seul champ serait la faute que
-                # ce depot refuse : deux nombres, deux sens, deux noms.
-                "proches": [
-                    {"nom": c.nom, "categorie": c.categorie, "score": c.score,
-                     "raisons": list(c.raisons), "cout_jetons": c.cout_jetons,
-                     "proximite": c.proximite}
-                    for c in proches(objectif, maximum=5)
-                ],
-                "tier0": [
-                    {"nom": d.nom, "categorie": d.categorie, "description": d.description}
-                    for d in catalogue_du_depot().documents
-                ],
-            },
-            ensure_ascii=False, indent=2,
-        ))
-        return 0 if choix else 0
+        _charge_utile(
+            json.dumps(
+                {
+                    "objectif": objectif,
+                    "seuil_concepts": seuil,
+                    "choix": [
+                        {
+                            "nom": c.nom,
+                            "categorie": c.categorie,
+                            "score": c.score,
+                            "raisons": list(c.raisons),
+                            "cout_jetons": c.cout_jetons,
+                        }
+                        for c in choix
+                    ],
+                    "cout_jetons": cout(choix),
+                    # Une abstention n'est pas une absence de reponse : c'est « aucune procedure ne
+                    # s'impose », et l'appelant automatise recoit l'inventaire pour decider lui-meme.
+                    # Sans cela, un agent qui interroge le routeur ne saurait meme pas que des
+                    # procedures existent : il travaille sans, et le harness ne sert a rien.
+                    #
+                    # `proches` est la liste CLASSEE, et elle n'est pas une decision : quand la porte
+                    # se ferme, son premier element est le bon dans 42 % des cas mesures (contre 8 %
+                    # au hasard) — assez pour aider, pas assez pour trancher a la place de l'agent.
+                    #
+                    # `proximite` n'est remplie que pour les elements AJOUTES par le classement
+                    # semantique (voir `router.proches`) : `null` veut dire « pas mesuree », jamais
+                    # « nulle », et l'echelle n'est pas celle de `score` — BM25F n'a pas d'unite,
+                    # le cosinus va de -1 a 1. Les melanger dans un seul champ serait la faute que
+                    # ce depot refuse : deux nombres, deux sens, deux noms.
+                    "proches": [
+                        {
+                            "nom": c.nom,
+                            "categorie": c.categorie,
+                            "score": c.score,
+                            "raisons": list(c.raisons),
+                            "cout_jetons": c.cout_jetons,
+                            "proximite": c.proximite,
+                        }
+                        for c in proches(objectif, maximum=5)
+                    ],
+                    "tier0": [
+                        {
+                            "nom": d.nom,
+                            "categorie": d.categorie,
+                            "description": d.description,
+                        }
+                        for d in catalogue_du_depot().documents
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
 
     print()
     print(f"  OBJECTIF  {objectif}")
@@ -4776,15 +6226,29 @@ def cmd_skills(args: argparse.Namespace) -> int:
     if not choix:
         print("  AUCUNE COMPETENCE A CHARGER")
         print()
-        print(f"  Moins de {seuil} concept(s) de domaine reconnu(s) dans l'objectif : rien ne")
-        print("  garantit qu'une competence s'applique ici. Charger une procedure hors sujet")
-        print("  coute plus cher que ne rien charger — elle detourne le travail en plus de")
+        print(
+            f"  Moins de {seuil} concept(s) de domaine reconnu(s) dans l'objectif : rien ne"
+        )
+        print(
+            "  garantit qu'une competence s'applique ici. Charger une procedure hors sujet"
+        )
+        print(
+            "  coute plus cher que ne rien charger — elle detourne le travail en plus de"
+        )
         print("  l'occuper. Deux sorties de secours, dans cet ordre :")
         print()
-        print("      jio skills \"...\" --seuil 0          force un classement (le routeur peut")
-        print("                                        alors charger ce qui ne s'applique pas)")
-        print("      jio skills --nom <competence>     charge le texte d'une procedure que")
-        print("                                        les listes ci-dessous ont fait reconnaitre")
+        print(
+            '      jio skills "..." --seuil 0          force un classement (le routeur peut'
+        )
+        print(
+            "                                        alors charger ce qui ne s'applique pas)"
+        )
+        print(
+            "      jio skills --nom <competence>     charge le texte d'une procedure que"
+        )
+        print(
+            "                                        les listes ci-dessous ont fait reconnaitre"
+        )
         print()
         from .skills.controle import qualite_de_la_liste
         from .skills.router import proches
@@ -4796,57 +6260,100 @@ def cmd_skills(args: argparse.Namespace) -> int:
         liste = proches(objectif, maximum=5)
         q = qualite_de_la_liste()
         if liste:
-            print("  LES PLUS PROCHES, classees — presentees comme telles, jamais comme une")
-            print(f"  decision (mesure : la premiere est la bonne {q['justes']:.0f} fois sur "
-                  f"{q['cas']:.0f} quand la porte se ferme,")
+            print(
+                "  LES PLUS PROCHES, classees — presentees comme telles, jamais comme une"
+            )
+            print(
+                f"  decision (mesure : la premiere est la bonne {q['justes']:.0f} fois sur "
+                f"{q['cas']:.0f} quand la porte se ferme,"
+            )
             print(f"  contre {q['hasard']:.0%} au hasard) :")
             marquees = sum(1 for c in liste if c.proximite is None)
             if marquees < len(liste):
                 print()
-                print(f"  {marquees} element(s) MARQUE(S) par le lexique (score BM25F), "
-                      f"{len(liste) - marquees} AJOUTE(S) par RESSEMBLANCE")
-                print("  (la ligne « aucun mot commun » dit lesquels — et la ressemblance ne")
-                print("   decide rien : elle ordonne des trous, elle ne charge aucune procedure)")
+                print(
+                    f"  {marquees} element(s) MARQUE(S) par le lexique (score BM25F), "
+                    f"{len(liste) - marquees} AJOUTE(S) par RESSEMBLANCE"
+                )
+                print(
+                    "  (la ligne « aucun mot commun » dit lesquels — et la ressemblance ne"
+                )
+                print(
+                    "   decide rien : elle ordonne des trous, elle ne charge aucune procedure)"
+                )
             print()
             for rang, c in enumerate(liste, start=1):
                 # Deux echelles, deux affichages : un score BM25F (`score`, sans unite) et une
                 # ressemblance (`proximite`, 0..1). Un element ajoute par la ressemblance a
                 # `score 0.0` ET une proximite : c'est ce qui le distingue d'un element marque.
-                detail = (f"score {c.score}" if c.proximite is None
-                          else f"score {c.score} · ressemblance {c.proximite:.2f}")
-                print(f"      {rang}. {c.nom}  [{c.categorie}]  {detail}  {c.cout_jetons} jetons")
-                print(f"         pourquoi : {', '.join(c.raisons) if c.raisons else 'aucun terme'}")
+                detail = (
+                    f"score {c.score}"
+                    if c.proximite is None
+                    else f"score {c.score} · ressemblance {c.proximite:.2f}"
+                )
+                print(
+                    f"      {rang}. {c.nom}  [{c.categorie}]  {detail}  {c.cout_jetons} jetons"
+                )
+                print(
+                    f"         pourquoi : {', '.join(c.raisons) if c.raisons else 'aucun terme'}"
+                )
             print()
-        print("  CETTE ABSTENTION N'EST PAS UNE IMPASSE : la liste ci-dessus (classee, donc")
-        print("  utilisable) et l'inventaire ci-dessous (complet, donc sans ordre) donnent de")
-        print("  quoi decider. Ce que le routeur refuse, c'est de decider A VOTRE PLACE.")
+        print(
+            "  CETTE ABSTENTION N'EST PAS UNE IMPASSE : la liste ci-dessus (classee, donc"
+        )
+        print(
+            "  utilisable) et l'inventaire ci-dessous (complet, donc sans ordre) donnent de"
+        )
+        print(
+            "  quoi decider. Ce que le routeur refuse, c'est de decider A VOTRE PLACE."
+        )
         print()
         print("  ET L'INVENTAIRE COMPLET (tier 0, une ligne par competence) :")
         print()
         for d in catalogue_du_depot().documents:
             print(f"      {d.nom}  [{d.categorie}]")
         print()
-        print("  Le fichier qui les enumere est ecrit par `jio artifacts --target hermes")
-        print("  --write` : `.hermes/skills/README.md`. Un routeur qui dit NON sans dire")
-        print("  ce qui existe laisse l'agent sans rien — c'est le seul cas ou il coute")
+        print(
+            "  Le fichier qui les enumere est ecrit par `jio artifacts --target hermes"
+        )
+        print(
+            "  --write` : `.hermes/skills/README.md`. Un routeur qui dit NON sans dire"
+        )
+        print(
+            "  ce qui existe laisse l'agent sans rien — c'est le seul cas ou il coute"
+        )
         print("  vraiment quelque chose.")
         print()
         return 0
 
     for rang, c in enumerate(choix, start=1):
-        print(f"  {rang}. {c.nom}  [{c.categorie}]  score {c.score}  {c.cout_jetons} jetons")
-        print(f"     pourquoi : {', '.join(c.raisons) if c.raisons else 'aucun terme commun'}")
+        print(
+            f"  {rang}. {c.nom}  [{c.categorie}]  score {c.score}  {c.cout_jetons} jetons"
+        )
+        print(
+            f"     pourquoi : {', '.join(c.raisons) if c.raisons else 'aucun terme commun'}"
+        )
     fiches = sum(d.cout_jetons for d in catalogue_du_depot().documents)
     desordre = any(choix[i].score > choix[i - 1].score for i in range(1, len(choix)))
     if desordre:
         print()
-        print("  L'ordre n'est pas exactement celui des scores : la DIVERSIFICATION a fait")
-        print("  passer devant une competence moins bien classee mais qui n'apprend rien de")
-        print("  plus que la precedente. Deux competences quasi identiques occuperaient deux")
+        print(
+            "  L'ordre n'est pas exactement celui des scores : la DIVERSIFICATION a fait"
+        )
+        print(
+            "  passer devant une competence moins bien classee mais qui n'apprend rien de"
+        )
+        print(
+            "  plus que la precedente. Deux competences quasi identiques occuperaient deux"
+        )
         print("  places dans le contexte pour une seule information.")
     print()
-    print(f"  cout d'injection : {cout(choix)} jetons, contre {fiches} pour la fiche tier 0 des 12")
-    print("  competences et environ 6424 pour leurs corps : le choix est ce qui rend la")
+    print(
+        f"  cout d'injection : {cout(choix)} jetons, contre {fiches} pour la fiche tier 0 des 12"
+    )
+    print(
+        "  competences et environ 6424 pour leurs corps : le choix est ce qui rend la"
+    )
     print("  bibliotheque abordable, pas sa taille.")
     print()
     return 0
@@ -4872,12 +6379,19 @@ def _skills_par_nom(demande: str, *, json_sortie: bool = False) -> int:
             if json_sortie:
                 import json as _json
 
-                _charge_utile(_json.dumps(
-                    {"nom": skill.name, "categorie": skill.category,
-                     "description": skill.description, "tags": list(skill.tags),
-                     "texte": skill.body},
-                    ensure_ascii=False, indent=2,
-                ))
+                _charge_utile(
+                    _json.dumps(
+                        {
+                            "nom": skill.name,
+                            "categorie": skill.category,
+                            "description": skill.description,
+                            "tags": list(skill.tags),
+                            "texte": skill.body,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
                 return 0
             print()
             print(f"  PROCEDURE  {skill.name}  [{skill.category}]")
@@ -4918,7 +6432,8 @@ def cmd_sorties(args: argparse.Namespace) -> int:
     """
     import json as _json
 
-    from .verify.sorties import blocs, liste as lister, reparer, verifier
+    from .verify.sorties import blocs, reparer, verifier
+    from .verify.sorties import liste as lister
 
     racine = Path(getattr(args, "root", ".") or ".").expanduser()
     document = (getattr(args, "document", "") or "").strip()
@@ -4934,8 +6449,12 @@ def cmd_sorties(args: argparse.Namespace) -> int:
 
             print()
             print(f"  Le document demande n'existe pas : {chemin}")
-            print("  Rien n'a ete verifie — et une verification qui n'a pas eu lieu n'est pas")
-            print("  un succes. Sans `--document`, la commande parcourt les documents du depot.")
+            print(
+                "  Rien n'a ete verifie — et une verification qui n'a pas eu lieu n'est pas"
+            )
+            print(
+                "  un succes. Sans `--document`, la commande parcourt les documents du depot."
+            )
             print()
             print(f"  -> code {INDETERMINE} : {ACTION[INDETERMINE]}")
             return INDETERMINE
@@ -4960,9 +6479,13 @@ def cmd_sorties(args: argparse.Namespace) -> int:
                 print(f"    {ligne}")
             total += len(lignes)
         print()
-        print(f"    TOTAL : {total} exemple(s) declare(s) sur {len(chemins)} document(s)")
+        print(
+            f"    TOTAL : {total} exemple(s) declare(s) sur {len(chemins)} document(s)"
+        )
         if not total:
-            print("    Un exemple non declare n'est verifie par RIEN : c'est ainsi qu'un")
+            print(
+                "    Un exemple non declare n'est verifie par RIEN : c'est ainsi qu'un"
+            )
             print("    README a pu annoncer « 11 fichier(s), ~5715 jetons » sans que")
             print("    personne ne le relise.")
         print()
@@ -4974,7 +6497,7 @@ def cmd_sorties(args: argparse.Namespace) -> int:
         for chemin in chemins:
             code, signalements, message = reparer(chemin, racine)
             code_total = max(code_total, code)
-            print(f"    [{ 'ok ' if code == 0 else 'ko ' }] {chemin.name} : {message}")
+            print(f"    [{'ok ' if code == 0 else 'ko '}] {chemin.name} : {message}")
             for signalement in signalements[:8]:
                 print(f"          {signalement}")
         print()
@@ -4989,18 +6512,25 @@ def cmd_sorties(args: argparse.Namespace) -> int:
             divergences.append((chemin.name, str(divergence)))
 
     if getattr(args, "json", False):
-        _charge_utile(_json.dumps(
-            {
-                "documents": [str(c) for c in chemins],
-                "blocs": total_blocs,
-                "divergences": [{"document": d, "detail": t} for d, t in divergences],
-            },
-            ensure_ascii=False, indent=2,
-        ))
+        _charge_utile(
+            _json.dumps(
+                {
+                    "documents": [str(c) for c in chemins],
+                    "blocs": total_blocs,
+                    "divergences": [
+                        {"document": d, "detail": t} for d, t in divergences
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 1 if divergences else 0
 
     print()
-    print("  EXEMPLES DE SORTIE D'OUTIL  ·  ce que le document montre est-il encore vrai ?")
+    print(
+        "  EXEMPLES DE SORTIE D'OUTIL  ·  ce que le document montre est-il encore vrai ?"
+    )
     print()
     if not total_blocs:
         print("    aucun exemple declare dans ces documents.")
@@ -5011,12 +6541,18 @@ def cmd_sorties(args: argparse.Namespace) -> int:
         print("        ... les lignes de la sortie ...")
         print("        <!-- /sortie -->")
         print()
-        print("    `sortie:` accepte un extrait, les coupures etant declarees par `...` ;")
-        print("    `sortie-exacte:` exige la sortie complete (celui-la se repare tout seul).")
+        print(
+            "    `sortie:` accepte un extrait, les coupures etant declarees par `...` ;"
+        )
+        print(
+            "    `sortie-exacte:` exige la sortie complete (celui-la se repare tout seul)."
+        )
         print()
         return 0
     if divergences:
-        print(f"    {len(divergences)} bloc(s) sur {total_blocs} ne correspondent plus :")
+        print(
+            f"    {len(divergences)} bloc(s) sur {total_blocs} ne correspondent plus :"
+        )
         print()
         for document, detail in divergences[:10]:
             print(f"    {document} · {detail}")
@@ -5026,8 +6562,12 @@ def cmd_sorties(args: argparse.Namespace) -> int:
         print("    demanderait de deviner — le document doit etre corrige a la main.")
         print()
         return 1
-    print(f"    {total_blocs} exemple(s) verifie(s) : chacun est un EXTRAIT fidele de la")
-    print("    sortie reelle de sa commande. Les lignes sautees sont celles declarees par")
+    print(
+        f"    {total_blocs} exemple(s) verifie(s) : chacun est un EXTRAIT fidele de la"
+    )
+    print(
+        "    sortie reelle de sa commande. Les lignes sautees sont celles declarees par"
+    )
     print("    `...`, et les commandes tournent sans shell, en liste d'arguments.")
     print()
     return 0
@@ -5062,7 +6602,9 @@ def cmd_coherence(args: argparse.Namespace) -> int:
             print("    aucune reparation mecanique n'etait possible")
         if restants:
             print()
-            print("    CE QUI ATTEND UNE DECISION HUMAINE (jamais devine a votre place) :")
+            print(
+                "    CE QUI ATTEND UNE DECISION HUMAINE (jamais devine a votre place) :"
+            )
             for reste in restants:
                 print(f"      - {reste[:92]}")
         print()
@@ -5097,7 +6639,9 @@ def cmd_entreprise(args: argparse.Namespace) -> int:
             print(f"    {poste.nom:<26} [{poste.specialite:<12}] {poste.mandat}")
         print()
         missions = cataloguer(getattr(args, "root", ".") or ".")
-        print(f"  CATALOGUE DU MOMENT  ·  {len(missions)} mission(s), tiree du depot lui-meme")
+        print(
+            f"  CATALOGUE DU MOMENT  ·  {len(missions)} mission(s), tiree du depot lui-meme"
+        )
         for mission in missions:
             print(f"    {mission.id:<44} [{mission.specialite}] {mission.resume}")
         print()
@@ -5111,7 +6655,10 @@ def cmd_entreprise(args: argparse.Namespace) -> int:
     if sans:
         missions = [m for m in missions if not any(m.id.startswith(s) for s in sans)]
     if not missions:
-        print("  aucune mission apres filtrage — rien a faire n'est pas un succes.", file=sys.stderr)
+        print(
+            "  aucune mission apres filtrage — rien a faire n'est pas un succes.",
+            file=sys.stderr,
+        )
         return 2
     rapport = mener(getattr(args, "root", ".") or ".", missions, ouvriers=args.ouvriers)
     if args.json:
@@ -5153,28 +6700,37 @@ def cmd_clarify(args: argparse.Namespace) -> int:
         return 0
 
     if getattr(args, "mesure", False):
-        from .bench.objectifs import formater as formater_banc, mesurer as mesurer_banc
+        from .bench.objectifs import formater as formater_banc
+        from .bench.objectifs import mesurer as mesurer_banc
 
         rapport = mesurer_banc()
         print(BANNER)
         print(formater_banc(rapport))
         print()
         if not rapport.exact:
-            print("    -> la porte se trompe : chaque erreur ci-dessus est un cas a corriger")
+            print(
+                "    -> la porte se trompe : chaque erreur ci-dessus est un cas a corriger"
+            )
             print("       avant de lui faire confiance sur une vraie mission.")
             return 1
         from .bench.controle_clarify import mesurer_controle
 
         controle = mesurer_controle()
-        print("    -> sur ce corpus annote, la porte ne se trompe pas. Le corpus est la")
+        print(
+            "    -> sur ce corpus annote, la porte ne se trompe pas. Le corpus est la"
+        )
         print("       limite de cette affirmation, et il est ecrit dans le depot.")
         print()
-        print(f"    ET SUR DES OBJECTIFS D'UN AUTRE PROJET (`jio clarify --controle`) : "
-              f"{controle['exactitude']:.0%} d'exactitude "
-              f"({controle['exactitude_en']:.0%} en anglais, "
-              f"{controle['exactitude_fr']:.0%} en francais), "
-              f"{controle['faux_positifs']:.0f} question(s) inutile(s).")
-        print("       Le banc cite les chemins de CE depot : il ne peut pas dire si la porte")
+        print(
+            f"    ET SUR DES OBJECTIFS D'UN AUTRE PROJET (`jio clarify --controle`) : "
+            f"{controle['exactitude']:.0%} d'exactitude "
+            f"({controle['exactitude_en']:.0%} en anglais, "
+            f"{controle['exactitude_fr']:.0%} en francais), "
+            f"{controle['faux_positifs']:.0f} question(s) inutile(s)."
+        )
+        print(
+            "       Le banc cite les chemins de CE depot : il ne peut pas dire si la porte"
+        )
         print("       fonctionne sur le projet de quelqu'un d'autre.")
         return 0
 
@@ -5184,7 +6740,9 @@ def cmd_clarify(args: argparse.Namespace) -> int:
         if chemin.is_file():
             contexte = chemin.read_text(encoding="utf-8", errors="replace")[:200_000]
         else:
-            print(f"  contexte introuvable : {chemin} (ignore, et dit)", file=sys.stderr)
+            print(
+                f"  contexte introuvable : {chemin} (ignore, et dit)", file=sys.stderr
+            )
 
     mode = "strict" if args.strict else "assume"
     analyse = analyser(
@@ -5202,10 +6760,14 @@ def cmd_clarify(args: argparse.Namespace) -> int:
         return 1
     if analyse.bloquant:
         print("    -> QUESTIONS EN ATTENTE : je ne commence pas avant tes reponses.")
-        print("       (mode strict : c'est la seule facon de ne pas deviner a ta place.)")
+        print(
+            "       (mode strict : c'est la seule facon de ne pas deviner a ta place.)"
+        )
         return 3
     if analyse.questions:
-        print("    -> HYPOTHESES DECLAREES (mode assume) : je commence, et je les annonce.")
+        print(
+            "    -> HYPOTHESES DECLAREES (mode assume) : je commence, et je les annonce."
+        )
     return 0
 
 
@@ -5230,6 +6792,8 @@ def cmd_start(args: argparse.Namespace) -> int:
     from .artifacts import TARGETS, manifest
     from .artifacts.wiring import (
         _COMMANDE as _COMMANDE_DEFAUT,
+    )
+    from .artifacts.wiring import (
         DIALECTES,
         NOM_SERVEUR,
         brancher,
@@ -5248,7 +6812,9 @@ def cmd_start(args: argparse.Namespace) -> int:
     # dossier courant), la configuration etait ecrite quand meme, et la preuve — correcte —
     # arrivait APRES la panne. Une integration qui s'avere fausse en le disant reste fausse.
     commande, note_commande = (
-        commande_qui_marche(racine=racine) if not args.sans_mcp else (_COMMANDE_DEFAUT, "")
+        commande_qui_marche(racine=racine)
+        if not args.sans_mcp
+        else (_COMMANDE_DEFAUT, "")
     )
 
     print(BANNER)
@@ -5280,11 +6846,15 @@ def cmd_start(args: argparse.Namespace) -> int:
     # l'utilisateur qu'elle venait de NE PAS ecrire. La promesse du README (« relancee, elle ne
     # reecrit rien ») etait donc fausse au rapport, alors qu'elle etait tenue au disque.
     ecrits = [d for d in decisions if d.action not in {"inchange", "preserve"}]
-    print(f"    artefacts : {len(decisions) - len(ecrits)} deja a jour, {len(ecrits)} ecrit(s)")
+    print(
+        f"    artefacts : {len(decisions) - len(ecrits)} deja a jour, {len(ecrits)} ecrit(s)"
+    )
     for decision in sorted(ecrits, key=lambda d: d.chemin):
-        marque = {"preserve": "PRESERVE (le tien)", "remplace": "mis a jour",
-                  "sauvegarde": "mis a jour (ton original en .avant-jio)"}.get(
-                      decision.action, decision.action)
+        marque = {
+            "preserve": "PRESERVE (le tien)",
+            "remplace": "mis a jour",
+            "sauvegarde": "mis a jour (ton original en .avant-jio)",
+        }.get(decision.action, decision.action)
         print(f"      {marque:<38} {decision.chemin}")
 
     # L'ETAT, et pas seulement l'activite de cette execution. La fiche d'integration est lue par
@@ -5299,7 +6869,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     a_jour = len(decisions) - len(preserves)
 
     cablages: list[str] = []
-    cables: list[str] = []      # l'ETAT du cablage, toutes cibles confondues
+    cables: list[str] = []  # l'ETAT du cablage, toutes cibles confondues
     if not args.sans_mcp:
         print()
         if note_commande:
@@ -5323,7 +6893,9 @@ def cmd_start(args: argparse.Namespace) -> int:
             elif _fichier is None:
                 # Rien a ecrire : la configuration appartient a l'utilisateur. Le fragment
                 # est livre EN ENTIER (pas « voir la doc ») pour qu'il n'ait qu'a coller.
-                print(f"      {dialecte:<12} a coller  ({description}) — fragment ci-dessous")
+                print(
+                    f"      {dialecte:<12} a coller  ({description}) — fragment ci-dessous"
+                )
                 for ligne in str(message).rstrip().splitlines():
                     print(f"                   {ligne}")
             else:
@@ -5333,7 +6905,9 @@ def cmd_start(args: argparse.Namespace) -> int:
                 # Cursor »), le second n'en est pas un.
                 if f"contient deja `{NOM_SERVEUR}`" in str(message):
                     cables.append(dialecte)
-                print(f"      {dialecte:<12} laisse tel quel ({description}) : {message}")
+                print(
+                    f"      {dialecte:<12} laisse tel quel ({description}) : {message}"
+                )
 
     print()
     print("    PREUVE DU CABLAGE (le serveur est reellement demarre)")
@@ -5375,7 +6949,9 @@ def cmd_start(args: argparse.Namespace) -> int:
         install = installer(racine)
         if install.ignores:
             print(f"      rien installe : {cible_hermes} n'existe pas encore.")
-            print("      Lance Hermes une fois (ou cree le dossier), puis relance `jio start` :")
+            print(
+                "      Lance Hermes une fois (ou cree le dossier), puis relance `jio start` :"
+            )
             print(f"          mkdir -p {cible_hermes} && jio start")
             print("      Sinon, installe-les a la main :")
             print(f"          cp -r {racine / '.hermes' / 'skills'}/* {cible_hermes}/")
@@ -5386,13 +6962,17 @@ def cmd_start(args: argparse.Namespace) -> int:
             for chemin in install.copies[:8]:
                 print(f"      COPIE     {chemin}")
             for chemin in install.mises_a_jour[:8]:
-                print(f"      A JOUR    {chemin}  (version precedente de jio, remplacee)")
+                print(
+                    f"      A JOUR    {chemin}  (version precedente de jio, remplacee)"
+                )
             for chemin in install.deja[:4]:
                 print(f"      deja      {chemin}")
             for chemin in install.preserves[:4]:
                 print(f"      PRESERVE  {chemin} (a vous : non touche)")
             if install.preserves:
-                print("      Ces fichiers ne seront JAMAIS ecrases : comparez-les, puis")
+                print(
+                    "      Ces fichiers ne seront JAMAIS ecrases : comparez-les, puis"
+                )
                 print("      supprimez-les si vous voulez que jio les gere.")
             print(f"      total : {install.resume()}  ·  registre : {REGISTRE}")
             hermes_etat = install.resume()
@@ -5400,7 +6980,13 @@ def cmd_start(args: argparse.Namespace) -> int:
     etat.mkdir(parents=True, exist_ok=True)
     fiche = etat / "ACTIVE.md"
     texte_fiche = _fiche_active(
-        racine, detectees, cables, presents, len(decisions), a_jour, etat_coherence,
+        racine,
+        detectees,
+        cables,
+        presents,
+        len(decisions),
+        a_jour,
+        etat_coherence,
         hermes=hermes_etat,
     )
     # « Ne reecrit rien » se mesure sur le contenu ET sur la date : ecrire un texte identique
@@ -5408,14 +6994,18 @@ def cmd_start(args: argparse.Namespace) -> int:
     # « ne change rien » finit quand meme par apparaitre comme un changement. On ne touche pas
     # le fichier quand son contenu est le meme — et on le DIT, parce que « rien n'a ete ecrit »
     # et « une fiche a ete ecrite » doivent pouvoir se distinguer depuis la sortie.
-    fiche_inchangee = fiche.is_file() and fiche.read_text(encoding="utf-8") == texte_fiche
+    fiche_inchangee = (
+        fiche.is_file() and fiche.read_text(encoding="utf-8") == texte_fiche
+    )
     if not fiche_inchangee:
         fiche.write_text(texte_fiche, encoding="utf-8")
     print()
     print(f"    COHERENCE DU DEPOT : {ecran_coherence}")
     if not rapport.ok:
         for constat in rapport.incoherents:
-            print(f"      [{constat.marque}] {constat.controle:<13} {constat.resume[:60]}")
+            print(
+                f"      [{constat.marque}] {constat.controle:<13} {constat.resume[:60]}"
+            )
             for detail in constat.details[:2]:
                 print(f"           - {detail[:84]}")
         print("      -> `jio coherence` donne le detail, la ligne et la correction.")
@@ -5426,9 +7016,15 @@ def cmd_start(args: argparse.Namespace) -> int:
     )
     print()
     print("    PROCHAINES ETAPES")
-    print("      1. `jio doctor`               etat reel : ce qui marche, ce qui manque")
-    print("      2. `jio clarify \"<objectif>\"`   les questions essentielles avant de travailler")
-    print("      3. `jio run \"<objectif>\"`       mission complete, avec preuves et reserves")
+    print(
+        "      1. `jio doctor`               etat reel : ce qui marche, ce qui manque"
+    )
+    print(
+        '      2. `jio clarify "<objectif>"`   les questions essentielles avant de travailler'
+    )
+    print(
+        '      3. `jio run "<objectif>"`       mission complete, avec preuves et reserves'
+    )
     print()
     return 0
 
@@ -5465,7 +7061,11 @@ def _fiche_active(
     # Le dossier de l'installation de jio : c'est `jio/cli.py` qui parle, donc son parent EST le
     # paquet. Aucune recherche, aucun `pip show` : ce qui est ecrit est ce qui tourne.
     paquet = Path(__file__).resolve().parent
-    outils = ", ".join(detectees) if detectees else "aucune CLI detectee (ce n'est pas bloquant)"
+    outils = (
+        ", ".join(detectees)
+        if detectees
+        else "aucune CLI detectee (ce n'est pas bloquant)"
+    )
     cable = ", ".join(cables) if cables else "aucun (--sans-mcp)"
     # L'ETAT des artefacts, jamais l'activite de l'execution qui a ecrit cette fiche : c'est la
     # difference entre un fichier qui bat et un fichier qui informe.
@@ -5483,8 +7083,13 @@ def _fiche_active(
 
     tous = manifest()
     procedures = [c for c in tous if "/skills/" in c and c.endswith("SKILL.md")]
-    agents = [c for c in tous if c.startswith(".opencode/agents/") and c.endswith(".md")
-              and not c.endswith("README.md")]
+    agents = [
+        c
+        for c in tous
+        if c.startswith(".opencode/agents/")
+        and c.endswith(".md")
+        and not c.endswith("README.md")
+    ]
     # Le cout de la bibliotheque ENTIERE, mesure sur les textes qui seront charges — c'est ce
     # que paie une session qui les chargerait toutes. Un chiffre annonce que rien ne mesure
     # redevient faux au premier ajout : celui-ci est calcule ici, comme les autres.
@@ -5496,30 +7101,59 @@ def _fiche_active(
     # entrees est exactement le defaut qu'un chiffre verifie empeche ailleurs : la fiche doit
     # satisfaire la meme exigence qu'elle impose au reste du depot.
     regles: list[tuple[str, str]] = [
-        ("Aucune affirmation sans preuve executable.",
-         "`jio claims <document>` verifie un document et sort en 1 s'il refute quoi que ce "
-         "soit — un document de ce projet n'a pas d'exception."),
-        ("Les artefacts sont generes.",
-         "Les editer a la main est perdu : "
-         + ("editer `jio/artifacts/doctrine.py`, puis `jio sync`."
-            if propre_depot else
-            f"ils sont regeneres par `jio start` depuis l'installation de jio (`{paquet}`). "
-            "Pour les faire evoluer, editer cette installation, puis relancer `jio start`.")),
-        ("Trois etats, pas quatre.",
-         "`DELIVERED`, `DELIVERED_UNDER_RESERVATION`, `ABSTAINED`. « Ca devrait marcher » "
-         "n'est pas un etat."),
-        ("Une etape sans preuve n'existe pas.",
-         "En mode autonome (`jio auto`), chaque etape du plan porte la commande qui peut "
-         "echouer ; un echec non resolu ARRETE le plan au lieu de l'enchainer, et ce qui reste "
-         "est declare NON TENTE."),
-        ("Une preuve ne se reprend pas d'un autre monde.",
-         "`jio auto --reprendre` saute les etapes deja prouvees SEULEMENT si la revision git "
-         "n'a pas bouge. Sinon le plan est rejoue entier : re-verifier coute une commande par "
-         "etape, croire coute une mission batie sur du vide."),
+        (
+            "Aucune affirmation sans preuve executable.",
+            (
+                "`jio claims <document>` verifie un document et sort en 1 s'il refute quoi que ce "
+                "soit — un document de ce projet n'a pas d'exception."
+            ),
+        ),
+        (
+            "Les artefacts sont generes.",
+            "Les editer a la main est perdu : "
+            + (
+                "editer `jio/artifacts/doctrine.py`, puis `jio sync`."
+                if propre_depot
+                else f"ils sont regeneres par `jio start` depuis l'installation de jio (`{paquet}`). "
+                "Pour les faire evoluer, editer cette installation, puis relancer `jio start`."
+            ),
+        ),
+        (
+            "Trois etats, pas quatre.",
+            (
+                "`DELIVERED`, `DELIVERED_UNDER_RESERVATION`, `ABSTAINED`. « Ca devrait marcher » "
+                "n'est pas un etat."
+            ),
+        ),
+        (
+            "Une etape sans preuve n'existe pas.",
+            (
+                "En mode autonome (`jio auto`), chaque etape du plan porte la commande qui peut "
+                "echouer ; un echec non resolu ARRETE le plan au lieu de l'enchainer, et ce qui reste "
+                "est declare NON TENTE."
+            ),
+        ),
+        (
+            "Une preuve ne se reprend pas d'un autre monde.",
+            (
+                "`jio auto --reprendre` saute les etapes deja prouvees SEULEMENT si la revision git "
+                "n'a pas bouge. Sinon le plan est rejoue entier : re-verifier coute une commande par "
+                "etape, croire coute une mission batie sur du vide."
+            ),
+        ),
     ]
-    ordre = {1: "Une", 2: "Deux", 3: "Trois", 4: "Quatre", 5: "Cinq", 6: "Six", 7: "Sept"}
-    titre_regles = (f"## {ordre.get(len(regles), str(len(regles)))} regles, "
-                    "et ce qui les tient")
+    ordre = {
+        1: "Une",
+        2: "Deux",
+        3: "Trois",
+        4: "Quatre",
+        5: "Cinq",
+        6: "Six",
+        7: "Sept",
+    }
+    titre_regles = (
+        f"## {ordre.get(len(regles), str(len(regles)))} regles, et ce qui les tient"
+    )
     corps_regles = "\n".join(
         f"{rang}. **{titre}** {texte}" for rang, (titre, texte) in enumerate(regles, 1)
     )
@@ -5529,22 +7163,28 @@ def _fiche_active(
     # envoyer l'IA vers une commande qui echoue — le petit mensonge qui fait douter du reste.
     fini: list[str] = []
     if (racine / "tests").is_dir() or (racine / "test").is_dir():
-        fini.append("la suite de tests passe (`python -m pytest -q` s'il s'agit de pytest) et "
-                    "`jio scan .` ne signale rien ;")
+        fini.append(
+            "la suite de tests passe (`python -m pytest -q` s'il s'agit de pytest) et "
+            "`jio scan .` ne signale rien ;"
+        )
     else:
-        fini.append("`jio scan .` ne signale rien sur le code et les documents du projet ;")
+        fini.append(
+            "`jio scan .` ne signale rien sur le code et les documents du projet ;"
+        )
     fini.append("`jio claims` sur les documents touches : 0 refutation ;")
     fini.append("les reserves restantes sont NOMMEES, jamais tues ;")
-    fini.append("`jio mutants` ne regresse pas (une ligne non protegee est une preuve "
-                "manquante).")
+    fini.append(
+        "`jio mutants` ne regresse pas (une ligne non protegee est une preuve "
+        "manquante)."
+    )
 
     # Le renvoi final : dans le depot de jio, il nomme nos fichiers ; ailleurs, il nomme
     # l'installation (et dit que le README du projet decrit, lui, le projet).
     detail = (
         "Detail complet : `README.md`, `docs/VISION-ARCHITECTURE.md`, doctrine : "
         "`jio/artifacts/doctrine.py`."
-        if propre_depot else
-        "La documentation de l'outil vit a cote du paquet, dans "
+        if propre_depot
+        else "La documentation de l'outil vit a cote du paquet, dans "
         f"`{paquet.parent}` : `README.md` pour la vue d'ensemble, `docs/DOSSIER-TECHNIQUES.md` "
         "pour les mesures qui la fondent. Le `README.md` de CE projet decrit, lui, ce projet."
     )
@@ -5571,8 +7211,8 @@ jio clarify "<objectif>"    # les questions ESSENTIELLES ; code 3 si la reponse 
 jio run "<objectif>"        # mission complete : preuve, panel, consensus, reserves
 jio auto "<objectif>"       # plusieurs etapes vers un objectif large : une etape sans
                             # preuve est REFUSEE, un echec non resolu ARRETE le plan
-jio auto --reprendre        # continue le plan interrompu d'apres `.jio/plan.json` : les etapes
-                            # deja prouvees sont sautees SI la revision git n'a pas bouge
+jio auto --reprendre        # continue le plan interrompu ; seules les etapes dont la revision
+                            # git n'a pas bouge sont sautees
 jio coherence               # LES NEUF CONTROLES : artefacts, chiffres, documents, commandes
                             # citees, competences, environnement, portes du paquet, journal,
                             # plan en suspens
@@ -5636,16 +7276,26 @@ def cmd_auto(args: argparse.Namespace) -> int:
     reprendre un plan apres un changement de revision, c'est changer de monde.
     """
     from .loop.auto import (
-        MAX_ETAPES, enregistrer, executer, extraire_etapes, formater, lire_etat,
+        MAX_ETAPES,
+        enregistrer,
+        executer,
+        extraire_etapes,
+        formater,
+        lire_etat,
         plan_simule,
     )
 
     objectif = args.objective.strip()
     if not objectif and not getattr(args, "reprendre", False):
-        print("  objectif requis : jio auto \"<objectif>\"", file=sys.stderr)
-        print("  exemple : jio auto \"corrige la borne de mutation\" --cible jio/verify/mutation.py",
-              file=sys.stderr)
-        print("  pour continuer un plan interrompu : jio auto --reprendre", file=sys.stderr)
+        print('  objectif requis : jio auto "<objectif>"', file=sys.stderr)
+        print(
+            '  exemple : jio auto "corrige la borne de mutation" --cible jio/verify/mutation.py',
+            file=sys.stderr,
+        )
+        print(
+            "  pour continuer un plan interrompu : jio auto --reprendre",
+            file=sys.stderr,
+        )
         return 2
 
     # Une seule racine pour tout : les preuves s'executent la, l'etat y est ecrit, et la
@@ -5660,13 +7310,16 @@ def cmd_auto(args: argparse.Namespace) -> int:
 
     analyse = None
     if not args.plan:
-        from .clarify import analyser as _analyser, formater as _formater
+        from .clarify import analyser as _analyser
+        from .clarify import formater as _formater
 
         analyse = _analyser(objectif, mode="strict" if args.strict else "assume")
         if analyse.bloquant:
             print(_formater(analyse))
             print()
-            print("  PLAN NON COMMENCE (--strict) : reponds aux questions, puis relance.")
+            print(
+                "  PLAN NON COMMENCE (--strict) : reponds aux questions, puis relance."
+            )
             return 3
 
     # L'etat vise, calcule une fois pour toutes : il sert a reprendre, a lire la revision, et a
@@ -5694,7 +7347,9 @@ def cmd_auto(args: argparse.Namespace) -> int:
             print("    rien a reprendre : relance sans --reprendre pour un plan neuf.")
             return 1
         if reprise.sautees == len(reprise.etapes):
-            print(f"    rien a faire : les {len(reprise.etapes)} etape(s) sont deja prouvees.")
+            print(
+                f"    rien a faire : les {len(reprise.etapes)} etape(s) sont deja prouvees."
+            )
             return 0
         if not objectif:
             # L'objectif vient de l'etat : c'est celui du plan, pas un texte invente ici.
@@ -5740,8 +7395,12 @@ def cmd_auto(args: argparse.Namespace) -> int:
     print("  MISSION AUTONOME  ·  chaque etape doit porter sa preuve")
     print(f"    objectif : {objectif}")
     if simule:
-        print("    plan : REFERENCE deterministe (aucun modele n'a planifie). Chaque etape cite")
-        print("    une preuve qui existe dans ce depot ; `--plan <fichier>` execute le tien.")
+        print(
+            "    plan : REFERENCE deterministe (aucun modele n'a planifie). Chaque etape cite"
+        )
+        print(
+            "    une preuve qui existe dans ce depot ; `--plan <fichier>` execute le tien."
+        )
     print()
 
     questions: tuple[str, ...] = ()
@@ -5753,8 +7412,17 @@ def cmd_auto(args: argparse.Namespace) -> int:
 
     if not etapes:
         print()
-        print(formater(executer((), objective=objectif, lancer=lambda e: (False, "", 0),
-                                racine=racine, refusees=refusees)))
+        print(
+            formater(
+                executer(
+                    (),
+                    objective=objectif,
+                    lancer=lambda e: (False, "", 0),
+                    racine=racine,
+                    refusees=refusees,
+                )
+            )
+        )
         return 1
 
     def lancer(etape: object) -> tuple[bool, str, int]:
@@ -5772,20 +7440,37 @@ def cmd_auto(args: argparse.Namespace) -> int:
         commande = getattr(etape, "preuve", "")
         argv = _argv_de_preuve(commande)
         if argv is None:
-            return False, (
-                "preuve refusee : seules les commandes `jio ...`, `python -m pytest|ruff|mypy "
-                f"` sont executees (ni chainage, ni shell). Recu : {commande[:60]}"
-            ), 0
+            return (
+                False,
+                (
+                    "preuve refusee : seules les commandes `jio ...`, `python -m pytest|ruff|mypy "
+                    f"` sont executees (ni chainage, ni shell). Recu : {commande[:60]}"
+                ),
+                0,
+            )
         proc = subprocess.run(
-            argv, cwd=racine, capture_output=True, text=True, timeout=1800, check=False,
+            argv,
+            cwd=racine,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+            check=False,
         )
         sortie = (proc.stdout or proc.stderr or "").strip().splitlines()
         queue = sortie[-1][:120] if sortie else "(aucune sortie)"
         return proc.returncode == 0, f"code {proc.returncode} · {queue}", 1
 
     resultat = executer(
-        etapes, objective=objectif, lancer=lancer, racine=racine,
-        budget_etapes=max(1, min(args.budget, MAX_ETAPES)), refusees=refusees, questions=questions,
+        etapes,
+        objective=objectif,
+        lancer=lancer,
+        racine=racine,
+        budget_etapes=max(1, min(args.budget, MAX_ETAPES)),
+        refusees=refusees,
+        questions=questions,
+        # Chaque preuve est checkpointée immédiatement : une interruption après E02 ne doit
+        # ni perdre E01/E02, ni faire croire que les étapes restantes n'existaient pas.
+        on_progress=lambda etat: enregistrer(etat, chemin_etat),
     )
     # L'etat est ecrit DANS le projet vise : `.jio/plan.json` se lit toujours a la racine du
     # depot concerne, jamais dans le repertoire d'ou l'on a lance la commande.
@@ -5799,7 +7484,9 @@ def cmd_auto(args: argparse.Namespace) -> int:
     else:
         print(formater(resultat))
         print()
-        print(f"    etat enregistre : {chemin_etat} (reprise possible apres correction)")
+        print(
+            f"    etat enregistre : {chemin_etat} (reprise possible apres correction)"
+        )
     return {"termine": 0, "bloque": 1, "budget": 2, "refuse": 1}.get(resultat.etat, 1)
 
 
@@ -5834,12 +7521,20 @@ def _argv_de_preuve(commande: str) -> list[str] | None:
         return [sys.executable, "-m", "jio", *argv[1:]]
     if len(argv) > 1 and argv[1] == "-m" and argv[0].startswith("python"):
         return [sys.executable, *argv[1:]]
-    if argv[0] in {"python", "python3"} and len(argv) > 2 and argv[1] == "-m" and argv[2] in {
-        "pytest", "ruff", "mypy", "pyright",
-    }:
+    if (
+        argv[0] in {"python", "python3"}
+        and len(argv) > 2
+        and argv[1] == "-m"
+        and argv[2]
+        in {
+            "pytest",
+            "ruff",
+            "mypy",
+            "pyright",
+        }
+    ):
         return [sys.executable, *argv[1:]]
     return None
-
 
 
 # --------------------------------------------------------------------------- #

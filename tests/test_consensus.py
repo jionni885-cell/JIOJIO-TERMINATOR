@@ -38,6 +38,22 @@ def test_unanimous_with_heterogeneous_models_reaches_consensus():
     assert out.unanimous
 
 
+@pytest.mark.parametrize("unavailable", [Verdict.ABSTAIN, Verdict.ERROR])
+def test_unavailable_reviewer_vetoes_apparent_majority(unavailable):
+    """Un avis absent ne se traite pas comme une voix minoritaire normale."""
+    votes = [
+        Vote(agent=f"ok-{i}", decision=Verdict.PASS, confidence=0.9, model=f"m{i}")
+        for i in range(3)
+    ] + [Vote(agent="offline", decision=unavailable, confidence=0.0, model="m4")]
+
+    outcome = ConsensusEngine().decide(votes)
+
+    assert not outcome.reached
+    assert outcome.decision is Verdict.ABSTAIN
+    assert "verification indisponible" in outcome.reason
+    assert "offline" in outcome.reason
+
+
 def test_split_panel_refuses_to_conclude():
     """Un desaccord reel ne se moyenne pas : il escalade."""
     eng = ConsensusEngine()
@@ -61,6 +77,25 @@ def test_correlated_panel_is_an_echo_not_a_consensus():
     assert "echo" in out.reason
 
 
+def test_same_model_is_not_counted_as_independent_when_personas_disagree():
+    """Un même LLM ne devient pas deux sources indépendantes en votant différemment."""
+    votes = [
+        Vote(
+            agent=f"persona-{i}",
+            decision=Verdict.PASS if i < 3 else Verdict.FAIL,
+            confidence=0.9,
+            model="one-model",
+        )
+        for i in range(4)
+    ]
+
+    outcome = ConsensusEngine().decide(votes)
+
+    assert outcome.effective_panel == 1
+    assert not outcome.reached
+    assert "echo" in outcome.reason
+
+
 def test_small_panel_refused():
     eng = ConsensusEngine(min_panel=3)
     out = eng.decide(_votes(["pass", "pass"]))
@@ -75,7 +110,9 @@ def test_no_votes_raises():
 
 def test_entropy_of_votes_is_zero_when_unanimous():
     eng = ConsensusEngine()
-    assert eng.entropy_of_votes(_votes(["pass", "pass", "pass"])) == pytest.approx(0.0, abs=1e-9)
+    assert eng.entropy_of_votes(_votes(["pass", "pass", "pass"])) == pytest.approx(
+        0.0, abs=1e-9
+    )
 
 
 def test_entropy_of_votes_when_split():
@@ -114,9 +151,17 @@ def test_un_consensus_ATTEINT_sur_FAIL_n_est_pas_un_consensus_non_atteint() -> N
     from jio.loop.engine import _motif_consensus
 
     outcome = ConsensusOutcome(
-        decision=Verdict.FAIL, reached=True, agreement=1.0, quorum_required=4,
-        panel_size=5, estimated_faulty=0, tally={"fail": 5}, dissent=(),
-        confidence=0.9, effective_panel=5, reason="accord suffisant et quorum byzantin satisfait",
+        decision=Verdict.FAIL,
+        reached=True,
+        agreement=1.0,
+        quorum_required=4,
+        panel_size=5,
+        estimated_faulty=0,
+        tally={"fail": 5},
+        dissent=(),
+        confidence=0.9,
+        effective_panel=5,
+        reason="accord suffisant et quorum byzantin satisfait",
     )
 
     motif = _motif_consensus(outcome)
@@ -132,9 +177,16 @@ def test_un_quorum_non_atteint_dit_la_raison_du_quorum() -> None:
     from jio.loop.engine import _motif_consensus
 
     outcome = ConsensusOutcome(
-        decision=Verdict.ABSTAIN, reached=False, agreement=0.6, quorum_required=5,
-        panel_size=3, estimated_faulty=1, tally={"pass": 2, "fail": 1}, dissent=("a:fail",),
-        confidence=0.4, effective_panel=2,
+        decision=Verdict.ABSTAIN,
+        reached=False,
+        agreement=0.6,
+        quorum_required=5,
+        panel_size=3,
+        estimated_faulty=1,
+        tally={"pass": 2, "fail": 1},
+        dissent=("a:fail",),
+        confidence=0.4,
+        effective_panel=2,
         reason="quorum byzantin non satisfait : 3 voix pour f=1 (requis n >= 5)",
     )
 
@@ -162,8 +214,15 @@ def test_le_panel_effectif_par_defaut_est_zero() -> None:
     from jio.core.types import Verdict
 
     resultat = ConsensusOutcome(
-        decision=Verdict.ABSTAIN, reached=False, agreement=0.0, quorum_required=3,
-        panel_size=0, estimated_faulty=0, tally={}, dissent=(), confidence=0.0,
+        decision=Verdict.ABSTAIN,
+        reached=False,
+        agreement=0.0,
+        quorum_required=3,
+        panel_size=0,
+        estimated_faulty=0,
+        tally={},
+        dissent=(),
+        confidence=0.0,
     )
     assert resultat.effective_panel == 0
     assert resultat.unanimous is False

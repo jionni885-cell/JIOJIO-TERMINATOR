@@ -40,7 +40,7 @@ import math
 import re
 from collections import Counter
 
-__all__ = ["terms", "idf", "bm25", "jaccard", "normalized_bm25"]
+__all__ = ["bm25", "idf", "jaccard", "normalized_bm25", "terms"]
 
 #: Meme decoupage que le reste du noyau : minuscules, et les identifiants
 #: techniques (`F541`, `mcnemar_exact`, `o_excl`) restent des jetons entiers.
@@ -103,8 +103,9 @@ def jaccard(requete: list[str], documents: list[list[str]]) -> list[float]:
     return scores
 
 
-def bm25(requete: list[str], documents: list[list[str]], *, k1: float = K1,
-         b: float = B) -> list[float]:
+def bm25(
+    requete: list[str], documents: list[list[str]], *, k1: float = K1, b: float = B
+) -> list[float]:
     """Score BM25 de chaque document pour la requete. Scores bruts (non normalises)."""
     total = len(documents)
     if not total or not requete:
@@ -128,13 +129,16 @@ def bm25(requete: list[str], documents: list[list[str]], *, k1: float = K1,
             # indefiniment le score d'un meme document : on la borne a `k1 + 1`,
             # la valeur que le facteur de frequence peut lui-meme atteindre.
             repetition_requete = min(repetitions, k1 + 1.0)
-            score += poids * repetition_requete * _tf_sature(frequence, longueur, moyenne)
+            score += (
+                poids * repetition_requete * _tf_sature(frequence, longueur, moyenne)
+            )
         scores.append(score)
     return scores
 
 
-def normalized_bm25(requete: list[str], documents: list[list[str]], *, k1: float = K1,
-                    b: float = B) -> list[float]:
+def normalized_bm25(
+    requete: list[str], documents: list[list[str]], *, k1: float = K1, b: float = B
+) -> list[float]:
     """BM25 ramene dans [0, 1] : part du meilleur score atteignable par la requete.
 
     Le denominateur est `somme des idf des termes de la requete x (k1 + 1)`, soit le

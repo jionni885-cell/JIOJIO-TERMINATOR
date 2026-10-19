@@ -60,8 +60,17 @@ from typing import NoReturn
 
 from ..core.types import MissionStatus
 
-__all__ = ["OK", "PROBLEME", "INDETERMINE", "EN_ATTENTE", "CODES", "ACTION",
-           "code_de_mission", "sortir", "TABLE"]
+__all__ = [
+    "ACTION",
+    "CODES",
+    "EN_ATTENTE",
+    "INDETERMINE",
+    "OK",
+    "PROBLEME",
+    "TABLE",
+    "code_de_mission",
+    "sortir",
+]
 
 OK = 0
 PROBLEME = 1
@@ -125,4 +134,6 @@ def code_de_mission(statut: MissionStatus) -> int:
     try:
         return TABLE[statut]
     except KeyError:  # pragma: no cover - garde-fou de developpement
-        raise ValueError(f"etat de mission sans code de sortie declare : {statut!r}") from None
+        raise ValueError(
+            f"etat de mission sans code de sortie declare : {statut!r}"
+        ) from None

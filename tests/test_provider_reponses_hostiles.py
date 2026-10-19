@@ -99,7 +99,7 @@ class _Serveur(BaseHTTPRequestHandler):
     corps: bytes = b""
     code: int = 200
 
-    def do_POST(self) -> None:  # noqa: N802 - nom impose par http.server
+    def do_POST(self) -> None:
         self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
         self.send_response(self.code)
         self.send_header("Content-Type", "application/json")

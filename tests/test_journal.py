@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from jio.core.journal import GENESIS, Journal
 from jio.core.types import TrustLevel
 
@@ -53,7 +52,7 @@ def test_journal_replay_roundtrip():
 def test_journal_records_trust_level():
     j = Journal()
     j.append("read", {"path": "README.md"}, trust=TrustLevel.EXTERNAL)
-    assert list(j)[0].trust is TrustLevel.EXTERNAL
+    assert next(iter(j)).trust is TrustLevel.EXTERNAL
     assert "external" in j.to_jsonl()
 
 
@@ -73,7 +72,7 @@ def test_journal_persists_to_disk(tmp_path):
     j = Journal(path=path)
     j.append("mission", {"x": 1})
     assert path.exists()
-    assert "\"x\": 1" in path.read_text(encoding="utf-8")
+    assert '"x": 1' in path.read_text(encoding="utf-8")
     reloaded = Journal.from_jsonl(path.read_text(encoding="utf-8"))
     assert reloaded.verify_chain()[0]
 
@@ -105,12 +104,12 @@ def test_un_second_ecrivain_est_ADOPTE_au_lieu_de_casser_la_chaine(tmp_path):
 
     chemin = tmp_path / "journal.jsonl"
     premier = Journal(path=chemin)
-    premier.append("un")                       # le premier tient la chaine en memoire
+    premier.append("un")  # le premier tient la chaine en memoire
 
     autre = Journal(path=chemin)
-    autre.append("deux")                       # un autre ecrivain avance le fichier
+    autre.append("deux")  # un autre ecrivain avance le fichier
 
-    premier.append("trois")                    # le premier croit encore que le fichier s'arrete a lui
+    premier.append("trois")  # le premier croit encore que le fichier s'arrete a lui
 
     relu = Journal.from_jsonl(chemin.read_text(encoding="utf-8"))
     assert [e.kind for e in relu] == ["un", "deux", "trois"]
@@ -142,7 +141,8 @@ def test_un_fichier_qui_DIVERGE_est_mis_en_quarantaine_et_JAMAIS_supprime(tmp_pa
     etranger = Journal()
     etranger.append("etranger")
     chemin.write_text(
-        json.dumps(etranger.last().as_dict(), ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(etranger.last().as_dict(), ensure_ascii=False) + "\n",
+        encoding="utf-8",
     )
 
     tenant.append("trois")
@@ -185,7 +185,9 @@ def test_le_cas_courant_ne_relit_pas_tout_le_fichier(tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def test_un_journal_EXPLICITE_inexistant_n_est_pas_remplace_par_un_autre(tmp_path, capsys, monkeypatch):
+def test_un_journal_EXPLICITE_inexistant_n_est_pas_remplace_par_un_autre(
+    tmp_path, capsys, monkeypatch
+):
     """DEFAUT MESURE : `jio trace /tmp/inexistant.jsonl` cherchait un AUTRE journal, en
     trouvait un, et repondait « INTEGRITE : propre » en code 0 — sur un fichier que
     l'utilisateur n'avait pas demande.
@@ -231,8 +233,8 @@ def test_un_journal_VIDE_n_est_pas_un_journal_intact(tmp_path, capsys) -> None:
 
 def test_un_VRAI_journal_reste_verifie_en_0(tmp_path, capsys) -> None:
     """L'autre moitie, sans laquelle la correction serait « ne plus rien accepter »."""
-    from jio.core.journal import Journal
     from jio.cli import main
+    from jio.core.journal import Journal
 
     journal = Journal(path=tmp_path / "vrai.jsonl")
     journal.append("mission", {"objectif": "somme des pairs"})

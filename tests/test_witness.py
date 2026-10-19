@@ -334,10 +334,10 @@ def test_des_aveux_sont_visibles_dans_le_rapport() -> None:
 def _echoue(code: str, test: str, tache) -> bool:
     """L'implementation ``code`` echoue-t-elle au test ?"""
     espace: dict[str, object] = {}
-    exec(code, espace)  # noqa: S102 — code du banc
+    exec(code, espace)
     try:
-        exec(test, dict(espace))  # noqa: S102
-    except Exception:  # noqa: BLE001 — toute exception est un echec de test
+        exec(test, dict(espace))
+    except Exception:
         return True
     return False
 

@@ -14,9 +14,9 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from shlex import split as shsplit
-from typing import Sequence
 
 from ..core.errors import ProviderError
 from .base import Completion, Message, borner, extraire_texte, render
@@ -61,22 +61,30 @@ class CliProvider:
         else:
             # Le prompt est passe en argument unique, jamais concatene au shell.
             argv = []
-            for token in shsplit(self.argv_template.format(binary=self.binary, prompt="@@P@@")
-                                 .replace("@@P@@", "\x00")):
+            for token in shsplit(
+                self.argv_template.format(binary=self.binary, prompt="@@P@@").replace(
+                    "@@P@@", "\x00"
+                )
+            ):
                 argv.extend(
                     [prompt] if token == "\x00" else [t for t in token.split("\x00")]
                 )
-            argv = [a or prompt for a in argv if a != ""] or [self.binary, "run", prompt]
+            argv = [a or prompt for a in argv if a != ""] or [
+                self.binary,
+                "run",
+                prompt,
+            ]
             stdin_data = ""
 
         try:
-            proc = subprocess.run(  # noqa: S603 — argv explicite, pas de shell
+            proc = subprocess.run(
                 argv,
                 input=stdin_data,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
                 env=None,
+                check=False,
             )
         except subprocess.TimeoutExpired as exc:  # pragma: no cover
             raise ProviderError(f"{self.binary} timeout apres {self.timeout}s") from exc

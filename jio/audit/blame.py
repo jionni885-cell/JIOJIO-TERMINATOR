@@ -21,11 +21,10 @@ from __future__ import annotations
 import itertools
 import math
 import random
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Callable, Sequence
 
 from ..core.types import Blame
-
 
 # --------------------------------------------------------------------------- #
 # Echecs : localisation du premier pas fautif
@@ -66,7 +65,7 @@ class FirstErrorLocator:
 class BlameLedger:
     """Registre de blame d'une mission."""
 
-    steps: list[str] = field(default_factory=list)          # agent par etape
+    steps: list[str] = field(default_factory=list)  # agent par etape
     messages: list[str] = field(default_factory=list)
     failure_index: int | None = None
     recovery_indices: tuple[int, ...] = ()
@@ -79,7 +78,9 @@ class BlameLedger:
         if first_faulty is None:
             return ()
         out: list[Blame] = []
-        agent = self.steps[first_faulty] if first_faulty < len(self.steps) else "inconnu"
+        agent = (
+            self.steps[first_faulty] if first_faulty < len(self.steps) else "inconnu"
+        )
         msg = self.messages[first_faulty] if first_faulty < len(self.messages) else ""
         out.append(Blame(agent=agent, step=first_faulty, message=msg[:300]))
         for idx in self.recovery_indices:
@@ -88,7 +89,9 @@ class BlameLedger:
                     Blame(
                         agent=self.steps[idx] if idx < len(self.steps) else "inconnu",
                         step=idx,
-                        message=self.messages[idx][:300] if idx < len(self.messages) else "",
+                        message=self.messages[idx][:300]
+                        if idx < len(self.messages)
+                        else "",
                         is_repair_attempt=True,
                     )
                 )
@@ -126,7 +129,11 @@ def shapley_values(
         values = {p: 0.0 for p in players}
         for i, p in enumerate(players):
             for size in range(n):
-                weight = math.factorial(size) * math.factorial(n - size - 1) / math.factorial(n)
+                weight = (
+                    math.factorial(size)
+                    * math.factorial(n - size - 1)
+                    / math.factorial(n)
+                )
                 for combo in itertools.combinations(
                     [x for x in range(n) if x != i], size
                 ):
@@ -188,4 +195,10 @@ def credit(
     )
 
 
-__all__ = ["FirstErrorLocator", "BlameLedger", "shapley_values", "credit", "CreditReport"]
+__all__ = [
+    "BlameLedger",
+    "CreditReport",
+    "FirstErrorLocator",
+    "credit",
+    "shapley_values",
+]

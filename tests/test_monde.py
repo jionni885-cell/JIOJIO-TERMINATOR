@@ -136,7 +136,9 @@ def test_un_dossier_exclu_n_est_meme_pas_PARCOURU(atelier: Path) -> None:
     from jio.core import monde
 
     (atelier / "node_modules" / "paquet").mkdir(parents=True)
-    (atelier / "node_modules" / "paquet" / "index.js").write_text("x\n", encoding="utf-8")
+    (atelier / "node_modules" / "paquet" / "index.js").write_text(
+        "x\n", encoding="utf-8"
+    )
 
     vus: list[Path] = []
     original = monde._fichiers
@@ -167,7 +169,9 @@ def test_le_sceau_est_assez_rapide_pour_chaque_evenement(atelier: Path) -> None:
     for _ in range(40):
         sceau(atelier)
     duree = time.perf_counter() - depart
-    assert duree < 0.2, f"40 sceaux en {duree:.3f} s : trop lent pour un appel par evenement"
+    assert duree < 0.2, (
+        f"40 sceaux en {duree:.3f} s : trop lent pour un appel par evenement"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -181,7 +185,9 @@ def test_le_journal_scelle_chaque_evenement(atelier: Path) -> None:
     assert evenement.payload["monde"]["sceau"] == sceau(atelier)
 
 
-def test_le_journal_detecte_un_changement_de_monde_en_cours_de_mission(atelier: Path) -> None:
+def test_le_journal_detecte_un_changement_de_monde_en_cours_de_mission(
+    atelier: Path,
+) -> None:
     """Le cas central : une conclusion qui s'appuie sur deux etats differents."""
     journal = Journal(path=atelier / ".jio" / "journal.jsonl", racine=atelier)
     journal.append("mission", {"id": "m1"})
@@ -221,7 +227,9 @@ def test_le_sceau_entre_dans_le_hachage(atelier: Path) -> None:
 
     lignes = [json.dumps(ev.as_dict()) for ev in journal]
     objet = json.loads(lignes[1])
-    objet["payload"]["monde"]["sceau"] = atelier_init  # le monde d'AVANT, reecrit apres coup
+    objet["payload"]["monde"]["sceau"] = (
+        atelier_init  # le monde d'AVANT, reecrit apres coup
+    )
     lignes[1] = json.dumps(objet)
 
     relu = Journal.from_jsonl("\n".join(lignes))
@@ -239,13 +247,20 @@ def test_un_journal_sans_sceau_reste_lisible(atelier: Path) -> None:
     """
     import json
 
+    from jio.core.journal import Event
+    from jio.core.journal import Journal as J
     from jio.core.types import TrustLevel, digest_of
-    from jio.core.journal import Event, Journal as J
 
     ancien = Event(
-        seq=0, ts=1.0, kind="mission", payload={"id": "vieux"},
-        trust=TrustLevel.SYSTEM, prev_hash="0" * 32,
-        digest=digest_of(0, 1.0, "mission", {"id": "vieux"}, TrustLevel.SYSTEM.value, "0" * 32),
+        seq=0,
+        ts=1.0,
+        kind="mission",
+        payload={"id": "vieux"},
+        trust=TrustLevel.SYSTEM,
+        prev_hash="0" * 32,
+        digest=digest_of(
+            0, 1.0, "mission", {"id": "vieux"}, TrustLevel.SYSTEM.value, "0" * 32
+        ),
     )
     journal = J.from_jsonl(json.dumps(ancien.as_dict()))
     valide, _ = journal.verify_chain()
@@ -269,9 +284,21 @@ def test_la_revision_est_lue_quand_il_y_a_un_depot(atelier: Path) -> None:
 
     subprocess.run(["git", "init", "-q"], cwd=atelier, check=True, capture_output=True)
     subprocess.run(
-        ["git", "-c", "user.email=a@b", "-c", "user.name=t", "commit", "-q", "--allow-empty",
-         "-m", "init"],
-        cwd=atelier, check=True, capture_output=True,
+        [
+            "git",
+            "-c",
+            "user.email=a@b",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        cwd=atelier,
+        check=True,
+        capture_output=True,
     )
     lu = revision(atelier)
     assert len(lu) == 40, lu
@@ -353,7 +380,12 @@ def test_la_revision_courante_est_le_sha_de_head(tmp_path: Path) -> None:
 
     def git(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["git", *args], cwd=depot, capture_output=True, text=True, timeout=60
+            ["git", *args],
+            cwd=depot,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
         )
 
     assert revision(depot) == "", "un dossier sans depot n'a pas de revision"
@@ -365,5 +397,7 @@ def test_la_revision_courante_est_le_sha_de_head(tmp_path: Path) -> None:
     git("commit", "-q", "-m", "premier")
     attendu = git("rev-parse", "HEAD").stdout.strip()
     lue = revision(depot)
-    assert isinstance(lue, str), f"la revision doit etre du texte, pas {type(lue).__name__}"
+    assert isinstance(lue, str), (
+        f"la revision doit etre du texte, pas {type(lue).__name__}"
+    )
     assert lue == attendu and len(lue) == 40, f"revision lue : {lue!r}"

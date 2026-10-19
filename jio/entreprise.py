@@ -42,8 +42,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 __all__ = [
-    "POSTES", "Mission", "RapportMission", "RapportEntreprise",
-    "cataloguer", "affecter", "executer_mission", "mener", "formater",
+    "POSTES",
+    "Mission",
+    "RapportEntreprise",
+    "RapportMission",
+    "affecter",
+    "cataloguer",
+    "executer_mission",
+    "formater",
+    "mener",
 ]
 
 
@@ -81,27 +88,84 @@ def _roster() -> tuple[Poste, ...]:
     )
     for nom, mandat in tests:
         for i in range(1, 5):  # 12 specialites x 4 = 48 postes de test
-            postes.append(Poste(nom=f"test-{nom}-{i}", specialite="tests",
-                                mandat=f"execute un fichier de la suite ({mandat})"))
+            postes.append(
+                Poste(
+                    nom=f"test-{nom}-{i}",
+                    specialite="tests",
+                    mandat=f"execute un fichier de la suite ({mandat})",
+                )
+            )
     postes += [
-        Poste("audit-artefacts", "coherence", "controle : les artefacts font ce qu'ils disent"),
-        Poste("audit-nombres", "coherence", "controle : chaque chiffre publie est mesure"),
-        Poste("audit-documents", "coherence", "controle : les documents ne citent pas dans le vide"),
-        Poste("audit-commandes", "coherence", "controle : les commandes citees existent"),
-        Poste("audit-competences", "coherence", "controle : les competences tiennent leur budget"),
-        Poste("audit-environnement", "coherence", "controle : les variables lues sont documentees"),
-        Poste("audit-sources", "coherence", "controle : pas de lint ni d'import mort dans jio/"),
-        Poste("audit-journal", "coherence", "controle : le journal de bord tient ses promesses"),
-        Poste("audit-plan", "coherence", "controle : aucun plan autonome oublie en cours"),
+        Poste(
+            "audit-artefacts",
+            "coherence",
+            "controle : les artefacts font ce qu'ils disent",
+        ),
+        Poste(
+            "audit-nombres", "coherence", "controle : chaque chiffre publie est mesure"
+        ),
+        Poste(
+            "audit-documents",
+            "coherence",
+            "controle : les documents ne citent pas dans le vide",
+        ),
+        Poste(
+            "audit-commandes", "coherence", "controle : les commandes citees existent"
+        ),
+        Poste(
+            "audit-competences",
+            "coherence",
+            "controle : les competences tiennent leur budget",
+        ),
+        Poste(
+            "audit-environnement",
+            "coherence",
+            "controle : les variables lues sont documentees",
+        ),
+        Poste(
+            "audit-sources",
+            "coherence",
+            "controle : pas de lint ni d'import mort dans jio/",
+        ),
+        Poste(
+            "audit-journal",
+            "coherence",
+            "controle : le journal de bord tient ses promesses",
+        ),
+        Poste(
+            "audit-plan", "coherence", "controle : aucun plan autonome oublie en cours"
+        ),
         Poste("mesurier", "mesure", "les chiffres officiels, mesures jamais supposes"),
-        Poste("mesurier-adjoint", "mesure", "relecture des ecarts chiffres <-> documents"),
+        Poste(
+            "mesurier-adjoint", "mesure", "relecture des ecarts chiffres <-> documents"
+        ),
         Poste("verificateur-affirmations", "affirmations", "jio claims sur le README"),
-        Poste("verificateur-preuves", "affirmations", "jio claims sur les preuves archivees"),
-        Poste("linteur", "lint", "ruff F sur le paquet : pas d'import mort, pas de variable morte"),
-        Poste("logueur-ablation", "ablation", "l'instrument d'activite parle sur le regime par defaut"),
+        Poste(
+            "verificateur-preuves",
+            "affirmations",
+            "jio claims sur les preuves archivees",
+        ),
+        Poste(
+            "linteur",
+            "lint",
+            "ruff F sur le paquet : pas d'import mort, pas de variable morte",
+        ),
+        Poste(
+            "logueur-ablation",
+            "ablation",
+            "l'instrument d'activite parle sur le regime par defaut",
+        ),
         Poste("logueur-regimes", "ablation", "l'instrument parle aussi sans oracle"),
-        Poste("logueur-partielle", "ablation", "le differentiel s'exerce sur la tache a spec partielle"),
-        Poste("simmistre", "fumee", "la CLI s'instancie : --help, sous-commandes, liste des leviers"),
+        Poste(
+            "logueur-partielle",
+            "ablation",
+            "le differentiel s'exerce sur la tache a spec partielle",
+        ),
+        Poste(
+            "simmistre",
+            "fumee",
+            "la CLI s'instancie : --help, sous-commandes, liste des leviers",
+        ),
     ]
     return tuple(postes)
 
@@ -145,68 +209,122 @@ def cataloguer(racine: Path | str = ".") -> list[Mission]:
     dossiers_tests = racine / "tests"
     if dossiers_tests.is_dir():
         for chemin in sorted(dossiers_tests.glob("test_*.py")):
-            missions.append(Mission(
-                id=f"tests/{chemin.name}", type="pytest", payload=chemin.name,
-                specialite="tests", resume=f"la suite {chemin.name} au vert",
-            ))
+            missions.append(
+                Mission(
+                    id=f"tests/{chemin.name}",
+                    type="pytest",
+                    payload=chemin.name,
+                    specialite="tests",
+                    resume=f"la suite {chemin.name} au vert",
+                )
+            )
 
     from .verify.coherence import CONTROLES
 
     for fonction in CONTROLES:
-        missions.append(Mission(
-            id=f"coherence/{fonction.__name__}", type="controle", payload=fonction.__name__,
-            specialite="coherence", resume=f"controle de coherence : {fonction.__name__}",
-        ))
+        missions.append(
+            Mission(
+                id=f"coherence/{fonction.__name__}",
+                type="controle",
+                payload=fonction.__name__,
+                specialite="coherence",
+                resume=f"controle de coherence : {fonction.__name__}",
+            )
+        )
 
-    missions.append(Mission(
-        id="mesure/chiffres", type="commande", payload="chiffres",
-        specialite="mesure", resume="les chiffres officiels sont mesures et dit vrais",
-    ))
+    missions.append(
+        Mission(
+            id="mesure/chiffres",
+            type="commande",
+            payload="chiffres",
+            specialite="mesure",
+            resume="les chiffres officiels sont mesures et dit vrais",
+        )
+    )
     if (racine / "README.md").is_file():
-        missions.append(Mission(
-            id="affirmations/README", type="commande",
-            payload="claims README.md", specialite="affirmations",
-            resume="les affirmations verifiables du README tiennent",
-        ))
-    preuves = sorted((racine / "evidence").glob("*.md")) if (racine / "evidence").is_dir() else []
+        missions.append(
+            Mission(
+                id="affirmations/README",
+                type="commande",
+                payload="claims README.md",
+                specialite="affirmations",
+                resume="les affirmations verifiables du README tiennent",
+            )
+        )
+    preuves = (
+        sorted((racine / "evidence").glob("*.md"))
+        if (racine / "evidence").is_dir()
+        else []
+    )
     for chemin in preuves:
-        missions.append(Mission(
-            id=f"affirmations/{chemin.name}", type="commande",
-            payload=f"claims evidence/{chemin.name}", specialite="affirmations",
-            resume=f"les affirmations de {chemin.name} tiennent",
-        ))
+        missions.append(
+            Mission(
+                id=f"affirmations/{chemin.name}",
+                type="commande",
+                payload=f"claims evidence/{chemin.name}",
+                specialite="affirmations",
+                resume=f"les affirmations de {chemin.name} tiennent",
+            )
+        )
 
-    missions.append(Mission(
-        id="lint/jio", type="ruff", payload="jio", specialite="lint",
-        resume="aucun import mort ni variable morte dans le paquet",
-    ))
-    missions.append(Mission(
-        id="ablation/instrument", type="ablation",
-        payload="--missions 2 --levers preuve,routeur,porte",
-        specialite="ablation", resume="l'instrument d'activite parle (colonne + phrases)",
-    ))
-    missions.append(Mission(
-        id="ablation/partielle", type="ablation",
-        payload="--missions 2 --taches mean_partial --skill 0.7 --levers differentiel",
-        specialite="ablation", resume="le differentiel s'exerce sur la spec partielle",
-    ))
-    missions.append(Mission(
-        id="fumee/cli", type="commande", payload="--help", specialite="fumee",
-        resume="la CLI s'instancie et rend son aide",
-    ))
+    missions.append(
+        Mission(
+            id="lint/jio",
+            type="ruff",
+            payload="jio",
+            specialite="lint",
+            resume="aucun import mort ni variable morte dans le paquet",
+        )
+    )
+    missions.append(
+        Mission(
+            id="ablation/instrument",
+            type="ablation",
+            payload="--missions 2 --levers preuve,routeur,porte",
+            specialite="ablation",
+            resume="l'instrument d'activite parle (colonne + phrases)",
+        )
+    )
+    missions.append(
+        Mission(
+            id="ablation/partielle",
+            type="ablation",
+            payload="--missions 2 --taches mean_partial --skill 0.7 --levers differentiel",
+            specialite="ablation",
+            resume="le differentiel s'exerce sur la spec partielle",
+        )
+    )
+    missions.append(
+        Mission(
+            id="fumee/cli",
+            type="commande",
+            payload="--help",
+            specialite="fumee",
+            resume="la CLI s'instancie et rend son aide",
+        )
+    )
     # L'adjoint du mesurier : un controle DISTINCT du premier — tous les chiffres mesures
     # sont des entiers positifs (une table de vecteurs a zero, un compteur negatif, c'est
     # une ressource perdue que l'ecart README ne montrerait pas forcement).
-    missions.append(Mission(
-        id="mesure/entiers", type="entiers", payload="", specialite="mesure",
-        resume="tous les chiffres mesures sont des entiers positifs",
-    ))
+    missions.append(
+        Mission(
+            id="mesure/entiers",
+            type="entiers",
+            payload="",
+            specialite="mesure",
+            resume="tous les chiffres mesures sont des entiers positifs",
+        )
+    )
     # Le troisieme logeur : le regime sans oracle, ou temoins doit parler.
-    missions.append(Mission(
-        id="ablation/sans-oracle", type="ablation",
-        payload="--sans-oracle --fidelite 0.6 --missions 2 --levers temoins",
-        specialite="ablation", resume="en sans-oracle, le levier temoins parle",
-    ))
+    missions.append(
+        Mission(
+            id="ablation/sans-oracle",
+            type="ablation",
+            payload="--sans-oracle --fidelite 0.6 --missions 2 --levers temoins",
+            specialite="ablation",
+            resume="en sans-oracle, le levier temoins parle",
+        )
+    )
     return missions
 
 
@@ -269,7 +387,9 @@ class RapportMission:
     details: tuple[str, ...] = field(default_factory=tuple)
 
 
-def _lancer(commande: list[str], racine: Path, timeout: int = 900) -> tuple[int, str, str]:
+def _lancer(
+    commande: list[str], racine: Path, timeout: int = 900
+) -> tuple[int, str, str]:
     """Lance une commande dans le depot et rend (code, stdout, stderr) SEPARES.
 
     La separation n'est pas du confort : plusieurs outils du depot ecrivent leur rapport
@@ -280,7 +400,12 @@ def _lancer(commande: list[str], racine: Path, timeout: int = 900) -> tuple[int,
     pas un plantage d'entreprise."""
     try:
         resultat = subprocess.run(
-            commande, cwd=racine, capture_output=True, text=True, timeout=timeout,
+            commande,
+            cwd=racine,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
         )
     except FileNotFoundError:
         return 127, "", "outil introuvable"
@@ -305,8 +430,15 @@ def executer_mission(mission: Mission, racine: Path | str = ".") -> RapportMissi
 
     if mission.type == "pytest":
         code, sortie, erreurs = _lancer(
-            [sys.executable, "-m", "pytest", f"tests/{mission.payload}", "-q",
-             "-p", "no:randomly"],
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                f"tests/{mission.payload}",
+                "-q",
+                "-p",
+                "no:randomly",
+            ],
             racine,
         )
         ok = code == 0
@@ -330,7 +462,8 @@ def executer_mission(mission: Mission, racine: Path | str = ".") -> RapportMissi
 
     elif mission.type == "commande":
         code, sortie, erreurs = _lancer(
-            [sys.executable, "-m", "jio", *shlex.split(mission.payload)], racine,
+            [sys.executable, "-m", "jio", *shlex.split(mission.payload)],
+            racine,
         )
         ok = code == 0
         resume = f"jio {mission.payload} -> code {code}"
@@ -338,8 +471,16 @@ def executer_mission(mission: Mission, racine: Path | str = ".") -> RapportMissi
 
     elif mission.type == "ruff":
         code, sortie, erreurs = _lancer(
-            [sys.executable, "-m", "ruff", "--isolated", "check", "--select", "F",
-             mission.payload],
+            [
+                sys.executable,
+                "-m",
+                "ruff",
+                "--isolated",
+                "check",
+                "--select",
+                "F",
+                mission.payload,
+            ],
             racine,
         )
         if code == 127:
@@ -351,21 +492,33 @@ def executer_mission(mission: Mission, racine: Path | str = ".") -> RapportMissi
 
     elif mission.type == "ablation":
         code, sortie, erreurs = _lancer(
-            [sys.executable, "-m", "jio", "ablation", *shlex.split(mission.payload),
-             "--json"],
-            racine, timeout=1200,
+            [
+                sys.executable,
+                "-m",
+                "jio",
+                "ablation",
+                *shlex.split(mission.payload),
+                "--json",
+            ],
+            racine,
+            timeout=1200,
         )
         if code not in (0, 1):
-            ok, resume, details = False, f"jio ablation -> code {code}", (_extrait(sortie, erreurs),)
+            ok, resume, details = (
+                False,
+                f"jio ablation -> code {code}",
+                (_extrait(sortie, erreurs),),
+            )
         else:
             # L'instrument doit PARLER : au moins un levier avec un verdict d'activite.
             # On lit le flux MACHINE seul (stdout) : la progression va sur stderr.
             import json as _json
 
             try:
-                rapport = _json.loads(sortie[sortie.index("{"):])
+                rapport = _json.loads(sortie[sortie.index("{") :])
                 phrases = [
-                    l for l in rapport["leviers"]
+                    l
+                    for l in rapport["leviers"]
                     if l["missions_activite_differente"] > 0
                     or l["observations_avec"] != l["observations_sans"]
                 ]
@@ -379,7 +532,7 @@ def executer_mission(mission: Mission, racine: Path | str = ".") -> RapportMissi
                 resume = "rapport JSON illisible : l'instrument est peut-etre debranche"
                 details = (_extrait(sortie, erreurs)[:400],)
     elif mission.type == "entiers":
-        from .chiffres import mesurer  # noqa: PLC0415
+        from .chiffres import mesurer
 
         mesures = mesurer(racine)
         nuls = {cle: valeur for cle, valeur in mesures.items() if valeur <= 0}
@@ -394,8 +547,14 @@ def executer_mission(mission: Mission, racine: Path | str = ".") -> RapportMissi
         ok, portee, resume = False, False, f"type de mission inconnu : {mission.type}"
 
     return RapportMission(
-        mission=mission.id, type=mission.type, agent="", ok=ok, duree_s=time.monotonic() - debut,
-        resume=resume, portee=portee, details=details,
+        mission=mission.id,
+        type=mission.type,
+        agent="",
+        ok=ok,
+        duree_s=time.monotonic() - debut,
+        resume=resume,
+        portee=portee,
+        details=details,
     )
 
 
@@ -451,15 +610,21 @@ class RapportEntreprise:
             "ouvriers": self.ouvriers,
             "temps_cumule_s": round(self.temps_cumule_s, 2),
             "temps_reel_s": round(self.temps_reel_s, 2),
-            "parallele": round(
-                self.temps_cumule_s / self.temps_reel_s, 2
-            ) if self.temps_reel_s else 0.0,
+            "parallele": round(self.temps_cumule_s / self.temps_reel_s, 2)
+            if self.temps_reel_s
+            else 0.0,
             "problem": [m.mission for m in self.problemes],
             "repares": [list(r) for r in self.repares],
             "hors_portee": [m.mission for m in self.hors_portee],
             "missions": [
-                {"mission": m.mission, "agent": m.agent, "ok": m.ok, "portee": m.portee,
-                 "duree_s": round(m.duree_s, 2), "resume": m.resume}
+                {
+                    "mission": m.mission,
+                    "agent": m.agent,
+                    "ok": m.ok,
+                    "portee": m.portee,
+                    "duree_s": round(m.duree_s, 2),
+                    "resume": m.resume,
+                }
                 for m in self.missions
             ],
         }
@@ -502,20 +667,26 @@ def mener(
         commande = REPARATIONS.get(probleme.mission)
         if not commande or probleme.mission not in par_id:
             continue
-        code, _, _ = _lancer([sys.executable, "-m", "jio", *commande], racine)
+        _code, _, _ = _lancer([sys.executable, "-m", "jio", *commande], racine)
         seconde = executer_mission(par_id[probleme.mission], racine)
         seconde.agent = probleme.agent
         if seconde.ok:
             repares.append((probleme.mission, probleme.agent))
             resultats[resultats.index(probleme)] = seconde
         else:
-            seconde.resume = f"reparation tentee ({' '.join(commande)}), toujours en echec : " + seconde.resume
+            seconde.resume = (
+                f"reparation tentee ({' '.join(commande)}), toujours en echec : "
+                + seconde.resume
+            )
             resultats[resultats.index(probleme)] = seconde
 
     rapport = RapportEntreprise(
-        missions=resultats, postes_total=len(POSTES), ouvriers=ouvriers,
+        missions=resultats,
+        postes_total=len(POSTES),
+        ouvriers=ouvriers,
         temps_cumule_s=sum(m.duree_s for m in resultats),
-        temps_reel_s=time.monotonic() - debut, repares=repares,
+        temps_reel_s=time.monotonic() - debut,
+        repares=repares,
     )
     rapport.postes_mobilises = len({m.agent for m in resultats if m.agent})
     return rapport
@@ -544,7 +715,9 @@ def formater(rapport: RapportEntreprise, *, largeur: int = 96) -> str:
     )
     lignes.append("")
     if rapport.repares:
-        lignes.append(f"  REPARES ({len(rapport.repares)}) — trouves, repares mecaniquement, re-verifies :")
+        lignes.append(
+            f"  REPARES ({len(rapport.repares)}) — trouves, repares mecaniquement, re-verifies :"
+        )
         for mission, agent in rapport.repares:
             lignes.append(f"    [ok] {mission}  ·  {agent}")
         lignes.append("")
@@ -557,15 +730,15 @@ def formater(rapport: RapportEntreprise, *, largeur: int = 96) -> str:
                 for ligne in str(d).splitlines()[:3]:
                     lignes.append(f"         | {ligne[:largeur]}")
     else:
-        lignes.append(f"  PROBLEMES : AUCUN  ·  {ok_n} mission(s) au vert, {hp_n} hors de portee")
+        lignes.append(
+            f"  PROBLEMES : AUCUN  ·  {ok_n} mission(s) au vert, {hp_n} hors de portee"
+        )
     if hp_n:
         for m in rapport.hors_portee:
             lignes.append(f"    [--] {m.mission}  ·  {m.resume}")
     lignes.append("")
     verdict = (
-        "AUCUN PROBLEME"
-        if not pb_n
-        else f"{pb_n} PROBLEME(S) — a reparer avant tout"
+        "AUCUN PROBLEME" if not pb_n else f"{pb_n} PROBLEME(S) — a reparer avant tout"
     )
     lignes.append(f"  VERDICT : {verdict}")
     return "\n".join(lignes)

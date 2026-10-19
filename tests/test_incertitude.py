@@ -16,7 +16,6 @@ from jio.bench.incertitude import (
     intervalle_wilson,
 )
 
-
 # --------------------------------------------------------------------------- #
 # 1. Le quantile normal : verifie contre la TABLE, pas contre lui-meme
 # --------------------------------------------------------------------------- #
@@ -188,7 +187,7 @@ def test_un_gain_net_du_banc_de_memoire_est_significatif() -> None:
     from jio.learn.experiment import ABCResult
 
     resultat = ABCResult(cold_success=10, control_success=10, warm_success=35, total=40)
-    ecart, (bas, haut), tranche = resultat.intervalle(10, 35)
+    ecart, (bas, _haut), tranche = resultat.intervalle(10, 35)
     assert ecart == pytest.approx(62.5)
     assert bas > 0.0 and tranche is True
     assert resultat.budget_de_mesure() > 0
@@ -230,6 +229,7 @@ def test_un_ensemble_vide_est_un_risque_ELEVE_pas_une_confiance() -> None:
     # Les entrees blanches comptent comme absentes : elles n'apportent aucune information.
     blanc = semantic_entropy(["", "   ", "\n"])
     assert (blanc.clusters, blanc.samples) == (0, 0)
+
 
 def test_deux_textes_SANS_nombre_ne_sont_pas_declares_numeriquement_egaux() -> None:
     """`_numeric_equal` : sans nombre des deux cotes, il n'y a aucune egalite a conclure.

@@ -411,7 +411,7 @@ def trace() -> str:
     assert False, f"etat inattendu : {marqueur!r}"
 '''
     namespace: dict = {}
-    exec(source, namespace)                                        # noqa: S102 — le candidat
+    exec(source, namespace)
 
     def message_brut() -> str:
         try:
@@ -461,7 +461,7 @@ def test_la_comparaison_normalise_les_volatils_et_RIEN_d_autre() -> None:
     from jio.verify.autocheck import _SAME_HELPERS
 
     espace: dict = {}
-    exec(_SAME_HELPERS, espace)          # noqa: S102 — c'est le code du temoin lui-meme
+    exec(_SAME_HELPERS, espace)
     same, stable = espace["_jio_same"], espace["_jio_stable"]
 
     def erreur(message: str):

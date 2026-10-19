@@ -50,7 +50,7 @@ from ..bench.tasks import TASKS
 from ..core.types import Mission
 from .memory import FailureMemory
 
-__all__ = ["Cycle", "RapportCycles", "run_cycles", "VERDICTS"]
+__all__ = ["VERDICTS", "Cycle", "RapportCycles", "run_cycles"]
 
 #: Les trois verdicts possibles, ecrits ici pour que le rapport et les tests lisent la MEME
 #: liste : un verdict ajoute ailleurs serait un verdict que personne ne teste.
@@ -79,8 +79,9 @@ class _RouteurFige:
     def choose(self, objective: str, **_kw: object) -> object:
         return self._arm
 
-    def observe(self, objective: str, arm: object, *, success: bool,
-                cost: float | None = None) -> float:
+    def observe(
+        self, objective: str, arm: object, *, success: bool, cost: float | None = None
+    ) -> float:
         self.observations += 1
         return 0.0
 
@@ -198,6 +199,7 @@ class RapportCycles:
     bas: float = 0.0
     haut: float = 0.0
     tranche: bool = False
+
     @property
     def rechutes(self) -> list[int]:
         """Les cycles ou la memoire DEJA accumulee a fait perdre.
@@ -208,9 +210,7 @@ class RapportCycles:
         > 0`) : au premier cycle, un ecart negatif est de la loterie de graine, et accuser
         la memoire d'une mauvaise graine serait un faux positif.
         """
-        return [
-            c.numero for c in self.cycles if c.memo_avant > 0 and c.ecart < 0
-        ]
+        return [c.numero for c in self.cycles if c.memo_avant > 0 and c.ecart < 0]
 
     @property
     def total_essais(self) -> int:
@@ -348,16 +348,20 @@ class RapportCycles:
             return ""
         if len(blocs) < 2:
             return (
-                " REPLICATIONS : une seule pour l'instant (" + morceaux[0] + "). Un effet "
+                " REPLICATIONS : une seule pour l'instant ("
+                + morceaux[0]
+                + "). Un effet "
                 "mesure sur un seul bloc de graines n'est pas encore un effet REPRODUIT : "
                 "relancer `--cumul` demarre un nouveau bloc."
             )
-        signes = {1 if ecart > 0 else (-1 if ecart < 0 else 0) for _, ecart, _, _ in blocs}
+        signes = {
+            1 if ecart > 0 else (-1 if ecart < 0 else 0) for _, ecart, _, _ in blocs
+        }
         lecture = (
             "meme sens dans tous les blocs"
             if len(signes) == 1
             else "les blocs NE disent PAS la meme chose : le cumul reste valide, mais "
-                 "l'effet n'est pas homogene et doit se lire bloc par bloc"
+            "l'effet n'est pas homogene et doit se lire bloc par bloc"
         )
         return (
             f" REPLICATIONS ({len(blocs)}) : " + " ; ".join(morceaux) + f" — {lecture}."
@@ -457,7 +461,10 @@ class RapportCycles:
                 f"{dernier.essais} "
                 f"avec la memoire accumulee ({dernier.memo_avant} souvenir(s)) et l'intervalle "
                 f"exclut zero. Gain cumule sur le premier cycle : "
-                f"{self.gain_cumule():+d} reussite(s)." + apparie + couplage + portee
+                f"{self.gain_cumule():+d} reussite(s)."
+                + apparie
+                + couplage
+                + portee
                 + self.ligne_des_blocs()
             )
         if dernier.ecart > 0:
@@ -466,7 +473,11 @@ class RapportCycles:
                 f"cumule {self.ecart_cumule:+d} sur {self.essais_cumules}) mais l'intervalle "
                 f"POOL CONTIENT zero : INDETERMINE. "
                 f"Ce n'est pas un echec — c'est une mesure qui n'a pas encore conclu."
-                + apparie + couplage + portee + borne + self.ligne_des_blocs()
+                + apparie
+                + couplage
+                + portee
+                + borne
+                + self.ligne_des_blocs()
             )
         cout = self.cout_du_plateau()
         ouverture = (
@@ -474,7 +485,7 @@ class RapportCycles:
             f"la memoire a grandi jusqu'a {dernier.memo_apres} souvenir(s)"
             if cout
             else f"ecart nul ou negatif au dernier cycle ({dernier.ecart:+d} sur "
-                 f"{dernier.essais} essais par bras)"
+            f"{dernier.essais} essais par bras)"
         )
         # On ne conclut JAMAIS au-dela de ce que la portee permet : le texte qui suit dit
         # ce que le chiffre est (un ecart mesure) et ce qu'il n'est pas (une preuve que la
@@ -486,8 +497,16 @@ class RapportCycles:
             f"executables, et il ne represente pas le regime ou la VERIFICATION ne voit pas "
             f"l'erreur (plausibilite, choix de conception)."
         )
-        return (ouverture + "." + apparie + couplage + portee + borne + lecture
-                + self.ligne_des_blocs())
+        return (
+            ouverture
+            + "."
+            + apparie
+            + couplage
+            + portee
+            + borne
+            + lecture
+            + self.ligne_des_blocs()
+        )
 
     def essais_requis(self) -> int:
         """Combien de PAIRES pour demontrer la dissociation observee (test apparie).
@@ -510,10 +529,15 @@ class RapportCycles:
         z_alpha, z_beta = 1.959963984540054, 0.8416212335729143
         # n dissociations necessaires pour separer p de 1/2
         n_dissociations = math.ceil(
-            ((z_alpha * math.sqrt(0.25) + z_beta * math.sqrt(p * (1 - p))) / (p - 0.5)) ** 2
+            ((z_alpha * math.sqrt(0.25) + z_beta * math.sqrt(p * (1 - p))) / (p - 0.5))
+            ** 2
         )
-        taux_dissociation = (b + c) / self.essais_cumules if self.essais_cumules else 1.0
-        return math.ceil(n_dissociations / taux_dissociation) if taux_dissociation else 0
+        taux_dissociation = (
+            (b + c) / self.essais_cumules if self.essais_cumules else 1.0
+        )
+        return (
+            math.ceil(n_dissociations / taux_dissociation) if taux_dissociation else 0
+        )
 
     def _budget_de_mesure(self) -> str:
         """Le texte qui transforme « INDETERMINE » en decision : combien de paires, et de temps.
@@ -561,12 +585,15 @@ class RapportCycles:
         budget = (
             f" Pour le demontrer au seuil de 95 % avec une puissance de 80 %, il faudrait "
             f"environ {requis} PAIRES — ce protocole en a mesure {mesure}, soit "
-            f"{rapport:.1f} fois moins." if requis else ""
+            f"{rapport:.1f} fois moins."
+            if requis
+            else ""
         )
         return (
             f" L'ecart observe ({self.ecart_cumule:+d} sur {mesure} paires appariees, soit "
             f"{points:+.1f} point(s) ; dissociations {b} contre {c}, p = "
-            f"{self.p_valeur_appariee:.3f}) existe mais n'est pas DEMONTRE." + budget
+            f"{self.p_valeur_appariee:.3f}) existe mais n'est pas DEMONTRE."
+            + budget
             + " A cette taille d'ecart, augmenter l'echantillon est la seule reponse "
             "honnete ; conclure maintenant serait lire du bruit." + accord
         )
@@ -638,8 +665,9 @@ def run_cycles(
     from ..loop.engine import WorkItem
     from ..trust import TrustRouter
 
-    result = RapportCycles(skill=skill, runs=runs, rounds=rounds,
-                           warning_gain=warning_gain)
+    result = RapportCycles(
+        skill=skill, runs=runs, rounds=rounds, warning_gain=warning_gain
+    )
     taches = [t for t in TASKS if not task_ids or t.id in task_ids]
     if not taches or cycles <= 0 or runs <= 0:
         return result
@@ -650,7 +678,12 @@ def run_cycles(
         routeur = TrustRouter(path=racine / "trust.json")
 
         def _mission(
-            task, seed: int, *, memoire_vive: bool, phase: str, arm: object | None = None,
+            task,
+            seed: int,
+            *,
+            memoire_vive: bool,
+            phase: str,
+            arm: object | None = None,
             gain: float | None = None,
         ) -> tuple[bool, str, object | None, tuple[int, int]]:
             """Une mission. Rend (succes, nom du bras, bras) — le bras sert a apparier le froid.
@@ -668,7 +701,10 @@ def run_cycles(
             avant lui (+50 points d'artefact avec un temoin inerte) — la lecon est reprise ici.
             """
             engine = _simulated_engine(
-                task, skill=skill, seed=seed, max_rounds=rounds,
+                task,
+                skill=skill,
+                seed=seed,
+                max_rounds=rounds,
                 journal_path=racine / "journal.jsonl",
             )
             if memoire_vive:
@@ -679,10 +715,17 @@ def run_cycles(
                 # Meme bras, AUCUNE memoire : la seule difference restante est le souvenir.
                 engine.router = _RouteurFige(arm)
             report = engine.run(
-                Mission(objective=task.objective, id=f"{task.id}-{phase}-{seed}",
-                        max_rounds=rounds),
-                WorkItem(objective=task.objective, entrypoint=task.entrypoint,
-                         checks=dict(task.checks), spec=task.spec()),
+                Mission(
+                    objective=task.objective,
+                    id=f"{task.id}-{phase}-{seed}",
+                    max_rounds=rounds,
+                ),
+                WorkItem(
+                    objective=task.objective,
+                    entrypoint=task.entrypoint,
+                    checks=dict(task.checks),
+                    spec=task.spec(),
+                ),
             )
             choisi = getattr(engine, "_arm", None)
             # La PORTEE du levier : combien d'appels du GENERATEUR ont ete avertis. Le panel
@@ -714,7 +757,10 @@ def run_cycles(
                         rappels += 1
                     caracteres += len(memoire.prompt_block(task.objective))
                     ok_chaud, bras, arm, (armes, total) = _mission(
-                        task, graine, memoire_vive=True, phase=f"chaud{numero}",
+                        task,
+                        graine,
+                        memoire_vive=True,
+                        phase=f"chaud{numero}",
                     )
                     chaud += int(ok_chaud)
                     avertis += armes
@@ -722,8 +768,12 @@ def run_cycles(
                     if bras:
                         choix[bras] = choix.get(bras, 0) + 1
                     ok_temoin, _, _, _ = _mission(
-                        task, graine, memoire_vive=True, phase=f"temoin{numero}",
-                        arm=arm, gain=0.0,
+                        task,
+                        graine,
+                        memoire_vive=True,
+                        phase=f"temoin{numero}",
+                        arm=arm,
+                        gain=0.0,
                     )
                     temoin += int(ok_temoin)
                     # La DISSOCIATION, la seule chose que McNemar regarde : les missions ou
@@ -733,20 +783,36 @@ def run_cycles(
                         chaud_seul += 1
                     elif ok_temoin and not ok_chaud:
                         temoin_seul += 1
-                    ok_froid, _, _, _ = _mission(task, graine, memoire_vive=False,
-                                                 phase=f"froid{numero}", arm=arm)
+                    ok_froid, _, _, _ = _mission(
+                        task,
+                        graine,
+                        memoire_vive=False,
+                        phase=f"froid{numero}",
+                        arm=arm,
+                    )
                     froid += int(ok_froid)
             # Borne de securite : une memoire non bornee est la cause d'echec la plus documentee
             # (distraction, confusion). On la tronque par le HAUT, en gardant les plus recents.
             if max_memo and memoire.size > max_memo:
                 _tronquer(memoire, max_memo)
-            result.cycles.append(Cycle(
-                numero=numero, memo_avant=memo_avant, memo_apres=memoire.size,
-                rappels=rappels, froid=froid, temoin=temoin, chaud=chaud,
-                essais=len(taches) * runs, bloc=seed_base, caracteres_memoire=caracteres,
-                avertis=avertis, appels=appels,
-                chaud_seul=chaud_seul, temoin_seul=temoin_seul,
-            ))
+            result.cycles.append(
+                Cycle(
+                    numero=numero,
+                    memo_avant=memo_avant,
+                    memo_apres=memoire.size,
+                    rappels=rappels,
+                    froid=froid,
+                    temoin=temoin,
+                    chaud=chaud,
+                    essais=len(taches) * runs,
+                    bloc=seed_base,
+                    caracteres_memoire=caracteres,
+                    avertis=avertis,
+                    appels=appels,
+                    chaud_seul=chaud_seul,
+                    temoin_seul=temoin_seul,
+                )
+            )
             if callable(sur_cycle):
                 # ECRITURE IMMEDIATE : une coupure ne perd que le cycle en cours. Le cycle
                 # rendu par le rappel porte son numero GLOBAL (celui du cumul).
@@ -819,17 +885,25 @@ def run_cycles(
 _CUMUL = "cycles.jsonl"
 
 
-def _compteurs(cycle: "Cycle", numero: int) -> dict[str, object]:
+def _compteurs(cycle: Cycle, numero: int) -> dict[str, object]:
     return {
         "numero": numero,
-        "froid": cycle.froid, "temoin": cycle.temoin, "chaud": cycle.chaud,
-        "essais": cycle.essais, "avertis": cycle.avertis, "appels": cycle.appels,
+        "froid": cycle.froid,
+        "temoin": cycle.temoin,
+        "chaud": cycle.chaud,
+        "essais": cycle.essais,
+        "avertis": cycle.avertis,
+        "appels": cycle.appels,
         "caracteres_memoire": cycle.caracteres_memoire,
-        "memo_avant": cycle.memo_avant, "memo_apres": cycle.memo_apres,
-        "rappels": cycle.rappels, "artefact": cycle.artefact, "ecart": cycle.ecart,
+        "memo_avant": cycle.memo_avant,
+        "memo_apres": cycle.memo_apres,
+        "rappels": cycle.rappels,
+        "artefact": cycle.artefact,
+        "ecart": cycle.ecart,
         # Les paires discordantes doivent survivre au cumul : sans elles, un cumul relu ne
         # pourrait plus faire le test APPARIE — celui qui correspond au plan experimental.
-        "chaud_seul": cycle.chaud_seul, "temoin_seul": cycle.temoin_seul,
+        "chaud_seul": cycle.chaud_seul,
+        "temoin_seul": cycle.temoin_seul,
         "bloc": cycle.bloc,
     }
 
@@ -854,8 +928,14 @@ class Cumul:
     """
 
     def __init__(
-        self, chemin: Path, *, skill: float, runs: int = 0, rounds: int = 0,
-        gain: float = 0.0, seed_base: int = 0,
+        self,
+        chemin: Path,
+        *,
+        skill: float,
+        runs: int = 0,
+        rounds: int = 0,
+        gain: float = 0.0,
+        seed_base: int = 0,
     ) -> None:
         self.chemin = Path(chemin)
         self.verrou = self.chemin.with_suffix(self.chemin.suffix + ".verrou")
@@ -863,7 +943,10 @@ class Cumul:
         self.skill, self.runs, self.rounds, self.gain = skill, runs, rounds, gain
         self.seed_base = seed_base
         self._entete: dict[str, object] = {
-            "skill": skill, "runs": runs, "rounds": rounds, "gain": gain,
+            "skill": skill,
+            "runs": runs,
+            "rounds": rounds,
+            "gain": gain,
         }
         self._lignes = self._lire()
         self._verifier_le_regime()
@@ -938,16 +1021,20 @@ class Cumul:
             flux.write(json.dumps(ligne, ensure_ascii=False) + "\n")
         self._lignes.append(ligne)
 
-    def ajouter(self, cycle: "Cycle") -> "Cycle":
+    def ajouter(self, cycle: Cycle) -> Cycle:
         """Ecrit UN cycle, tout de suite. Rend le cycle avec son numero GLOBAL."""
         if not self._deja_entete:
             self._ecrire({"type": "entete", **self._entete})
             self._deja_entete = True
         if not self._replication_ecrite:
-            self._ecrire({
-                "type": "replication", "seed_base": self.seed_base, "runs": self.runs,
-                "rounds": self.rounds,
-            })
+            self._ecrire(
+                {
+                    "type": "replication",
+                    "seed_base": self.seed_base,
+                    "runs": self.runs,
+                    "rounds": self.rounds,
+                }
+            )
             self._replication_ecrite = True
         self._numero += 1
         self._ecrire({"type": "cycle", **_compteurs(cycle, self._numero)})
@@ -955,7 +1042,7 @@ class Cumul:
 
         return _replace(cycle, numero=self._numero)
 
-    def rapport(self) -> "RapportCycles":
+    def rapport(self) -> RapportCycles:
         return depuis_cumul(self.chemin)
 
     @property
@@ -967,13 +1054,21 @@ class Cumul:
 
 
 def cumuler(
-    chemin: Path, rapport: "RapportCycles", *, runs: int = 0, rounds: int = 0,
+    chemin: Path,
+    rapport: RapportCycles,
+    *,
+    runs: int = 0,
+    rounds: int = 0,
     seed_base: int = 0,
-) -> "RapportCycles":
+) -> RapportCycles:
     """Empile TOUT un rapport deja mesure et rend le cumul relu depuis le disque."""
     cumul = Cumul(
-        chemin, skill=rapport.skill, runs=runs, rounds=rounds,
-        gain=rapport.warning_gain, seed_base=seed_base,
+        chemin,
+        skill=rapport.skill,
+        runs=runs,
+        rounds=rounds,
+        gain=rapport.warning_gain,
+        seed_base=seed_base,
     )
     try:
         for cycle in rapport.cycles:
@@ -985,7 +1080,7 @@ def cumuler(
         cumul.lever_le_verrou()
 
 
-def depuis_cumul(chemin: Path) -> "RapportCycles":
+def depuis_cumul(chemin: Path) -> RapportCycles:
     """Relit un cumul et reconstruit un rapport. Rend un rapport VIDE si le fichier n'existe pas."""
     import json
 
@@ -1014,23 +1109,31 @@ def depuis_cumul(chemin: Path) -> "RapportCycles":
             continue
         if donnee.get("type") != "cycle":
             continue
-        cycles.append(Cycle(
-            numero=int(donnee.get("numero", 0)),
-            memo_avant=int(donnee.get("memo_avant", 0)),
-            memo_apres=int(donnee.get("memo_apres", 0)),
-            rappels=int(donnee.get("rappels", 0)),
-            froid=int(donnee.get("froid", 0)), temoin=int(donnee.get("temoin", 0)),
-            chaud=int(donnee.get("chaud", 0)), essais=int(donnee.get("essais", 0)),
-            caracteres_memoire=int(donnee.get("caracteres_memoire", 0)),
-            avertis=int(donnee.get("avertis", 0)), appels=int(donnee.get("appels", 0)),
-            chaud_seul=int(donnee.get("chaud_seul", 0)),
-            temoin_seul=int(donnee.get("temoin_seul", 0)),
-            bloc=int(donnee.get("bloc", bloc_courant)),
-        ))
+        cycles.append(
+            Cycle(
+                numero=int(donnee.get("numero", 0)),
+                memo_avant=int(donnee.get("memo_avant", 0)),
+                memo_apres=int(donnee.get("memo_apres", 0)),
+                rappels=int(donnee.get("rappels", 0)),
+                froid=int(donnee.get("froid", 0)),
+                temoin=int(donnee.get("temoin", 0)),
+                chaud=int(donnee.get("chaud", 0)),
+                essais=int(donnee.get("essais", 0)),
+                caracteres_memoire=int(donnee.get("caracteres_memoire", 0)),
+                avertis=int(donnee.get("avertis", 0)),
+                appels=int(donnee.get("appels", 0)),
+                chaud_seul=int(donnee.get("chaud_seul", 0)),
+                temoin_seul=int(donnee.get("temoin_seul", 0)),
+                bloc=int(donnee.get("bloc", bloc_courant)),
+            )
+        )
     return RapportCycles(
-        cycles=cycles, skill=float(entete.get("skill", 0.0)),
-        runs=int(entete.get("runs", 0)), rounds=int(entete.get("rounds", 0)),
-        warning_gain=float(entete.get("gain", 0.0)), replications=replications,
+        cycles=cycles,
+        skill=float(entete.get("skill", 0.0)),
+        runs=int(entete.get("runs", 0)),
+        rounds=int(entete.get("rounds", 0)),
+        warning_gain=float(entete.get("gain", 0.0)),
+        replications=replications,
     )
 
 
@@ -1054,6 +1157,3 @@ def _tronquer(memoire: FailureMemory, maximum: int) -> None:
         memoire.save()
     except (AttributeError, OSError):
         return
-
-
-

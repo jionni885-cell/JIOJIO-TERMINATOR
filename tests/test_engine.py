@@ -14,7 +14,6 @@ from jio.providers.simulated import Persona, SimulatedProvider, make_panel
 from jio.spec.compiler import SpecCompiler
 from jio.verify.executable import ExecutableProver, Sandbox
 
-
 # --------------------------------------------------------------------------- #
 # Extraction de code
 # --------------------------------------------------------------------------- #

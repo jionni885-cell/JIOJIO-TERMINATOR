@@ -18,8 +18,8 @@ il remplace `_same_meaning` sans toucher au reste.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Sequence
 
 from .metamorphic import jaccard
 
@@ -28,11 +28,11 @@ from .metamorphic import jaccard
 class EntropyResult:
     """Resultat d'une mesure d'entropie semantique."""
 
-    entropy: float            # entropie de Shannon normalisee sur [0, 1]
+    entropy: float  # entropie de Shannon normalisee sur [0, 1]
     clusters: int
     samples: int
-    dominant_share: float     # part du cluster majoritaire
-    risk: str                 # faible | moyen | eleve
+    dominant_share: float  # part du cluster majoritaire
+    risk: str  # faible | moyen | eleve
 
     @property
     def confident(self) -> bool:
@@ -47,8 +47,9 @@ def semantic_entropy(
     """Calcule l'entropie semantique d'un ensemble de reponses."""
     cleaned = [a.strip() for a in answers if a and a.strip()]
     if not cleaned:
-        return EntropyResult(entropy=1.0, clusters=0, samples=0,
-                             dominant_share=0.0, risk="eleve")
+        return EntropyResult(
+            entropy=1.0, clusters=0, samples=0, dominant_share=0.0, risk="eleve"
+        )
 
     # Clustering agglomeratif glouton par equivalence de sens.
     clusters: list[list[str]] = []
@@ -95,7 +96,10 @@ def _numeric_equal(a: str, b: str) -> bool:
     nb = re.findall(r"-?\d+(?:[.,]\d+)?", b.replace(",", "."))
     if not na or not nb:
         return False
-    return sorted(float(x) for x in na) == sorted(float(y) for y in nb) and jaccard(a, b) > 0.25
+    return (
+        sorted(float(x) for x in na) == sorted(float(y) for y in nb)
+        and jaccard(a, b) > 0.25
+    )
 
 
 def sample_and_measure(
@@ -107,10 +111,12 @@ def sample_and_measure(
     answers: list[str] = []
     for i in range(max(1, k)):
         try:
-            answers.append(answer_fn(prompt if i == 0 else f"{prompt}\n[variante {i + 1}]"))
-        except Exception:  # noqa: BLE001
+            answers.append(
+                answer_fn(prompt if i == 0 else f"{prompt}\n[variante {i + 1}]")
+            )
+        except Exception:
             continue
     return semantic_entropy(answers)
 
 
-__all__ = ["EntropyResult", "semantic_entropy", "sample_and_measure"]
+__all__ = ["EntropyResult", "sample_and_measure", "semantic_entropy"]

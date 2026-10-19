@@ -52,7 +52,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-__all__ = ["Constat", "RapportCoherence", "controler", "formater", "CONTROLES"]
+__all__ = ["CONTROLES", "Constat", "RapportCoherence", "controler", "formater"]
 
 #: Les documents dont on verifie les faits verifiables. Volontairement COURTE : chaque document
 #: ajoute du temps de verification, et un portail lent n'est pas lance.
@@ -64,7 +64,7 @@ DOCUMENTS_CHIFFRES = ("README.md",)
 #: LES ARTEFACTS QU'UN AGENT EXECUTE. Ce ne sont pas des documents : ce sont des consignes.
 #: La liste vit dans `verify/consignes.py`, source unique partagee avec la verification des
 #: documents — deux listes recopiees auraient fini par diverger sur le point qui compte.
-from .consignes import ARTEFACTS_EXECUTES  # noqa: E402  (re-export, place apres les docs)
+from .consignes import ARTEFACTS_EXECUTES
 
 
 def _artefacts_executes(racine: Path) -> list[Path]:
@@ -130,8 +130,13 @@ class RapportCoherence:
             "duree_s": self.duree_s,
             "hors_portee": [c.controle for c in self.hors_portee],
             "constats": [
-                {"controle": c.controle, "ok": c.ok, "resume": c.resume,
-                 "details": list(c.details), "portee": c.portee}
+                {
+                    "controle": c.controle,
+                    "ok": c.ok,
+                    "resume": c.resume,
+                    "details": list(c.details),
+                    "portee": c.portee,
+                }
                 for c in self.constats
             ],
         }
@@ -142,8 +147,8 @@ def _sous_commandes() -> set[str]:
     from ..cli import build_parser
 
     noms: set[str] = set()
-    for action in build_parser()._actions:  # noqa: SLF001 - c'est le parseur qu'on interroge
-        if isinstance(action, argparse._SubParsersAction):  # noqa: SLF001
+    for action in build_parser()._actions:
+        if isinstance(action, argparse._SubParsersAction):
             noms = set(action.choices)
     return noms
 
@@ -245,12 +250,19 @@ def _controle_artefacts(racine: Path) -> Constat:
         # Une racine SANS aucune trace d'integration n'a pas besoin qu'on lui enumere trente
         # fichiers : elle a besoin d'UNE commande. C'est le premier contact d'une IA avec ce
         # dispositif, et le constat doit y repondre en une ligne.
-        if manquants and not divergents and not proteges and not (
-            (racine / ".jio").is_dir() or (racine / "jio" / "__init__.py").is_file()
+        if (
+            manquants
+            and not divergents
+            and not proteges
+            and not (
+                (racine / ".jio").is_dir() or (racine / "jio" / "__init__.py").is_file()
+            )
         ):
             resume += " — `jio start` installe l'integration"
     details = tuple(f"manquant : {m}" for m in manquants[:4])
-    details += tuple(f"a regenerer : {d} (`jio artifacts --write`)" for d in divergents[:4])
+    details += tuple(
+        f"a regenerer : {d} (`jio artifacts --write`)" for d in divergents[:4]
+    )
     details += tuple(
         f"{p} est a vous (pas marque comme genere par jio) : `jio artifacts --write` le "
         f"PRESERVERA — notre version est a cote, en {p}.jio. Comparez les deux, puis supprimez "
@@ -276,23 +288,38 @@ def _controle_nombres(racine: Path) -> Constat:
         for nom in DOCUMENTS_CHIFFRES
         if (racine / nom).is_file()
     }
-    participants = {nom: t for nom, t in textes.items()
-                    if any(chiffre.annonce(t) for chiffre in CHIFFRES)}
+    participants = {
+        nom: t
+        for nom, t in textes.items()
+        if any(chiffre.annonce(t) for chiffre in CHIFFRES)
+    }
     if not participants:
-        return Constat("nombres", True,
-                       "hors de portee : les documents de cette racine n'annoncent aucun "
-                       "chiffre surveille", portee=False)
+        return Constat(
+            "nombres",
+            True,
+            "hors de portee : les documents de cette racine n'annoncent aucun "
+            "chiffre surveille",
+            portee=False,
+        )
 
     if not (racine / "tests").is_dir():
         # Sans dossier de tests, il n'y a aucun chiffre a mesurer — et un controle muet rendu
         # « ok » serait un faux vert. Meme regle que les deux autres : dire hors portee.
-        return Constat("nombres", True, "hors de portee : aucun dossier tests/ dans cette racine",
-                       portee=False)
+        return Constat(
+            "nombres",
+            True,
+            "hors de portee : aucun dossier tests/ dans cette racine",
+            portee=False,
+        )
     try:
         mesures = mesurer(racine)
     except RuntimeError as exc:
         # Ici, des tests EXISTENT mais la mesure echoue : c'est un echec, pas une absence.
-        return Constat("nombres", False, f"mesure IMPOSSIBLE alors que des tests existent : {exc}"[:150])
+        return Constat(
+            "nombres",
+            False,
+            f"mesure IMPOSSIBLE alors que des tests existent : {exc}"[:150],
+        )
     tous: list[str] = []
     for nom, texte in participants.items():
         tous.extend(
@@ -319,12 +346,17 @@ def _controle_documents(racine: Path) -> Constat:
     annoncait neuf controles verts.
     """
     from .claims import verifier
-    from .sorties import blocs, verifier as verifier_sorties
+    from .sorties import blocs
+    from .sorties import verifier as verifier_sorties
 
     cibles = _documents(racine)
     if not cibles:
-        return Constat("documents", True, "hors de portee : aucun document a verifier ici",
-                       portee=False)
+        return Constat(
+            "documents",
+            True,
+            "hors de portee : aucun document a verifier ici",
+            portee=False,
+        )
     refutations: list[str] = []
     verifies = 0
     sorties = 0
@@ -411,9 +443,12 @@ def _controle_commandes(racine: Path) -> Constat:
     if exemptions:
         resume += f" · {len(exemptions)} zone(s) declaree(s) hors controle"
     if vues == 0 and not inconnues and not sans_raison:
-        return Constat("commandes", True,
-                       "hors de portee : aucune commande `jio ...` citee par un document",
-                       portee=False)
+        return Constat(
+            "commandes",
+            True,
+            "hors de portee : aucune commande `jio ...` citee par un document",
+            portee=False,
+        )
     return Constat(
         "commandes",
         ok,
@@ -438,37 +473,44 @@ def _controle_environnement(racine: Path) -> Constat:
     # — le controle plantait sur le cas meme pour lequel il declare n'avoir rien a dire. Un
     # portail qui echoue sur un depot tiers apprend a l'utilisateur a ignorer ses rouges.
     if not (racine / "jio" / "__init__.py").is_file():
-        return Constat("environnement", True,
-                       "hors de portee : aucun paquet jio/ dans cette racine", portee=False)
+        return Constat(
+            "environnement",
+            True,
+            "hors de portee : aucun paquet jio/ dans cette racine",
+            portee=False,
+        )
 
     try:
-        import tests.test_env_wiring as wiring  # noqa: PLC0415 - module de test, import paresseux
+        import tests.test_env_wiring as wiring
     except ImportError:
         # Le paquet jio/ est la, mais ses TESTS ne sont pas importables (installation par
         # `pip install jio`, ou `tests/` absent). La comparaison « ce que le code lit » contre
         # « ce qui est documente » ne peut pas avoir lieu : on le declare, on ne fait pas semblant.
         return Constat(
-            "environnement", True,
+            "environnement",
+            True,
             "hors de portee : les tests du depot jio ne sont pas importables ici "
             "(installation sans sources ?) — ce controle compare `.env.example` au code de jio",
             portee=False,
         )
 
-    documentees = wiring._documented()                                            # noqa: SLF001
-    brutes = wiring._read_by_code()                                               # noqa: SLF001
+    documentees = wiring._documented()
+    brutes = wiring._read_by_code()
     # On reutilise les MEMES exclusions que le test, mot pour mot. Recopier la regle a moitie
     # ferait accuser des variables legitimes : une famille (`JIO_BIN_<NOM>`) est lue par
     # prefixe, une variable etrangere ou exportee n'appartient pas a ce fichier.
     familles = {n for n in brutes if n.endswith("_")}
     lues = {
-        n for n in brutes - documentees
+        n
+        for n in brutes - documentees
         if not n.endswith("_")
-        and not wiring._dans_une_famille(n)                                       # noqa: SLF001
-        and n not in wiring._FOREIGN                                              # noqa: SLF001
-        and n not in wiring._EXPORTED_BY_JIO                                       # noqa: SLF001
+        and not wiring._dans_une_famille(n)
+        and n not in wiring._FOREIGN
+        and n not in wiring._EXPORTED_BY_JIO
     }
     mortes = sorted(
-        n for n in documentees - brutes
+        n
+        for n in documentees - brutes
         if not any(n.startswith(prefix) for prefix in familles)
     )
     invisibles = sorted(lues)
@@ -480,7 +522,9 @@ def _controle_environnement(racine: Path) -> Constat:
         if ok
         else f"{len(mortes)} documentee(s) sans lecteur, {len(invisibles)} lue(s) sans document",
         tuple(f"documentee mais jamais lue : {m} (`.env.example`)" for m in mortes[:4])
-        + tuple(f"lue mais non documentee : {i} (`.env.example`)" for i in invisibles[:4]),
+        + tuple(
+            f"lue mais non documentee : {i} (`.env.example`)" for i in invisibles[:4]
+        ),
     )
 
 
@@ -494,8 +538,12 @@ def _controle_sources(racine: Path) -> Constat:
         # Absence de paquet `jio/` : le controle n'a rien a mesurer. L'annoncer est le seul
         # comportement acceptable — rendre « propre » sur zero fichier est un faux vert, et
         # c'est exactement ce qu'un depot tiers obtenait avant.
-        return Constat("sources", True, "hors de portee : aucun paquet jio/ dans cette racine",
-                       portee=False)
+        return Constat(
+            "sources",
+            True,
+            "hors de portee : aucun paquet jio/ dans cette racine",
+            portee=False,
+        )
 
     fichiers = sorted(p for p in paquet.rglob("*.py") if "__pycache__" not in p.parts)
     rapport = analyse(fichiers, root=racine)
@@ -507,7 +555,8 @@ def _controle_sources(racine: Path) -> Constat:
         "sources",
         ok,
         f"paquet jio/ : {len(fichiers)} fichier(s), {len(problemes)} constat(s) de lint, "
-        f"{len(imports)} d'import" + (f", {len(limites)} non conclu(s)" if limites else ""),
+        f"{len(imports)} d'import"
+        + (f", {len(limites)} non conclu(s)" if limites else ""),
         tuple(str(p)[:130] for p in problemes[:4])
         + tuple(str(i)[:130] for i in imports[:4])
         + tuple(f"non conclu : {n[:110]}" for n in limites[:2]),
@@ -531,16 +580,21 @@ def _controle_plan(racine: Path) -> Constat:
     except (OSError, ValueError):
         return Constat("plan", False, "etat de plan ILLISIBLE (`.jio/plan.json`)")
     etat = str(donnees.get("etat", ""))
-    non_tentees = [e for e in donnees.get("etapes", []) if e.get("etat") == "non_tentee"]
+    non_tentees = [
+        e for e in donnees.get("etapes", []) if e.get("etat") == "non_tentee"
+    ]
     if etat in {"bloque", "budget"} or non_tentees:
         return Constat(
             "plan",
             False,
             f"plan en suspens : etat {etat}, {len(non_tentees)} etape(s) NON TENTEE(S)",
-            tuple(f"non tentee : {str(e.get('objectif'))[:100]}" for e in non_tentees[:4]),
+            tuple(
+                f"non tentee : {str(e.get('objectif'))[:100]}" for e in non_tentees[:4]
+            ),
         )
     return Constat(
-        "plan", True,
+        "plan",
+        True,
         f"plan {etat} : {donnees.get('prouvees', 0)}/{donnees.get('total', 0)} etape(s) prouvee(s)",
     )
 
@@ -569,21 +623,35 @@ def _controle_competences(racine: Path) -> Constat:
 
     dossier = racine / ".hermes" / "skills"
     if not dossier.is_dir():
-        return Constat("competences", True,
-                       "hors de portee : aucune competence dans cette racine", portee=False)
+        return Constat(
+            "competences",
+            True,
+            "hors de portee : aucune competence dans cette racine",
+            portee=False,
+        )
 
     fichiers = sorted(p for p in dossier.rglob("*.md") if p.name != "README.md")
     if not fichiers:
-        return Constat("competences", True,
-                       "hors de portee : le dossier des competences est vide", portee=False)
+        return Constat(
+            "competences",
+            True,
+            "hors de portee : le dossier des competences est vide",
+            portee=False,
+        )
 
     mesures = [
-        mesurer(str(p.relative_to(racine)), p.read_text(encoding="utf-8", errors="replace"))
+        mesurer(
+            str(p.relative_to(racine)), p.read_text(encoding="utf-8", errors="replace")
+        )
         for p in fichiers
     ]
     certains = [m for m in mesures if m.depasse(SEUILS["competence_jetons"])]
-    doutes = [m for m in mesures if not m.depasse(SEUILS["competence_jetons"])
-              and m.peut_depasser(SEUILS["competence_jetons"])]
+    doutes = [
+        m
+        for m in mesures
+        if not m.depasse(SEUILS["competence_jetons"])
+        and m.peut_depasser(SEUILS["competence_jetons"])
+    ]
     total_min = sum(m.jetons_min for m in mesures)
     total_max = sum(m.jetons_max for m in mesures)
     bibliotheque_trop_grosse = total_min > SEUILS["bibliotheque_jetons"]
@@ -607,12 +675,18 @@ def _controle_competences(racine: Path) -> Constat:
         )
         risques.extend(trouve)
         lus += 1
-    for dossier_agents, motif in ((".opencode/agents", "*.md"), (".claude/agents", "*.md")):
+    for dossier_agents, motif in (
+        (".opencode/agents", "*.md"),
+        (".claude/agents", "*.md"),
+    ):
         for chemin in sorted((racine / dossier_agents).glob(motif)):
             nom = str(chemin.relative_to(racine))
-            risques.extend(analyser_texte(
-                chemin.read_text(encoding="utf-8", errors="replace"), f"fichier:{nom}"
-            ))
+            risques.extend(
+                analyser_texte(
+                    chemin.read_text(encoding="utf-8", errors="replace"),
+                    f"fichier:{nom}",
+                )
+            )
             lus += 1
 
     dangereux = [r for r in risques if not r.mise_en_garde]
@@ -625,7 +699,8 @@ def _controle_competences(racine: Path) -> Constat:
     if not ok:
         resume = f"{len(dangereux)} motif(s) dangereux, {len(certains)} competence(s) hors budget"
     details = tuple(
-        f"{r.artefact} ligne {r.ligne} : {r.nature} — {r.extrait[:70]}" for r in dangereux[:4]
+        f"{r.artefact} ligne {r.ligne} : {r.nature} — {r.extrait[:70]}"
+        for r in dangereux[:4]
     ) + tuple(
         f"{m.chemin} : {m.intervalle()} jetons (seuil {SEUILS['competence_jetons']})"
         for m in certains[:3]
@@ -633,12 +708,15 @@ def _controle_competences(racine: Path) -> Constat:
     if doutes:
         details += tuple(
             f"a verifier : {m.chemin} fait {m.intervalle()} jetons pour un seuil de "
-            f"{SEUILS['competence_jetons']}" for m in doutes[:2]
+            f"{SEUILS['competence_jetons']}"
+            for m in doutes[:2]
         )
     if bibliotheque_trop_grosse:
         details += (
-            f"bibliotheque au-dela de {SEUILS['bibliotheque_jetons']} jetons "
-            f"({total_min} au minimum) : elle ne tient plus dans la fenetre avec la mission",
+            (
+                f"bibliotheque au-dela de {SEUILS['bibliotheque_jetons']} jetons "
+                f"({total_min} au minimum) : elle ne tient plus dans la fenetre avec la mission"
+            ),
         )
     return Constat("competences", ok, resume, details)
 
@@ -660,8 +738,12 @@ def _controle_journal(racine: Path) -> Constat:
     if not chemin.is_absolute():
         chemin = racine / chemin
     if not chemin.is_file():
-        return Constat("journal", True, "hors de portee : aucun journal dans cette racine",
-                       portee=False)
+        return Constat(
+            "journal",
+            True,
+            "hors de portee : aucun journal dans cette racine",
+            portee=False,
+        )
 
     from ..core.journal import Journal
 
@@ -670,11 +752,13 @@ def _controle_journal(racine: Path) -> Constat:
     resume = journal.summary()
     if ok:
         return Constat(
-            "journal", True,
+            "journal",
+            True,
             f"chaine INTEGRE sur {resume['events']} evenement(s) — rien n'a ete reecrit",
         )
     return Constat(
-        "journal", False,
+        "journal",
+        False,
         f"chaine CASSEE a l'evenement {casse} : le journal a ete modifie apres coup",
         (f"tete annoncee : {journal.head}",),
     )
@@ -710,8 +794,11 @@ def controler(racine: Path | str = ".") -> RapportCoherence:
             rapport.constats.append(controle(base))
         except Exception as exc:  # fail-closed : l'echec est un constat, pas un silence
             rapport.constats.append(
-                Constat(controle.__name__.removeprefix("_controle_"), False,
-                        f"le controle a leve : {exc}")
+                Constat(
+                    controle.__name__.removeprefix("_controle_"),
+                    False,
+                    f"le controle a leve : {exc}",
+                )
             )
     rapport.duree_s = time.monotonic() - depart
     return rapport
@@ -779,17 +866,23 @@ def reparer(
 
     for constat in avant.incoherents:
         if constat.controle in JAMAIS_REPARABLE:
-            restants.append(f"{constat.controle} : NE PAS REPARER — {JAMAIS_REPARABLE[constat.controle]}")
+            restants.append(
+                f"{constat.controle} : NE PAS REPARER — {JAMAIS_REPARABLE[constat.controle]}"
+            )
             continue
         if constat.controle in REPARABLES:
-            raison, commande = REPARABLES[constat.controle]
+            raison, _commande = REPARABLES[constat.controle]
             if constat.controle == "artefacts":
                 from ..artifacts.write_guard import ecrire_manifest
 
                 decisions = ecrire_manifest(base, manifeste_attendu(base))
-                ecrits = [d for d in decisions if d.action not in {"inchange", "preserve"}]
+                ecrits = [
+                    d for d in decisions if d.action not in {"inchange", "preserve"}
+                ]
                 proteges = [d for d in decisions if d.action == "preserve"]
-                faits.append(f"artefacts : {len(ecrits)} fichier(s) regenere(s) — {raison}")
+                faits.append(
+                    f"artefacts : {len(ecrits)} fichier(s) regenere(s) — {raison}"
+                )
                 for protege in proteges:
                     restants.append(
                         f"artefacts : {protege.chemin} PRESERVE (pas marque comme genere par "
@@ -800,7 +893,9 @@ def reparer(
                 # implementation de la meme reecriture finirait par diverger de la premiere, et
                 # c'est exactement ce que ce depot s'interdit (« un seul ecrivain, une seule
                 # doctrine »). Elle ecrit, relit, et restaure si un ecart subsiste.
-                from ..chiffres import ecarts as ecarts_chiffres, mesurer, reparer as reparer_chiffres
+                from ..chiffres import ecarts as ecarts_chiffres
+                from ..chiffres import mesurer
+                from ..chiffres import reparer as reparer_chiffres
 
                 mesures = mesurer(base)
                 for nom in DOCUMENTS_CHIFFRES:
@@ -813,7 +908,9 @@ def reparer(
                     absents = [e for e in avant_ici if e.ligne == 0]
                     perimes = [e for e in avant_ici if e.reparable]
 
-                    code, restants_ici, message = reparer_chiffres(chemin, mesures, ecrire=True)
+                    code, restants_ici, message = reparer_chiffres(
+                        chemin, mesures, ecrire=True
+                    )
                     # DEUX QUESTIONS DIFFERENTES, et les confondre faisait disparaitre un fait :
                     #   * la partie MECANIQUE a-t-elle eu lieu ? Elle a eu lieu si des valeurs
                     #     etaient perimees et qu'aucune ne l'est plus apres l'ecriture ;
@@ -821,11 +918,15 @@ def reparer(
                     # Le code de sortie repond a la seconde (c'est ce qu'une CI lit) ; compter les
                     # faits avec lui faisait passer une reparation REUSSIE pour un echec des
                     # qu'une mention manquait quelque part dans le document.
-                    mecanique_faite = bool(perimes) and not any(e.reparable for e in restants_ici)
+                    mecanique_faite = bool(perimes) and not any(
+                        e.reparable for e in restants_ici
+                    )
                     if mecanique_faite:
                         faits.append(f"nombres : {nom} — {raison}")
                     elif perimes:
-                        restants.append(f"nombres : {nom} — rien n'a ete ecrit : {message[:90]}")
+                        restants.append(
+                            f"nombres : {nom} — rien n'a ete ecrit : {message[:90]}"
+                        )
                     # Un chiffre qui n'apparait NULLE PART demande de decider s'il faut l'ecrire
                     # dans le document ou retirer le controle : ce n'est pas mecanique.
                     for absent in absents:
@@ -836,7 +937,9 @@ def reparer(
                     if not code and not absents and not perimes:
                         faits.append(f"nombres : {nom} — {raison} (deja juste)")
             continue
-        motif = DECISIONS_HUMAINES.get(constat.controle, "ce constat demande une decision")
+        motif = DECISIONS_HUMAINES.get(
+            constat.controle, "ce constat demande une decision"
+        )
         restants.append(f"{constat.controle} : {motif} — {constat.resume[:80]}")
 
     apres = controler(base) if faits else avant
@@ -862,7 +965,9 @@ def formater(rapport: RapportCoherence, *, largeur: int = 100) -> str:
         )
     lignes.append("")
     for constat in rapport.constats:
-        lignes.append(f"    [{constat.marque:<2}] {constat.controle:<13} {constat.resume[:72]}")
+        lignes.append(
+            f"    [{constat.marque:<2}] {constat.controle:<13} {constat.resume[:72]}"
+        )
         for detail in constat.details:
             lignes.append(f"         - {detail[:90]}")
     if not rapport.ok:

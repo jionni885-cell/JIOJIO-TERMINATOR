@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 
 from ..clarify import MAX_QUESTIONS, Analyse, analyser
 
-__all__ = ["Objectif", "RapportPorte", "CORPUS", "mesurer", "formater"]
+__all__ = ["CORPUS", "Objectif", "RapportPorte", "formater", "mesurer"]
 
 
 @dataclass(frozen=True)
@@ -55,46 +55,66 @@ CORPUS: tuple[Objectif, ...] = (
     Objectif(
         "corriger jio/verify/entropy.py : `_numeric_equal` doit rendre False quand aucun "
         "nombre n'est present, avec un test qui le prouve",
-        True, frozenset(), "action + cible (chemin) + critere (test qui le prouve)",
+        True,
+        frozenset(),
+        "action + cible (chemin) + critere (test qui le prouve)",
     ),
     Objectif(
         "reparer le bug de jio/recover.py ou l'empreinte rate les dossiers non suivis, la "
         "suite doit rester verte",
-        True, frozenset(), "action + cible + critere (« la suite doit rester verte »)",
+        True,
+        frozenset(),
+        "action + cible + critere (« la suite doit rester verte »)",
     ),
     Objectif(
         "ajouter dans tests/test_clarify.py un test qui borne le nombre de questions a 3",
-        True, frozenset(), "action + cible (chemin) + critere (le test lui-meme)",
+        True,
+        frozenset(),
+        "action + cible (chemin) + critere (le test lui-meme)",
     ),
     Objectif(
         "mesurer le gain de la memoire des echecs sur 20 missions, en points de reussite",
-        True, frozenset(), "action + cible (la memoire) + critere (points de reussite)",
+        True,
+        frozenset(),
+        "action + cible (la memoire) + critere (points de reussite)",
     ),
     Objectif(
         "documenter dans README.md la porte de clarification en moins de 30 lignes",
-        True, frozenset(), "action + cible + critere chiffre",
+        True,
+        frozenset(),
+        "action + cible + critere chiffre",
     ),
     Objectif(
         "analyser le journal .jio/journal.jsonl et lister les regles non couvertes",
-        True, frozenset(), "action + cible (chemin) + critere (liste)",
+        True,
+        frozenset(),
+        "action + cible (chemin) + critere (liste)",
     ),
     Objectif(
         "add a test to tests/test_start.py proving jio start is idempotent",
-        True, frozenset(), "anglais, action + cible + critere",
+        True,
+        frozenset(),
+        "anglais, action + cible + critere",
     ),
     Objectif(
         "fix the failing rule R-003 in jio/spec/witness.py; the suite must stay green",
-        True, frozenset(), "anglais, action + cible + critere",
+        True,
+        frozenset(),
+        "anglais, action + cible + critere",
     ),
     Objectif(
         "corrige le calcul de jio/trust/router.py : le budget doit valoir le produit des "
         "tours par les candidats, verifie par un test",
-        True, frozenset(), "imperatif francais, action + cible + critere",
+        True,
+        frozenset(),
+        "imperatif francais, action + cible + critere",
     ),
     Objectif(
         "remplacer la constante 600 de jio/spec/witness.py par une borne nommee, sans "
         "changer le comportement (tests verts)",
-        True, frozenset(), "action + cible + critere (« tests verts »)",
+        True,
+        frozenset(),
+        "action + cible + critere (« tests verts »)",
     ),
     # -- objectifs ambigus : une question au minimum ---------------------------------- #
     #
@@ -106,45 +126,52 @@ CORPUS: tuple[Objectif, ...] = (
     # depot », « la documentation » ne sont pas des cibles (liste `_NOMS_VAGUES`), et « fais »,
     # « make », « why » ne sont pas des verbes d'action. Les completer rend le banc PLUS
     # severe, pas plus complaisant : il compte desormais les signaux dans les deux sens.
-
     Objectif(
         "ameliore le projet",
-        False, frozenset({"cible", "critere", "perimetre"}),
+        False,
+        frozenset({"cible", "critere", "perimetre"}),
         "souhait : ni cible, ni critere, ni perimetre",
     ),
     Objectif(
         "corrige le bug",
-        False, frozenset({"cible", "critere"}),
+        False,
+        frozenset({"cible", "critere"}),
         "action claire, cible et critere absents",
     ),
     Objectif(
         "optimise les performances",
-        False, frozenset({"cible", "critere"}),
+        False,
+        frozenset({"cible", "critere"}),
         "« optimise » sans chiffre : on ne saura jamais si c'est fini",
     ),
     Objectif(
         "il faudrait ameliorer les tests",
-        False, frozenset({"cible", "critere"}),
+        False,
+        frozenset({"cible", "critere"}),
         "quel critere ? couverture, duree, stabilite — trois travaux differents",
     ),
     Objectif(
         "analyse le depot",
-        False, frozenset({"cible", "critere"}),
+        False,
+        frozenset({"cible", "critere"}),
         "analyser pour repondre a quelle question ?",
     ),
     Objectif(
         "documente tout ca",
-        False, frozenset({"cible", "critere"}),
+        False,
+        frozenset({"cible", "critere"}),
         "« tout ca » ne designe rien de verifiable",
     ),
     Objectif(
         "fais en sorte que ca marche mieux",
-        False, frozenset({"action", "cible", "critere", "perimetre"}),
+        False,
+        frozenset({"action", "cible", "critere", "perimetre"}),
         "ni quoi, ni comment on mesure",
     ),
     Objectif(
         "il y a encore des choses a ameliorer, continue",
-        False, frozenset({"critere"}),
+        False,
+        frozenset({"critere"}),
         "mandat de boucle sans critere d'arret. La CIBLE n'est pas listee manquante parce qu'un "
         "mandat l'HERITE (« continue » renvoie a la mission en cours) : c'est la doctrine ecrite "
         "dans `jio/clarify.py`, et elle a change cette annotation — qu'on la contredise la-bas "
@@ -152,69 +179,82 @@ CORPUS: tuple[Objectif, ...] = (
     ),
     Objectif(
         "refactorise",
-        False, frozenset({"cible", "critere"}),
+        False,
+        frozenset({"cible", "critere"}),
         "refactoriser quoi, et selon quelle propriete a preserver ?",
     ),
     Objectif(
         "make it better",
-        False, frozenset({"action", "cible", "critere"}),
+        False,
+        frozenset({"action", "cible", "critere"}),
         "anglais vague",
     ),
     Objectif(
         "why is it slow?",
-        False, frozenset({"action", "cible", "critere"}),
+        False,
+        frozenset({"action", "cible", "critere"}),
         "question ouverte : quelle partie, et mesuree comment ?",
     ),
     Objectif(
         "verifie que tout va bien",
-        False, frozenset({"cible", "critere"}),
+        False,
+        frozenset({"cible", "critere"}),
         "« tout » n'est pas un perimetre",
     ),
     Objectif(
         "mets a jour la documentation",
-        False, frozenset({"cible", "critere"}),
+        False,
+        frozenset({"cible", "critere"}),
         "documentation de quoi, et a quelle aune de justesse ?",
     ),
     Objectif(
         "ajoute des tests",
-        False, frozenset({"cible", "critere"}),
+        False,
+        frozenset({"cible", "critere"}),
         "des tests de quoi, et qui doivent echouer sur quoi ?",
     ),
     Objectif(
         "trouve et corrige les problemes",
-        False, frozenset({"cible", "critere"}),
+        False,
+        frozenset({"cible", "critere"}),
         "« les problemes » : lesquels, avec quelle preuve ?",
     ),
     Objectif(
         "ameliore la qualite du code",
-        False, frozenset({"cible", "critere"}),
+        False,
+        frozenset({"cible", "critere"}),
         "« qualite » sans critere mesurable",
     ),
     Objectif(
         "fais une revue",
-        False, frozenset({"action", "cible", "critere"}),
+        False,
+        frozenset({"action", "cible", "critere"}),
         "revue de quel artefact, selon quelles regles ?",
     ),
     Objectif(
         "continue",
-        False, frozenset({"critere"}),
+        False,
+        frozenset({"critere"}),
         "mandat de boucle : sans critere, il n'a pas de fin — et la cible est heritee, comme "
         "pour tout mandat de poursuite",
     ),
     Objectif(
         "corrige ce que tu as casse",
-        False, frozenset({"cible", "critere"}),
+        False,
+        frozenset({"cible", "critere"}),
         "accusation sans cible ni preuve : il faut demander laquelle",
     ),
     # -- objectifs limites : la reponse doit rester STABLE ---------------------------- #
     Objectif(
         "supprimer jio/artifacts/doctrine.py",
-        True, frozenset(),
+        True,
+        frozenset(),
         "action destructrice mais parfaitement claire : la porte ne doit PAS demander quoi",
     ),
     Objectif(
         "ecrire un rapport sur l'etat du depot dans docs/ETAT.md",
-        True, frozenset(),
+        True,
+        frozenset(),
         "cible (chemin) + format (rapport) : actionnable",
     ),
     # -- objectifs du TERRAIN : ceux qu'un utilisateur a REELLEMENT ecrits -------------- #
@@ -226,32 +266,37 @@ CORPUS: tuple[Objectif, ...] = (
     Objectif(
         "peut-on ameliorer jio terminator ? si oui continue, explore, fais des recherches, puis "
         "retrouve encore des axes d'amelioration",
-        False, frozenset({"critere"}),
+        False,
+        frozenset({"critere"}),
         "mandat de boucle REEL (8e mission) : action et cible sont la, la fin ne l'est pas. La "
         "question utile est l'ARRET, pas « quelle action attends-tu »",
     ),
     Objectif(
         "continue avec les axes et ne t'arrete pas avant que absolument tout ne soit parfait",
-        False, frozenset({"critere"}),
+        False,
+        frozenset({"critere"}),
         "mandat REEL : « parfait » n'est pas un critere, et une poursuite sans borne ne "
         "s'arrete que quand elle casse — c'est la panne qui deciderait de l'arret",
     ),
     Objectif(
         "arrange tous les problemes",
-        False, frozenset({"cible", "critere", "perimetre"}),
+        False,
+        frozenset({"cible", "critere", "perimetre"}),
         "demande REELLE (7e mission), et le verbe n'etait meme pas reconnu : « arrange » dit "
         "l'intention, ni l'objet ni l'arene",
     ),
     Objectif(
         "keep going until the whole thing is solid",
-        False, frozenset({"critere"}),
+        False,
+        frozenset({"critere"}),
         "mandat anglais REEL : « solid » est un adjectif, pas un seuil — et la porte doit "
         "reconnaitre « keep going » comme un mandat, pas comme une phrase sans verbe. La cible "
         "est HERITEE du mandat, seul l'arret manque",
     ),
     Objectif(
         "continue jusqu'a ce que 3 cycles ne trouvent plus d'axe",
-        True, frozenset(),
+        True,
+        frozenset(),
         "le meme mandat, mais BORNE : « 3 cycles » est un critere d'arret. Un mandat qui dit ou "
         "il s'arrete doit partir au travail, pas se faire interroger",
     ),
@@ -262,27 +307,31 @@ CORPUS: tuple[Objectif, ...] = (
     # tienne : sans elles, les deux trous pouvaient se rouvrir sans qu'aucune mesure ne bouge.
     Objectif(
         "fusionner jio/bench/temes.py et jio/bench/objectifs.py sans casser les tests",
-        True, frozenset(),
+        True,
+        frozenset(),
         "action (fusionner) + DEUX cibles (chemins) + critere (« sans casser les tests »). Le "
         "verbe inconnu laissait la place au mot « tests » plus loin dans la phrase : la porte "
         "annoncait une action que l'utilisateur n'avait pas ecrite",
     ),
     Objectif(
         "fusionne les deux modules de calcul dans jio/core/math.py, la suite doit rester verte",
-        True, frozenset(),
+        True,
+        frozenset(),
         "la meme action, en imperatif, avec cible et critere : la porte sortait avec « aucune "
         "action reconnue » ET une question d'action sur un objectif qui nomme son action",
     ),
     Objectif(
         "fix jio/verify/entropy.py without breaking the tests",
-        True, frozenset(),
+        True,
+        frozenset(),
         "anglais, action + cible + critere : « without breaking the tests » est le meme critere "
         "que « sans casser les tests », et la porte ne le connaissait dans aucune des deux "
         "langues",
     ),
     Objectif(
         "corrige le calcul de moyenne dans le rapport hebdo pour qu'il compte les jours feries",
-        True, frozenset(),
+        True,
+        frozenset(),
         "critere de COMPORTEMENT : « pour qu'il compte les jours feries » est observable, donc "
         "verifiable. Ecrit pour payer une mesure — l'elision « qu' » echappait a la porte, qui "
         "demandait le critere a un objectif qui venait de le donner",
@@ -290,7 +339,8 @@ CORPUS: tuple[Objectif, ...] = (
     Objectif(
         "ameliore la lisibilite du README pour que les nouveaux arrivants trouvent l'installation "
         "en moins de 2 minutes",
-        True, frozenset(),
+        True,
+        frozenset(),
         "verbe VAGUE mais cible nommee et critere observable (« en moins de 2 minutes ») : zero "
         "question. Le mot « installation » a fait sortir cette phrase avec l'action « livraison » "
         "— mesure qui a paye la recherche de l'action EN POSITION",
@@ -310,12 +360,12 @@ class RapportPorte:
     """Ce que la porte a fait sur le corpus : precision, rappel, et LES ERREURS."""
 
     total: int = 0
-    vrais_positifs: int = 0     # ambigus correctement signales
-    faux_positifs: int = 0      # actionnables qui ont recu des questions
-    vrais_negatifs: int = 0     # actionnables correctement laisses tranquilles
-    faux_negatifs: int = 0      # ambigus partis sans question
-    signaux_oublies: int = 0    # signaux manquants que la porte n'a pas vus
-    signaux_en_trop: int = 0    # signaux juges manquants a tort
+    vrais_positifs: int = 0  # ambigus correctement signales
+    faux_positifs: int = 0  # actionnables qui ont recu des questions
+    vrais_negatifs: int = 0  # actionnables correctement laisses tranquilles
+    faux_negatifs: int = 0  # ambigus partis sans question
+    signaux_oublies: int = 0  # signaux manquants que la porte n'a pas vus
+    signaux_en_trop: int = 0  # signaux juges manquants a tort
     erreurs: list[str] = field(default_factory=list)
     max_questions: int = 0
 
@@ -361,7 +411,8 @@ def _en_trop(analyse: Analyse, item: Objectif) -> list[str]:
     de la donner. Une question pareille ne coute pas un tour : elle coute la confiance.
     """
     return [
-        s.nom for s in analyse.signaux
+        s.nom
+        for s in analyse.signaux
         if not s.present and s.nom in ESSENTIELS and s.nom not in item.manquants
     ]
 
@@ -425,15 +476,21 @@ def formater(rapport: RapportPorte) -> str:
     """Le rapport du banc : les chiffres, puis CHAQUE erreur en clair."""
     lignes = [
         "  BANC D'OBJECTIFS  ·  la porte de clarification se trompe-t-elle ?",
-        f"    {rapport.total} objectif(s) reels annote(s) a la main  ·  precision "
-        f"{rapport.precision:.0%}  ·  rappel {rapport.rappel:.0%}",
-        f"    ambigus signales {rapport.vrais_positifs}  ·  actionnables laisses tranquilles "
-        f"{rapport.vrais_negatifs}  ·  faux positifs {rapport.faux_positifs}  ·  faux "
-        f"negatifs {rapport.faux_negatifs}",
+        (
+            f"    {rapport.total} objectif(s) reels annote(s) a la main  ·  precision "
+            f"{rapport.precision:.0%}  ·  rappel {rapport.rappel:.0%}"
+        ),
+        (
+            f"    ambigus signales {rapport.vrais_positifs}  ·  actionnables laisses tranquilles "
+            f"{rapport.vrais_negatifs}  ·  faux positifs {rapport.faux_positifs}  ·  faux "
+            f"negatifs {rapport.faux_negatifs}"
+        ),
         f"    questions maximum posees : {rapport.max_questions} (borne {MAX_QUESTIONS})",
-        "    signaux lus dans les DEUX sens  ·  manques par la porte (elle ne les verra pas) : "
-        f"{rapport.signaux_oublies}  ·  juges absents a tort (elle poserait une question inutile) : "
-        f"{rapport.signaux_en_trop}",
+        (
+            "    signaux lus dans les DEUX sens  ·  manques par la porte (elle ne les verra pas) : "
+            f"{rapport.signaux_oublies}  ·  juges absents a tort (elle poserait une question inutile) : "
+            f"{rapport.signaux_en_trop}"
+        ),
         "",
     ]
     if rapport.exact:
@@ -444,7 +501,9 @@ def formater(rapport: RapportPorte) -> str:
             "    qui est ecrit.",
         ]
         return "\n".join(lignes)
-    lignes.append(f"    {len(rapport.erreurs)} ERREUR(S) — chacune est un cas a corriger :")
+    lignes.append(
+        f"    {len(rapport.erreurs)} ERREUR(S) — chacune est un cas a corriger :"
+    )
     lignes.append("")
     lignes += [f"      - {erreur}" for erreur in rapport.erreurs]
     return "\n".join(lignes)

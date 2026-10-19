@@ -10,10 +10,10 @@ import hashlib
 import json
 import time
 import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping, Sequence
-
+from typing import Any
 
 # --------------------------------------------------------------------------- #
 # Niveaux de confiance
@@ -27,8 +27,8 @@ class TrustLevel(str, Enum):
     d'un depot, d'un fichier, d'un outil ou du web est une surface d'injection.
     """
 
-    SYSTEM = "system"      # regles du systeme, jamais influencees de l'exterieur
-    USER = "user"          # instruction de l'utilisateur
+    SYSTEM = "system"  # regles du systeme, jamais influencees de l'exterieur
+    USER = "user"  # instruction de l'utilisateur
     EXTERNAL = "external"  # contenu non fiable : depot, outil, web, document
 
 
@@ -72,11 +72,11 @@ class MissionStatus(str, Enum):
 class RuleKind(str, Enum):
     """Nature d'une regle de specification (SPEC grounding)."""
 
-    PROPERTY = "property"      # invariant qui doit toujours tenir
-    TEST = "test"              # un test executables
-    BOUNDARY = "boundary"      # cas limite / entree invalide
-    CONTRACT = "contract"      # pre/postcondition
-    SECURITY = "security"      # interdiction explicite
+    PROPERTY = "property"  # invariant qui doit toujours tenir
+    TEST = "test"  # un test executables
+    BOUNDARY = "boundary"  # cas limite / entree invalide
+    CONTRACT = "contract"  # pre/postcondition
+    SECURITY = "security"  # interdiction explicite
     #: Regle de suspicion : son echec ne prouve pas un defaut (horloge, hasard,
     #: dependance a l'environnement). Elle produit une RESERVE, jamais un rejet —
     #: un faux positif detruit la confiance dans le garde.
@@ -86,12 +86,12 @@ class RuleKind(str, Enum):
 class ExploitKind(str, Enum):
     """Taxonomie des 6 exploits (Reward Hacking Benchmark, ICML 2026)."""
 
-    LEAKAGE = "leakage"                  # lecture de metadonnees/grader
-    TAMPERING = "tampering"              # modification du verificateur ou d'un chemin protege
-    SEQUENCE = "sequence"                # produit intermediaire fabrique pour sauter une etape
-    PROXY_GAMING = "proxy_gaming"        # sortie minimale qui satisfait un parseur naif
-    SPECIAL_CASING = "special_casing"    # code taille pour les tests visibles
-    MEMORIZATION = "memorization"        # copie d'une solution memorisee
+    LEAKAGE = "leakage"  # lecture de metadonnees/grader
+    TAMPERING = "tampering"  # modification du verificateur ou d'un chemin protege
+    SEQUENCE = "sequence"  # produit intermediaire fabrique pour sauter une etape
+    PROXY_GAMING = "proxy_gaming"  # sortie minimale qui satisfait un parseur naif
+    SPECIAL_CASING = "special_casing"  # code taille pour les tests visibles
+    MEMORIZATION = "memorization"  # copie d'une solution memorisee
 
 
 class Stage(str, Enum):
@@ -123,7 +123,7 @@ class Rule:
     id: str
     statement: str
     kind: RuleKind = RuleKind.PROPERTY
-    check: str | None = None          # commande ou identifiant de verification
+    check: str | None = None  # commande ou identifiant de verification
     negative_case: str | None = None  # entree qui DOIT echouer
 
     def __post_init__(self) -> None:
@@ -222,7 +222,7 @@ class Artifact:
 
     id: str
     content: str
-    kind: str = "text"          # text | code | patch | report
+    kind: str = "text"  # text | code | patch | report
     path: str | None = None
     agent: str = ""
     model: str = ""
@@ -401,7 +401,7 @@ class Mission:
     workspace: str = "."
     deadline_s: float | None = None
     risk: Severity = Severity.MEDIUM
-    alpha: float = 0.05          # risque d'erreur accepte (ConformalGate)
+    alpha: float = 0.05  # risque d'erreur accepte (ConformalGate)
     max_rounds: int = 5
     tags: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -420,7 +420,7 @@ class MissionReport:
     mission_id: str
     objective: str
     status: MissionStatus
-    subject: str = ""                 # l'artefact final
+    subject: str = ""  # l'artefact final
     spec: Spec | None = None
     rounds: int = 0
     witnesses: tuple[Witness, ...] = ()
@@ -442,7 +442,9 @@ class MissionReport:
         return len(self.witnesses)
 
     def to_json(self) -> str:
-        return json.dumps(_report_to_dict(self), ensure_ascii=False, indent=2, default=str)
+        return json.dumps(
+            _report_to_dict(self), ensure_ascii=False, indent=2, default=str
+        )
 
 
 def _report_to_dict(r: MissionReport) -> dict[str, Any]:
@@ -483,8 +485,12 @@ def _report_to_dict(r: MissionReport) -> dict[str, Any]:
             for v in r.votes
         ],
         "blames": [
-            {"agent": b.agent, "step": b.step, "message": b.message,
-             "repair_attempt": b.is_repair_attempt}
+            {
+                "agent": b.agent,
+                "step": b.step,
+                "message": b.message,
+                "repair_attempt": b.is_repair_attempt,
+            }
             for b in r.blames
         ],
         "integrity": {

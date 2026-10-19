@@ -30,14 +30,26 @@ REPO = Path(__file__).resolve().parents[1]
 def _lancer(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "jio", "ablation", *args],
-        cwd=str(REPO), capture_output=True, text=True, timeout=3000,
+        cwd=str(REPO),
+        capture_output=True,
+        text=True,
+        timeout=3000,
+        check=False,
     )
 
 
 def test_la_fidelite_est_annoncee_dans_le_rapport() -> None:
     """Un chiffre sans son regime ne se compare pas : l'en-tete doit dire la fidelite."""
-    proc = _lancer("--levers", "preuve", "--missions", "2", "--sans-oracle",
-                   "--fidelite", "0.6", "--json")
+    proc = _lancer(
+        "--levers",
+        "preuve",
+        "--missions",
+        "2",
+        "--sans-oracle",
+        "--fidelite",
+        "0.6",
+        "--json",
+    )
     assert proc.returncode == 0, proc.stderr[-800:]
     donnees = json.loads(proc.stdout)
     assert donnees["n_missions"] == 2
@@ -47,8 +59,16 @@ def test_la_fidelite_est_annoncee_dans_le_rapport() -> None:
 
 def test_sans_oracle_et_fidelite_parfaite_n_annonce_rien_de_faux() -> None:
     """A fidelite 1.0, l'en-tete ne doit pas parler de temoins contrefaits : ce serait faux."""
-    proc = _lancer("--levers", "preuve", "--missions", "2", "--sans-oracle",
-                   "--fidelite", "1.0", "--json")
+    proc = _lancer(
+        "--levers",
+        "preuve",
+        "--missions",
+        "2",
+        "--sans-oracle",
+        "--fidelite",
+        "1.0",
+        "--json",
+    )
     assert proc.returncode == 0, proc.stderr[-800:]
     assert "CONTREFaite" not in proc.stderr
 
@@ -59,7 +79,15 @@ def test_une_fidelite_hors_bornes_est_bornee() -> None:
     Sans ce bornage, `--fidelite 2.0` annoncerait « 200% » et le rapport porterait un regime
     qui n'existe pas.
     """
-    proc = _lancer("--levers", "preuve", "--missions", "2", "--sans-oracle",
-                   "--fidelite", "2.0", "--json")
+    proc = _lancer(
+        "--levers",
+        "preuve",
+        "--missions",
+        "2",
+        "--sans-oracle",
+        "--fidelite",
+        "2.0",
+        "--json",
+    )
     assert proc.returncode == 0, proc.stderr[-800:]
     assert "200%" not in proc.stderr

@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from ..core.types import Severity
 from .properties import _cases_for
 
-__all__ = ["Divergence", "comparer", "PROBE_BUDGET"]
+__all__ = ["PROBE_BUDGET", "Divergence", "comparer"]
 
 #: Plafond d'entrees sondees. Une divergence se montre sur UNE entree : au-dela de
 #: quelques dizaines, on paie sans rien apprendre de plus.
@@ -61,8 +61,8 @@ class Divergence:
     """Un desaccord observable entre candidats, sur une entree precise."""
 
     entree: str
-    resultats: tuple[tuple[str, str], ...]      # (etiquette du candidat, resultat)
-    majoritaire: str = ""                        # etiquette majoritaire, si elle existe
+    resultats: tuple[tuple[str, str], ...]  # (etiquette du candidat, resultat)
+    majoritaire: str = ""  # etiquette majoritaire, si elle existe
 
     def render(self) -> str:
         detail = " | ".join(f"{nom}: {valeur}" for nom, valeur in self.resultats)
@@ -96,7 +96,9 @@ def _cas_d_entree(source: str, entrypoint: str, budget: int = PROBE_BUDGET):
     return [(case, provenance) for case in cases[:budget]]
 
 
-def _sonde(source: str, entrypoint: str, cases: list[tuple[object, ...]]) -> list[str] | None:
+def _sonde(
+    source: str, entrypoint: str, cases: list[tuple[object, ...]]
+) -> list[str] | None:
     """Execute un candidat sur les entrees et rend une trace canonique par entree.
 
     La trace est un TEXTE (valeur ou type d'exception). Comparer des textes evite
@@ -120,7 +122,9 @@ def _sonde(source: str, entrypoint: str, cases: list[tuple[object, ...]]) -> lis
         + "_jio_cas = [\n    "
         + litteraux
         + ",\n]\n"
-        + "_jio_fn = globals().get(" + repr(entrypoint) + ")\n"
+        + "_jio_fn = globals().get("
+        + repr(entrypoint)
+        + ")\n"
         + "if not callable(_jio_fn):\n"
         + "    raise SystemExit('entree absente')\n"
         + "_jio_sortie = []\n"
@@ -137,7 +141,7 @@ def _sonde(source: str, entrypoint: str, cases: list[tuple[object, ...]]) -> lis
     for ligne in resultat.stdout.splitlines():
         if ligne.startswith("SONDE_DIVERGENCE="):
             try:
-                trace = json.loads(ligne[len("SONDE_DIVERGENCE="):])
+                trace = json.loads(ligne[len("SONDE_DIVERGENCE=") :])
             except Exception:
                 return None
             return trace if isinstance(trace, list) else None
@@ -196,7 +200,9 @@ def comparer(
         meilleure = max(compte.items(), key=lambda item: item[1])
         majoritaire_local = ""
         if meilleure[1] > len(valeurs) / 2 and len(valeurs) >= 3:
-            majoritaire_local = next(nom for nom, valeur in valeurs if valeur == meilleure[0])
+            majoritaire_local = next(
+                nom for nom, valeur in valeurs if valeur == meilleure[0]
+            )
         divergences.append(
             Divergence(
                 entree=repr(case),

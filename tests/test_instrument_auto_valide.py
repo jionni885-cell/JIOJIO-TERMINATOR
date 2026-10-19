@@ -190,7 +190,7 @@ def test_le_journal_du_moteur_porte_les_instruments(bac: Sandbox) -> None:
             journal=journal,
             generators=[TraducteurSimule(taches=[tache], fidelite=0.5)],
         )
-        moteur._temoins_de_la_spec(  # noqa: SLF001 — on interroge l'etape, pas tout le run
+        moteur._temoins_de_la_spec(
             tache.spec(),
             WorkItem(objective=tache.objective, entrypoint=tache.entrypoint, checks={}),
             {"calls": 0},

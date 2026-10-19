@@ -18,13 +18,14 @@ import pytest
 
 from jio.verify.linters import (
     BUG_RULES,
-    LintFinding,
     MAX_FINDINGS,
+    LintFinding,
     _parse_concise,
     _parse_ruff_json,
     analyse,
     plain_french,
 )
+
 
 def _ruff_present() -> bool:
     if shutil.which("ruff") is not None:
@@ -83,9 +84,9 @@ def test_le_jeu_de_regles_ne_contient_aucune_regle_de_style() -> None:
 
     assert codes == {"E9", "F"}
     for style_rule in ("E501", "I", "D", "ANN", "N", "UP", "C901", "PLR", "RUF"):
-        assert not any(
-            code != "F" and code.startswith(style_rule) for code in codes
-        ), f"regle de style dans le jeu : {style_rule}"
+        assert not any(code != "F" and code.startswith(style_rule) for code in codes), (
+            f"regle de style dans le jeu : {style_rule}"
+        )
 
 
 def test_lecture_du_format_condense() -> None:
@@ -93,7 +94,7 @@ def test_lecture_du_format_condense() -> None:
     text = (
         "a.py:3:1: F821 undefined name 'x'\n"
         "a.py:9:5: E999 SyntaxError: unexpected EOF\n"
-        "b.py:1:1: something went wrong\n"          # pyflakes sans code de regle
+        "b.py:1:1: something went wrong\n"  # pyflakes sans code de regle
         "ligne illisible\n"
     )
 
@@ -236,6 +237,10 @@ def test_le_depot_passe_sa_propre_porte() -> None:
 
     report = analyse([racine / "jio"], root=racine, prefer="ruff")
 
-    details = "\n".join(f"  {f.path}:{f.line} {f.rule} — {plain_french(f.message)}"
-                        for f in report.findings[:20])
-    assert report.findings == [], f"le paquet jio/ ne passe pas sa propre porte :\n{details}"
+    details = "\n".join(
+        f"  {f.path}:{f.line} {f.rule} — {plain_french(f.message)}"
+        for f in report.findings[:20]
+    )
+    assert report.findings == [], (
+        f"le paquet jio/ ne passe pas sa propre porte :\n{details}"
+    )

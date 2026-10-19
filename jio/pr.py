@@ -32,7 +32,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ["Commit", "base", "commits", "construire", "ecrire", "Versions"]
+__all__ = ["Commit", "Versions", "base", "commits", "construire", "ecrire"]
 
 #: Separateurs de controle peu probables dans un message de commit : le protocole de lecture
 #: reste analysable sans jamais dependre d'un guillemet ou d'un retour a la ligne du message.
@@ -114,9 +114,17 @@ def _git(racine: Path, *arguments: str) -> str:
     """Lance git et rend sa sortie. Toute panne devient `GitAbsent`, jamais un traceback."""
     try:
         proc = subprocess.run(
-            ["git", *arguments], cwd=str(racine), capture_output=True, text=True, timeout=120
+            ["git", *arguments],
+            cwd=str(racine),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
         )
-    except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - environnement
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ) as exc:  # pragma: no cover - environnement
         raise GitAbsent(f"git n'a pas pu etre lance : {exc}") from exc
     if proc.returncode != 0:
         raise GitAbsent((proc.stderr or proc.stdout).strip()[:200] or "git a echoue")
@@ -154,7 +162,9 @@ def commits(racine: Path | str, depuis: str | None = None) -> list[Commit]:
     ref, _sha = base(racine, depuis)
     brut = _git(
         racine,
-        "log", f"{ref}..HEAD", "--reverse",
+        "log",
+        f"{ref}..HEAD",
+        "--reverse",
         f"--format=%H{_FIN_CHAMP}%s{_FIN_CHAMP}%b{_FIN_ENREGISTREMENT}",
     )
     out: list[Commit] = []
@@ -194,17 +204,30 @@ def _blocs(racine: Path, depuis: str | None) -> tuple[list[Commit], str, str]:
         )
     else:
         entete_mesure = Versions(
-            tests=int(m.get("tests", 0)), competences=int(m.get("competences", 0)),
-            agents=int(m.get("agents", 0)), objectifs=int(m.get("objectifs", 0)),
+            tests=int(m.get("tests", 0)),
+            competences=int(m.get("competences", 0)),
+            agents=int(m.get("agents", 0)),
+            objectifs=int(m.get("objectifs", 0)),
         ).ligne()
 
-    entete = "\n".join([
-        INTRO.rstrip(), "", entete_mesure, "", "---", "",
-        f"**Base du rapport** : `{ref}` (`{sha}`) — **{len(liste)} commit(s)** resumes "
-        "ci-dessous. Ce document est genere (`jio pr`) : il se reconstruit a l'identique "
-        "depuis le depot.",
-        "", "---", "",
-    ])
+    entete = "\n".join(
+        [
+            INTRO.rstrip(),
+            "",
+            entete_mesure,
+            "",
+            "---",
+            "",
+            (
+                f"**Base du rapport** : `{ref}` (`{sha}`) — **{len(liste)} commit(s)** resumes "
+                "ci-dessous. Ce document est genere (`jio pr`) : il se reconstruit a l'identique "
+                "depuis le depot."
+            ),
+            "",
+            "---",
+            "",
+        ]
+    )
     if not liste:
         entete += (
             "**Aucun commit au-dessus de la base.** La branche courante n'a rien a resumer "
@@ -221,9 +244,20 @@ def _sections(liste: list[Commit]) -> list[str]:
     """Une section par commit, numerotee : c'est la partie qu'on peut avoir a tronquer."""
     blocs: list[str] = []
     for rang, commit in enumerate(liste, start=1):
-        blocs.append("\n".join(
-            filter(None, [f"## {rang}. {commit.sujet}", "", f"`{commit.court}`", "", commit.corps])
-        ))
+        blocs.append(
+            "\n".join(
+                filter(
+                    None,
+                    [
+                        f"## {rang}. {commit.sujet}",
+                        "",
+                        f"`{commit.court}`",
+                        "",
+                        commit.corps,
+                    ],
+                )
+            )
+        )
     return blocs
 
 
@@ -289,8 +323,8 @@ def construire(
     # serait perimee sans que rien ne le dise. La commande, elle, ne peut pas etre perimee.
     ou = (
         f" Le rapport complet a ete ecrit dans `{complet}`."
-        if complet else
-        " Le rapport complet se regenere par `jio pr` (aucune option : il imprime sur la "
+        if complet
+        else " Le rapport complet se regenere par `jio pr` (aucune option : il imprime sur la "
         "sortie standard)."
     )
     note = (
