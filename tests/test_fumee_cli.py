@@ -121,6 +121,8 @@ SURES: dict[str, list[str]] = {
     "memory": ["--root", "."],
     "trust": [],
     "trace": [],
+    # `receipt` sans journal doit refuser proprement et ne rien ecrire dans un depot vide.
+    "receipt": [],
     "chiffres": [],
     "scan": ["."],
     "artifacts": ["--budget"],

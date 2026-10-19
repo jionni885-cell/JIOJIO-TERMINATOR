@@ -12,7 +12,7 @@
  ╚════╝ ╚═╝ ╚═════╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 ```
 
-**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1344 tests verts, exécuté sans aucune clé API.
+**Statut :** noyau **implémenté, mesuré, auto-audité et reproductible** — 1356 tests verts, exécuté sans aucune clé API.
 **Objectif de sûreté :** zéro erreur acceptée comme correcte sans preuve ; `jio run "<objectif>" --zero-reserve` exige l'unanimité du panel, continue en cas de désaccord jusqu'au budget fixé, puis s'abstient si une réserve demeure. Ce mode s'abstient davantage et ne garantit pas l'absence de défauts partagés ou non détectés. Voir la [doctrine d'infaillibilité visée](docs/DOCTRINE-INFAILLIBILITE.md).
 **Langue :** interface et rapports en français · prompts et agents en anglais (précision de raisonnement).
 **Tu veux l'essayer ?** Le guide pas à pas pour l'intégrer à TON projet est là :
@@ -287,7 +287,16 @@ python -m jio learn --cycles 3 --runs 1  # la mémoire qui S'ACCUMULE paie-t-ell
 python -m jio mutants                    # NOS tests attrapent-ils NOS erreurs ? (mutation)
 python -m jio ablation --missions 10     # quelle brique apporte quoi ? (ablation appariee)
 python -m jio scan jio                   # JIO s'audite lui-même : 0 problème attendu
+python -m jio receipt --format json --output .jio/preuve.json  # reçu portable de la dernière mission
+python -m jio receipt --verify .jio/preuve.json                # contrôle son empreinte
 ```
+
+`jio receipt` exporte un reçu de la **dernière mission** après vérification de la chaîne du
+journal. Par défaut, il omet le texte de l'objectif, le code, les commandes et les motifs libres;
+`--include-objective` est un choix explicite si vous voulez joindre le mandat. Le SHA-256 détecte
+une modification accidentelle si l'empreinte est conservée séparément; ce n'est ni une signature
+ni une preuve que le résultat est vrai. `--format markdown` (défaut) produit une fiche lisible;
+`--format json` produit un reçu exploitable par une autre machine.
 
 Installation dans vos outils (ne copie que des fichiers texte, rien d'autre) :
 
@@ -1673,7 +1682,7 @@ corriger :
 
 ```
     [KO] nombres       3 chiffre(s) mesure(s), 1 ecart(s) — `jio chiffres --appliquer`
-         - README.md ligne 15 : 1344 tests verts -> 1344 tests verts
+         - README.md ligne 15 : 1356 tests verts -> 1356 tests verts
 ```
 
 ### Les exemples de sortie sont vérifiés, comme le reste

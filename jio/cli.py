@@ -4349,6 +4349,73 @@ def _outils_mcp(tools: Sequence[Mapping[str, object]], *, interactif: bool) -> N
     print()
 
 
+def cmd_receipt(args: argparse.Namespace) -> int:
+    """Exporte un recu redacte pour la derniere mission d'un journal integre."""
+    from .verify.receipt import (
+        ReceiptError,
+        build_receipt,
+        render_markdown,
+        verify_receipt,
+    )
+
+    if args.verify:
+        if args.journal or args.output or args.include_objective:
+            print("--verify ne se combine pas avec un journal ou une option d'export")
+            return 1
+        try:
+            text = Path(args.verify).read_bytes()
+        except OSError as exc:
+            print(f"Recu illisible : {exc}")
+            return 1
+        ok, detail = verify_receipt(text)
+        print(f"{'VALIDE' if ok else 'INVALIDE'} : {detail}")
+        print("Cette empreinte detecte les modifications; elle ne signe pas l'auteur.")
+        return 0 if ok else 1
+
+    if args.journal:
+        path = Path(args.journal)
+    else:
+        path = Path(str_env("JIO_JOURNAL", ".jio/journal.jsonl"))
+        if not path.is_file():
+            candidates = sorted(
+                (p for p in Path(".jio").rglob("*.jsonl") if p.is_file()),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if candidates:
+                path = candidates[0]
+    try:
+        raw = path.read_bytes()
+        receipt = build_receipt(
+            raw, source_name=str(path), include_objective=args.include_objective
+        )
+    except (OSError, UnicodeError) as exc:
+        print(f"Journal illisible : {exc}")
+        return 1
+    except ReceiptError as exc:
+        print(f"Recu refuse : {exc}")
+        return 1
+
+    content = (
+        json.dumps(receipt, ensure_ascii=False, indent=2) + "\n"
+        if args.format == "json"
+        else render_markdown(receipt)
+    )
+    if args.output:
+        target = Path(args.output)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            print(f"Impossible d'ecrire le recu : {exc}")
+            return 1
+        print(f"Recu {args.format} ecrit : {target}")
+        print(f"SHA-256 : {receipt['receipt_sha256']}")
+    else:
+        print(content, end="" if content.endswith("\n") else "\n")
+    return 0
+
+
 def cmd_trace(args: argparse.Namespace) -> int:
     """Rejoue et verifie un journal — meme sans indiquer lequel.
 
@@ -4914,6 +4981,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     t.add_argument("--kind", default="", help="filtre par type d'evenement")
     t.set_defaults(func=cmd_trace)
+
+    rc = sub.add_parser(
+        "receipt",
+        help="exporte un recu de preuve redacte et verifiable pour la derniere mission",
+    )
+    rc.add_argument(
+        "journal",
+        nargs="?",
+        default="",
+        help="journal source (defaut : le plus recent)",
+    )
+    rc.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    rc.add_argument("--output", default="", help="fichier de sortie (sinon stdout)")
+    rc.add_argument(
+        "--include-objective",
+        action="store_true",
+        help="inclure le texte du mandat (peut etre sensible)",
+    )
+    rc.add_argument(
+        "--verify",
+        default="",
+        metavar="RECU.json",
+        help="verifier l'empreinte d'un recu exporte",
+    )
+    rc.set_defaults(func=cmd_receipt)
 
     ar = sub.add_parser(
         "artifacts", help="genere les artefacts natifs de tous les outils"
